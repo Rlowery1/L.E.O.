@@ -19,6 +19,7 @@
 #include "UObject/SoftObjectPath.h"
 #include "FileHelpers.h"
 #include "HAL/FileManager.h"
+#include "Misc/MessageDialog.h"
 
 #include "Editor.h"
 #include "Engine/World.h"
@@ -82,6 +83,24 @@ bool UTrafficSystemEditorSubsystem::EnsureDetectedFamilies(const TCHAR* Context)
 		return false;
 	}
 	return true;
+}
+
+bool UTrafficSystemEditorSubsystem::HasAnyPreparedRoads() const
+{
+	UWorld* World = GetEditorWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->FindComponentByClass<UTrafficRoadMetadataComponent>())
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 bool UTrafficSystemEditorSubsystem::HasAnyCalibratedFamilies() const
@@ -481,9 +500,38 @@ void UTrafficSystemEditorSubsystem::DoCars()
 		return;
 	}
 
+	if (!HasAnyPreparedRoads())
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] DoCars: No prepared roads. Run Prepare Map first."));
+		return;
+	}
+
 	if (!HasAnyCalibratedFamilies())
 	{
 		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] DoCars: No calibrated families. Calibrate at least one family first."));
+		return;
+	}
+
+	ATrafficSystemController* Controller = GetOrSpawnController();
+	if (!Controller)
+	{
+		return;
+	}
+
+	const int32 NumRoads = Controller->GetNumRoads();
+	const int32 NumLanes = Controller->GetNumLanes();
+	if (NumRoads <= 0 || NumLanes <= 0)
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] Build produced an empty traffic network (Roads=%d, Lanes=%d). No vehicles will be spawned."), NumRoads, NumLanes);
+		FMessageDialog::Open(
+			EAppMsgType::Ok,
+			NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_EmptyNetwork",
+				"AAA Traffic could not build any roads or lanes in this level.\n\n"
+				"This usually means:\n"
+				"  • PREPARE MAP was not run,\n"
+				"  • No road actors are tagged for traffic,\n"
+				"  • Or the active geometry provider does not support your road kit.\n\n"
+				"Run PREPARE MAP and ensure at least one road family is calibrated and included in traffic."));
 		return;
 	}
 

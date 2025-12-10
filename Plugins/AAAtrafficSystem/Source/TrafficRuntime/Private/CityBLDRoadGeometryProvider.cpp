@@ -16,6 +16,16 @@ bool UCityBLDRoadGeometryProvider::IsRoadActor(
 		return false;
 	}
 
+	// Metadata is authoritative when present.
+	if (UTrafficRoadMetadataComponent* Meta = Actor->FindComponentByClass<UTrafficRoadMetadataComponent>())
+	{
+		if (!Meta->bIncludeInTraffic)
+		{
+			return false;
+		}
+		return true;
+	}
+
 	if (!Settings->RoadActorTag.IsNone())
 	{
 		if (Actor->ActorHasTag(Settings->RoadActorTag))

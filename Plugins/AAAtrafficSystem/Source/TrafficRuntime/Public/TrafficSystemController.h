@@ -21,6 +21,8 @@ public:
 	void Editor_SpawnTestVehicles();
 
 	UTrafficNetworkAsset* GetBuiltNetworkAsset() const { return BuiltNetworkAsset; }
+	int32 GetNumRoads() const;
+	int32 GetNumLanes() const;
 
 protected:
 	UPROPERTY()

@@ -122,7 +122,25 @@ void STrafficSystemPanel::Construct(const FArguments& InArgs)
 					.HAlign(HAlign_Left)
 					.ContentPadding(FMargin(16.0f, 8.0f))
 					.OnClicked(this, &STrafficSystemPanel::OnBeginCalibrationClicked)
-					.IsEnabled_Lambda([this]() { return SelectedFamily.IsValid(); })
+					.IsEnabled_Lambda([this]()
+					{
+						if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
+						{
+							return SelectedFamily.IsValid() && Subsys->HasAnyPreparedRoads();
+						}
+						return false;
+					})
+					.ToolTipText_Lambda([this]()
+					{
+						if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
+						{
+							if (!Subsys->HasAnyPreparedRoads())
+							{
+								return LOCTEXT("Tooltip_NoPreparedRoads", "No prepared roads found. Run PREPARE MAP first.");
+							}
+						}
+						return FText::GetEmpty();
+					})
 					[
 						SNew(SVerticalBox)
 						+ SVerticalBox::Slot()
@@ -156,7 +174,14 @@ void STrafficSystemPanel::Construct(const FArguments& InArgs)
 					.HAlign(HAlign_Left)
 					.ContentPadding(FMargin(16.0f, 8.0f))
 					.OnClicked(this, &STrafficSystemPanel::OnBakeCalibrationClicked)
-					.IsEnabled_Lambda([this]() { return SelectedFamily.IsValid(); })
+					.IsEnabled_Lambda([this]()
+					{
+						if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
+						{
+							return SelectedFamily.IsValid() && Subsys->HasAnyPreparedRoads();
+						}
+						return false;
+					})
 					[
 						SNew(SVerticalBox)
 						+ SVerticalBox::Slot()
@@ -305,6 +330,15 @@ void STrafficSystemPanel::Construct(const FArguments& InArgs)
 					.HAlign(HAlign_Left)
 					.ContentPadding(FMargin(16.0f, 8.0f))
 					.OnClicked(this, &STrafficSystemPanel::OnBuildAndCarsClicked)
+					.IsEnabled_Lambda([this]()
+					{
+						if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
+						{
+							return Subsys->HasAnyPreparedRoads() && Subsys->HasAnyCalibratedFamilies();
+						}
+						return false;
+					})
+					.ToolTipText(LOCTEXT("Tooltip_BuildCars", "Requires at least one prepared and calibrated road family. Run PREPARE MAP, then CALIBRATE and BAKE a family."))
 					[
 						SNew(SVerticalBox)
 						+ SVerticalBox::Slot()
