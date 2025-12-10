@@ -24,6 +24,8 @@
 #include "Engine/World.h"
 #include "Engine/Selection.h"
 #include "EngineUtils.h"
+#include "TrafficGeometryProviderFactory.h"
+#include "TrafficGeometryProvider.h"
 
 const FName UTrafficSystemEditorSubsystem::RoadLabTag = FName(TEXT("AAA_RoadLab"));
 
@@ -775,6 +777,26 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 		return;
 	}
 
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	// Try to use a selected actor of this family if present; otherwise spawn a preview instance.
+	AActor* RoadActor = nullptr;
+	if (GEditor && GEditor->GetSelectedActors())
+	{
+		for (FSelectionIterator It(*GEditor->GetSelectedActors()); It; ++It)
+		{
+			if (AActor* Candidate = Cast<AActor>(*It))
+			{
+				if (Candidate->IsA(RoadClass))
+				{
+					RoadActor = Candidate;
+					break;
+				}
+			}
+		}
+	}
+
 	// Cleanup previous preview actors.
 	if (ActiveCalibrationRoadActor.IsValid())
 	{
@@ -786,29 +808,42 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 		CalibrationOverlayActor.Reset();
 	}
 
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	AActor* RoadActor = World->SpawnActor<AActor>(RoadClass, FTransform::Identity, SpawnParams);
 	if (!RoadActor)
 	{
-		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] BeginCalibrationForFamily: Failed to spawn road actor of class %s"), *RoadClass->GetName());
-		return;
+		RoadActor = World->SpawnActor<AActor>(RoadClass, FTransform::Identity, SpawnParams);
+		if (!RoadActor)
+		{
+			UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] BeginCalibrationForFamily: Failed to spawn road actor of class %s"), *RoadClass->GetName());
+			return;
+		}
+		TagAsRoadLab(RoadActor);
 	}
 
-	TagAsRoadLab(RoadActor);
-	USplineComponent* Spline = RoadActor->FindComponentByClass<USplineComponent>();
-	if (!Spline || Spline->GetNumberOfSplinePoints() < 2)
-	{
-		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] BeginCalibrationForFamily: Road actor missing valid spline."));
-		RoadActor->Destroy();
-		return;
-	}
+	TArray<TObjectPtr<UObject>> ProviderObjects;
+	TArray<ITrafficRoadGeometryProvider*> Providers;
+	UTrafficGeometryProviderFactory::CreateProviderChainForEditorWorld(World, ProviderObjects, Providers);
 
 	TArray<FVector> CenterlinePoints;
-	const int32 NumSplinePoints = Spline->GetNumberOfSplinePoints();
-	for (int32 i = 0; i < NumSplinePoints; ++i)
+	for (ITrafficRoadGeometryProvider* Provider : Providers)
 	{
-		CenterlinePoints.Add(Spline->GetLocationAtSplinePoint(i, ESplineCoordinateSpace::World));
+		if (Provider && Provider->GetDisplayCenterlineForActor(RoadActor, CenterlinePoints) && CenterlinePoints.Num() >= 2)
+		{
+			break;
+		}
+	}
+
+	if (CenterlinePoints.Num() < 2)
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] BeginCalibrationForFamily: Provider could not supply a display centerline for %s."), *GetNameSafe(RoadActor));
+		if (RoadActor == ActiveCalibrationRoadActor.Get())
+		{
+			RoadActor = nullptr;
+		}
+		else if (RoadActor && RoadActor->Tags.Contains(RoadLabTag))
+		{
+			RoadActor->Destroy();
+		}
+		return;
 	}
 
 	const bool bHasUnderlyingMesh = (RoadActor->FindComponentByClass<UStaticMeshComponent>() != nullptr);

@@ -6,6 +6,37 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 
+bool UGenericSplineRoadGeometryProvider::GetDisplayCenterlineForActor(AActor* RoadActor, TArray<FVector>& OutPoints) const
+{
+	OutPoints.Reset();
+
+	if (!RoadActor)
+	{
+		return false;
+	}
+
+	if (USplineComponent* Spline = RoadActor->FindComponentByClass<USplineComponent>())
+	{
+		const float Length = Spline->GetSplineLength();
+		const float Step = 100.f;
+
+		for (float Dist = 0.f; Dist <= Length; Dist += Step)
+		{
+			OutPoints.Add(Spline->GetLocationAtDistanceAlongSpline(Dist, ESplineCoordinateSpace::World));
+		}
+
+		// Ensure endpoint included
+		if (Length > 0.f && (OutPoints.Num() == 0 || !OutPoints.Last().Equals(Spline->GetLocationAtDistanceAlongSpline(Length, ESplineCoordinateSpace::World))))
+		{
+			OutPoints.Add(Spline->GetLocationAtDistanceAlongSpline(Length, ESplineCoordinateSpace::World));
+		}
+
+		return OutPoints.Num() >= 2;
+	}
+
+	return false;
+}
+
 void UGenericSplineRoadGeometryProvider::CollectRoads(UWorld* World, TArray<FTrafficRoad>& OutRoads)
 {
 	OutRoads.Reset();

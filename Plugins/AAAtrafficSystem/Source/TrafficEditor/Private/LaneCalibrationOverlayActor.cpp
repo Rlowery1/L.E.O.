@@ -396,3 +396,16 @@ void ALaneCalibrationOverlayActor::BuildForRoad(
 	UE_LOG(LogTraffic, Log, TEXT("[LaneCalibrationOverlay] Built chevron overlay with %d lanes (%d forward, %d backward)."),
 		LaneIndex, NumLanesPerSideForward, NumLanesPerSideBackward);
 }
+
+void ALaneCalibrationOverlayActor::BuildFromCenterline(const TArray<FVector>& CenterlinePoints, const FTrafficLaneFamilyCalibration& Calibration)
+{
+	FRoadFamilyDefinition TempFamily;
+	TempFamily.Forward.NumLanes = Calibration.NumLanesPerSideForward;
+	TempFamily.Backward.NumLanes = Calibration.NumLanesPerSideBackward;
+	TempFamily.Forward.LaneWidthCm = Calibration.LaneWidthCm;
+	TempFamily.Backward.LaneWidthCm = Calibration.LaneWidthCm;
+	TempFamily.Forward.InnerLaneCenterOffsetCm = Calibration.CenterlineOffsetCm;
+	TempFamily.Backward.InnerLaneCenterOffsetCm = Calibration.CenterlineOffsetCm;
+
+	BuildForRoad(CenterlinePoints, TempFamily, FTransform::Identity, false);
+}

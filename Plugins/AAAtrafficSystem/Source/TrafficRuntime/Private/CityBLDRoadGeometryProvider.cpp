@@ -113,6 +113,39 @@ int32 UCityBLDRoadGeometryProvider::ResolveFamilyIdForActor(AActor* Actor) const
 	return 0;
 }
 
+bool UCityBLDRoadGeometryProvider::GetDisplayCenterlineForActor(AActor* RoadActor, TArray<FVector>& OutPoints) const
+{
+	OutPoints.Reset();
+
+	const UTrafficCityBLDAdapterSettings* Settings = GetDefault<UTrafficCityBLDAdapterSettings>();
+	if (!IsRoadActor(RoadActor, Settings))
+	{
+		return false;
+	}
+
+	// Use the same sampling as CollectRoads for now. If CityBLD exposes richer data, it can be swapped here without touching callers.
+	if (USplineComponent* RoadSpline = FindRoadSpline(RoadActor, Settings))
+	{
+		const int32 NumPoints = RoadSpline->GetNumberOfSplinePoints();
+		if (NumPoints < 2)
+		{
+			return false;
+		}
+
+		const float Length = RoadSpline->GetSplineLength();
+		const float Step = 100.f;
+		for (float Dist = 0.f; Dist <= Length; Dist += Step)
+		{
+			OutPoints.Add(RoadSpline->GetLocationAtDistanceAlongSpline(Dist, ESplineCoordinateSpace::World));
+		}
+		OutPoints.Add(RoadSpline->GetLocationAtDistanceAlongSpline(Length, ESplineCoordinateSpace::World));
+
+		return OutPoints.Num() >= 2;
+	}
+
+	return false;
+}
+
 void UCityBLDRoadGeometryProvider::CollectRoads(UWorld* World, TArray<FTrafficRoad>& OutRoads)
 {
 	OutRoads.Reset();

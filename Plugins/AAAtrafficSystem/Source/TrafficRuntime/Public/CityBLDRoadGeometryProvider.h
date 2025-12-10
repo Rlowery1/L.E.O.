@@ -15,6 +15,7 @@ class TRAFFICRUNTIME_API UCityBLDRoadGeometryProvider : public UObject, public I
 
 public:
 	virtual void CollectRoads(UWorld* World, TArray<FTrafficRoad>& OutRoads) override;
+	virtual bool GetDisplayCenterlineForActor(AActor* RoadActor, TArray<FVector>& OutPoints) const override;
 
 private:
 	bool IsRoadActor(AActor* Actor, const UTrafficCityBLDAdapterSettings* Settings) const;

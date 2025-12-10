@@ -8,11 +8,15 @@
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/SOverlay.h"
+#include "Widgets/Layout/SExpandableArea.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SComboBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Misc/MessageDialog.h"
+#include "Internationalization/Text.h"
+
+#define LOCTEXT_NAMESPACE "STrafficSystemPanel"
 
 void STrafficSystemPanel::Construct(const FArguments& InArgs)
 {
@@ -101,39 +105,6 @@ void STrafficSystemPanel::Construct(const FArguments& InArgs)
 						[
 							SNew(STextBlock)
 							.Text(FText::FromString(TEXT("Scan all spline roads, attach metadata, register families.")))
-							.Font(SubtitleFont)
-							.ColorAndOpacity(FLinearColor(0.8f, 0.8f, 0.8f))
-							.WrapTextAt(420.0f)
-						]
-					]
-				]
-
-				// Convert selected spline roads
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(0.0f, 0.0f, 0.0f, 6.0f)
-				[
-					SNew(SButton)
-					.ButtonStyle(&FAppStyle::Get().GetWidgetStyle<FButtonStyle>("PrimaryButton"))
-					.HAlign(HAlign_Left)
-					.ContentPadding(FMargin(16.0f, 8.0f))
-					.OnClicked(this, &STrafficSystemPanel::OnConvertSelectedClicked)
-					[
-						SNew(SVerticalBox)
-						+ SVerticalBox::Slot()
-						.AutoHeight()
-						[
-							SNew(STextBlock)
-							.Text(FText::FromString(TEXT("CONVERT SELECTED ROADS")))
-							.Font(TitleFont)
-							.ColorAndOpacity(FLinearColor::White)
-						]
-						+ SVerticalBox::Slot()
-						.AutoHeight()
-						.Padding(0.0f, 2.0f, 0.0f, 0.0f)
-						[
-							SNew(STextBlock)
-							.Text(FText::FromString(TEXT("Copy selected splines into AAA traffic roads (use your meshes).")))
 							.Font(SubtitleFont)
 							.ColorAndOpacity(FLinearColor(0.8f, 0.8f, 0.8f))
 							.WrapTextAt(420.0f)
@@ -353,6 +324,52 @@ void STrafficSystemPanel::Construct(const FArguments& InArgs)
 							.Font(SubtitleFont)
 							.ColorAndOpacity(FLinearColor(0.8f, 0.8f, 0.8f))
 							.WrapTextAt(420.0f)
+						]
+					]
+				]
+			]
+
+			// Advanced / dev-only tools
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0.0f, 12.0f, 0.0f, 0.0f)
+			[
+				SNew(SExpandableArea)
+				.InitiallyCollapsed(true)
+				.AreaTitle(LOCTEXT("AAATrafficAdvancedTools", "Advanced / Dev Tools"))
+				.BodyContent()
+				[
+					SNew(SVerticalBox)
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0.0f, 0.0f, 0.0f, 6.0f)
+					[
+						SNew(SButton)
+						.ButtonStyle(&FAppStyle::Get().GetWidgetStyle<FButtonStyle>("PrimaryButton"))
+						.HAlign(HAlign_Left)
+						.ContentPadding(FMargin(16.0f, 8.0f))
+						.OnClicked(this, &STrafficSystemPanel::OnConvertSelectedClicked)
+						[
+							SNew(SVerticalBox)
+							+ SVerticalBox::Slot()
+							.AutoHeight()
+							[
+								SNew(STextBlock)
+								.Text(FText::FromString(TEXT("ADVANCED: Copy selected spline actors into AAA debug roads")))
+								.Font(TitleFont)
+								.ColorAndOpacity(FLinearColor::White)
+								.WrapTextAt(420.0f)
+							]
+							+ SVerticalBox::Slot()
+							.AutoHeight()
+							.Padding(0.0f, 2.0f, 0.0f, 0.0f)
+							[
+								SNew(STextBlock)
+								.Text(FText::FromString(TEXT("Internal testing only. Not required for CityBLD or other road kits.")))
+								.Font(SubtitleFont)
+								.ColorAndOpacity(FLinearColor(0.8f, 0.8f, 0.8f))
+								.WrapTextAt(420.0f)
+							]
 						]
 					]
 				]
@@ -621,3 +638,5 @@ bool STrafficSystemPanel::HasDetectedFamilies() const
 	const URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get();
 	return Registry && Registry->GetAllFamilies().Num() > 0;
 }
+
+#undef LOCTEXT_NAMESPACE

@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "TrafficRoadFamilySettings.h"
+#include "TrafficLaneCalibration.h"
 #include "LaneCalibrationOverlayActor.generated.h"
 
 class UInstancedStaticMeshComponent;
@@ -27,6 +28,9 @@ public:
 		const FRoadFamilyDefinition& Family,
 		const FTransform& RoadTransform,
 		bool bHasUnderlyingMesh);
+
+	// Build overlay lanes from a provided centerline and calibration data.
+	void BuildFromCenterline(const TArray<FVector>& CenterlinePoints, const FTrafficLaneFamilyCalibration& Calibration);
 
 	void ClearOverlay();
 
