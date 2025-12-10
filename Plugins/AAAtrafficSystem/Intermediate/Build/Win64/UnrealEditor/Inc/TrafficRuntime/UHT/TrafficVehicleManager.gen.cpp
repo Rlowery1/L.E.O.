@@ -13,6 +13,8 @@ void EmptyLinkFunctionForGeneratedCodeTrafficVehicleManager() {}
 
 // ********** Begin Cross Module References ********************************************************
 ENGINE_API UClass* Z_Construct_UClass_AActor();
+ENGINE_API UClass* Z_Construct_UClass_APawn_NoRegister();
+TRAFFICRUNTIME_API UClass* Z_Construct_UClass_ATrafficVehicleAdapter_NoRegister();
 TRAFFICRUNTIME_API UClass* Z_Construct_UClass_ATrafficVehicleBase_NoRegister();
 TRAFFICRUNTIME_API UClass* Z_Construct_UClass_ATrafficVehicleManager();
 TRAFFICRUNTIME_API UClass* Z_Construct_UClass_ATrafficVehicleManager_NoRegister();
@@ -63,12 +65,22 @@ struct Z_Construct_UClass_ATrafficVehicleManager_Statics
 	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_Vehicles_MetaData[] = {
 		{ "ModuleRelativePath", "Public/TrafficVehicleManager.h" },
 	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_VisualVehicles_MetaData[] = {
+		{ "ModuleRelativePath", "Public/TrafficVehicleManager.h" },
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_Adapters_MetaData[] = {
+		{ "ModuleRelativePath", "Public/TrafficVehicleManager.h" },
+	};
 #endif // WITH_METADATA
 
 // ********** Begin Class ATrafficVehicleManager constinit property declarations *******************
 	static const UECodeGen_Private::FObjectPropertyParams NewProp_NetworkAsset;
 	static const UECodeGen_Private::FObjectPropertyParams NewProp_Vehicles_Inner;
 	static const UECodeGen_Private::FArrayPropertyParams NewProp_Vehicles;
+	static const UECodeGen_Private::FWeakObjectPropertyParams NewProp_VisualVehicles_Inner;
+	static const UECodeGen_Private::FArrayPropertyParams NewProp_VisualVehicles;
+	static const UECodeGen_Private::FWeakObjectPropertyParams NewProp_Adapters_Inner;
+	static const UECodeGen_Private::FArrayPropertyParams NewProp_Adapters;
 	static const UECodeGen_Private::FPropertyParamsBase* const PropPointers[];
 // ********** End Class ATrafficVehicleManager constinit property declarations *********************
 	static UObject* (*const DependentSingletons[])();
@@ -82,10 +94,18 @@ struct Z_Construct_UClass_ATrafficVehicleManager_Statics
 const UECodeGen_Private::FObjectPropertyParams Z_Construct_UClass_ATrafficVehicleManager_Statics::NewProp_NetworkAsset = { "NetworkAsset", nullptr, (EPropertyFlags)0x0040000000000000, UECodeGen_Private::EPropertyGenFlags::Object, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(ATrafficVehicleManager, NetworkAsset), Z_Construct_UClass_UTrafficNetworkAsset_NoRegister, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_NetworkAsset_MetaData), NewProp_NetworkAsset_MetaData) };
 const UECodeGen_Private::FObjectPropertyParams Z_Construct_UClass_ATrafficVehicleManager_Statics::NewProp_Vehicles_Inner = { "Vehicles", nullptr, (EPropertyFlags)0x0000000000000000, UECodeGen_Private::EPropertyGenFlags::Object, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, 0, Z_Construct_UClass_ATrafficVehicleBase_NoRegister, METADATA_PARAMS(0, nullptr) };
 const UECodeGen_Private::FArrayPropertyParams Z_Construct_UClass_ATrafficVehicleManager_Statics::NewProp_Vehicles = { "Vehicles", nullptr, (EPropertyFlags)0x0040000000000000, UECodeGen_Private::EPropertyGenFlags::Array, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(ATrafficVehicleManager, Vehicles), EArrayPropertyFlags::None, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_Vehicles_MetaData), NewProp_Vehicles_MetaData) };
+const UECodeGen_Private::FWeakObjectPropertyParams Z_Construct_UClass_ATrafficVehicleManager_Statics::NewProp_VisualVehicles_Inner = { "VisualVehicles", nullptr, (EPropertyFlags)0x0004000000000000, UECodeGen_Private::EPropertyGenFlags::WeakObject, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, 0, Z_Construct_UClass_APawn_NoRegister, METADATA_PARAMS(0, nullptr) };
+const UECodeGen_Private::FArrayPropertyParams Z_Construct_UClass_ATrafficVehicleManager_Statics::NewProp_VisualVehicles = { "VisualVehicles", nullptr, (EPropertyFlags)0x0044000000000000, UECodeGen_Private::EPropertyGenFlags::Array, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(ATrafficVehicleManager, VisualVehicles), EArrayPropertyFlags::None, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_VisualVehicles_MetaData), NewProp_VisualVehicles_MetaData) };
+const UECodeGen_Private::FWeakObjectPropertyParams Z_Construct_UClass_ATrafficVehicleManager_Statics::NewProp_Adapters_Inner = { "Adapters", nullptr, (EPropertyFlags)0x0004000000000000, UECodeGen_Private::EPropertyGenFlags::WeakObject, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, 0, Z_Construct_UClass_ATrafficVehicleAdapter_NoRegister, METADATA_PARAMS(0, nullptr) };
+const UECodeGen_Private::FArrayPropertyParams Z_Construct_UClass_ATrafficVehicleManager_Statics::NewProp_Adapters = { "Adapters", nullptr, (EPropertyFlags)0x0044000000000000, UECodeGen_Private::EPropertyGenFlags::Array, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(ATrafficVehicleManager, Adapters), EArrayPropertyFlags::None, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_Adapters_MetaData), NewProp_Adapters_MetaData) };
 const UECodeGen_Private::FPropertyParamsBase* const Z_Construct_UClass_ATrafficVehicleManager_Statics::PropPointers[] = {
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_ATrafficVehicleManager_Statics::NewProp_NetworkAsset,
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_ATrafficVehicleManager_Statics::NewProp_Vehicles_Inner,
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_ATrafficVehicleManager_Statics::NewProp_Vehicles,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_ATrafficVehicleManager_Statics::NewProp_VisualVehicles_Inner,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_ATrafficVehicleManager_Statics::NewProp_VisualVehicles,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_ATrafficVehicleManager_Statics::NewProp_Adapters_Inner,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_ATrafficVehicleManager_Statics::NewProp_Adapters,
 };
 static_assert(UE_ARRAY_COUNT(Z_Construct_UClass_ATrafficVehicleManager_Statics::PropPointers) < 2048);
 // ********** End Class ATrafficVehicleManager Property Definitions ********************************
@@ -128,10 +148,10 @@ ATrafficVehicleManager::~ATrafficVehicleManager() {}
 struct Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleManager_h__Script_TrafficRuntime_Statics
 {
 	static constexpr FClassRegisterCompiledInInfo ClassInfo[] = {
-		{ Z_Construct_UClass_ATrafficVehicleManager, ATrafficVehicleManager::StaticClass, TEXT("ATrafficVehicleManager"), &Z_Registration_Info_UClass_ATrafficVehicleManager, CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(ATrafficVehicleManager), 2620571195U) },
+		{ Z_Construct_UClass_ATrafficVehicleManager, ATrafficVehicleManager::StaticClass, TEXT("ATrafficVehicleManager"), &Z_Registration_Info_UClass_ATrafficVehicleManager, CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(ATrafficVehicleManager), 3823652730U) },
 	};
 }; // Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleManager_h__Script_TrafficRuntime_Statics 
-static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleManager_h__Script_TrafficRuntime_3309748177{
+static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleManager_h__Script_TrafficRuntime_3187686368{
 	TEXT("/Script/TrafficRuntime"),
 	Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleManager_h__Script_TrafficRuntime_Statics::ClassInfo, UE_ARRAY_COUNT(Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleManager_h__Script_TrafficRuntime_Statics::ClassInfo),
 	nullptr, 0,

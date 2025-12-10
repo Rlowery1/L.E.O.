@@ -3,6 +3,7 @@
 	{
 		"Module.TrafficRuntime.cpp.obj": [
 			"CityBLDRoadGeometryProvider.gen.cpp.obj",
+			"RoadFamilyRegistry.gen.cpp.obj",
 			"TrafficAutomationLogger.gen.cpp.obj",
 			"TrafficCityBLDAdapterSettings.gen.cpp.obj",
 			"TrafficGeometryProvider.gen.cpp.obj",
@@ -24,6 +25,7 @@
 			"TrafficVisualSettings.gen.cpp.obj",
 			"PerModuleInline.gen.cpp.obj",
 			"CityBLDRoadGeometryProvider.cpp.obj",
+			"RoadFamilyRegistry.cpp.obj",
 			"TrafficAutomationLogger.cpp.obj",
 			"TrafficCalibrationVisuals.cpp.obj",
 			"TrafficCityBLDAdapterSettings.cpp.obj",

@@ -41,28 +41,7 @@ bool FTrafficRoadLabPIETest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	// Configure vehicle settings for adapter + external visual (try City Sample; fallback to base cube).
-	if (UTrafficVehicleSettings* VehicleSettings = GetMutableDefault<UTrafficVehicleSettings>())
-	{
-		VehicleSettings->bUseExternalVehicleAdapter = true;
-
-		if (!VehicleSettings->ExternalVehicleClass.IsValid())
-		{
-			TSoftClassPtr<AActor> AutoCity = UTrafficVehicleSettings::ResolveCitySampleDefaultVisual();
-			if (AutoCity.IsValid() || !AutoCity.IsNull())
-			{
-				VehicleSettings->ExternalVehicleClass = AutoCity;
-				UE_LOG(LogTraffic, Log, TEXT("[TrafficPIE] Using City Sample visual class: %s"), *AutoCity.ToString());
-			}
-			else
-			{
-				VehicleSettings->ExternalVehicleClass = TSoftClassPtr<AActor>(AActor::StaticClass());
-				UE_LOG(LogTraffic, Warning, TEXT("[TrafficPIE] City Sample visual not found; using placeholder Actor."));
-			}
-		}
-
-		VehicleSettings->SaveConfig();
-	}
+	// Vehicle visuals are now profile-driven; tests do not rely on external content.
 
 	UTrafficSystemEditorSubsystem* Subsys = GEditor->GetEditorSubsystem<UTrafficSystemEditorSubsystem>();
 	if (!Subsys)
@@ -155,41 +134,30 @@ bool FTrafficRoadLabPIETest::RunTest(const FString& Parameters)
 	UE_LOG(LogTraffic, Log, TEXT("[TrafficPIE] NetworkSummary Roads=%d Lanes=%d Intersections=%d Movements=%d"),
 		RoadCount, LaneCount, IntersectionCount, MovementCount);
 
-	// Validate that an adapter spawned and has a visual attached.
-	bool bFoundAdapter = false;
+	// Validate that vehicles spawned.
 	int32 VehicleCount = 0;
 	int32 LoggedLocations = 0;
-	for (TActorIterator<ATrafficVehicleAdapter> It(World); It; ++It)
+	for (TActorIterator<ATrafficVehicleBase> It(World); It; ++It)
 	{
-		ATrafficVehicleAdapter* Adapter = *It;
-		if (!Adapter)
+		ATrafficVehicleBase* Vehicle = *It;
+		if (!Vehicle)
 		{
 			continue;
 		}
-		bFoundAdapter = true;
 		++VehicleCount;
 		if (LoggedLocations < 3)
 		{
-			const FVector Loc = Adapter->GetActorLocation();
+			const FVector Loc = Vehicle->GetActorLocation();
 			UE_LOG(LogTraffic, Log, TEXT("[TrafficPIE] Vehicle%d_Location=%.0f,%.0f,%.0f"), LoggedLocations, Loc.X, Loc.Y, Loc.Z);
 			++LoggedLocations;
-		}
-		if (!Adapter->HasVisualAttached())
-		{
-			AddError(FString::Printf(TEXT("Adapter %s did not attach a visual actor."), *Adapter->GetName()));
-		}
-		else
-		{
-			UE_LOG(LogTraffic, Log, TEXT("[TrafficPIE] Adapter %s attached visual %s"), *Adapter->GetName(),
-				Adapter->GetVisualActor() ? *Adapter->GetVisualActor()->GetName() : TEXT("<null>"));
 		}
 	}
 
 	UE_LOG(LogTraffic, Log, TEXT("[TrafficPIE] VehiclesSpawned=%d"), VehicleCount);
 
-	if (!bFoundAdapter)
+	if (VehicleCount <= 0)
 	{
-		AddError(TEXT("No ATrafficVehicleAdapter was spawned during Build+Cars."));
+		AddError(TEXT("No traffic vehicles were spawned during Build+Cars."));
 	}
 
 	return !HasAnyErrors();

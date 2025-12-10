@@ -6,8 +6,10 @@
 #include "TrafficRuntimeModule.h"
 #include "TrafficVehicleSettings.h"
 #include "TrafficVehicleAdapter.h"
+#include "TrafficVehicleProfile.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
+#include "GameFramework/Pawn.h"
 
 ATrafficVehicleManager::ATrafficVehicleManager()
 {
@@ -52,6 +54,8 @@ bool ATrafficVehicleManager::LoadNetwork()
 
 void ATrafficVehicleManager::ClearVehicles()
 {
+	DestroyAdaptersAndVisuals();
+
 	for (ATrafficVehicleBase* Vehicle : Vehicles)
 	{
 		if (Vehicle)
@@ -60,6 +64,49 @@ void ATrafficVehicleManager::ClearVehicles()
 		}
 	}
 	Vehicles.Empty();
+}
+
+void ATrafficVehicleManager::DestroyAdaptersAndVisuals()
+{
+	for (TWeakObjectPtr<ATrafficVehicleAdapter>& Adapter : Adapters)
+	{
+		if (Adapter.IsValid())
+		{
+			Adapter->Destroy();
+		}
+	}
+	Adapters.Empty();
+
+	for (TWeakObjectPtr<APawn>& Visual : VisualVehicles)
+	{
+		if (Visual.IsValid())
+		{
+			Visual->Destroy();
+		}
+	}
+	VisualVehicles.Empty();
+}
+
+const UTrafficVehicleProfile* ATrafficVehicleManager::ResolveDefaultVehicleProfile() const
+{
+	const UTrafficVehicleSettings* Settings = UTrafficVehicleSettings::Get();
+	if (!Settings)
+	{
+		return nullptr;
+	}
+
+	if (Settings->DefaultVehicleProfile.IsNull())
+	{
+		return nullptr;
+	}
+
+	UObject* Loaded = Settings->DefaultVehicleProfile.TryLoad();
+	const UTrafficVehicleProfile* Profile = Cast<UTrafficVehicleProfile>(Loaded);
+	if (!Profile)
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[VehicleManager] DefaultVehicleProfile could not be loaded: %s"), *Settings->DefaultVehicleProfile.ToString());
+	}
+	return Profile;
 }
 
 void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float SpeedCmPerSec)
@@ -77,56 +124,23 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 
 	ClearVehicles();
 
-	const UTrafficVehicleSettings* VehicleSettings = GetDefault<UTrafficVehicleSettings>();
-	const bool bUseAdapter = VehicleSettings && VehicleSettings->bUseExternalVehicleAdapter;
-
-	TSoftClassPtr<AActor> ResolvedVisual;
-	if (bUseAdapter)
+	const UTrafficVehicleProfile* Profile = ResolveDefaultVehicleProfile();
+	if (Profile)
 	{
-		if (VehicleSettings->ExternalVehicleClass.IsValid())
-		{
-			ResolvedVisual = VehicleSettings->ExternalVehicleClass;
-		}
-		else
-		{
-			ResolvedVisual = UTrafficVehicleSettings::ResolveCitySampleDefaultVisual();
-			if (!ResolvedVisual.IsNull())
-			{
-				UE_LOG(LogTraffic, Log, TEXT("[VehicleManager] Auto-resolved City Sample Chaos visual: %s"), *ResolvedVisual.ToString());
-			}
-			else
-			{
-				ResolvedVisual = TSoftClassPtr<AActor>(AActor::StaticClass());
-				UE_LOG(LogTraffic, Warning, TEXT("[VehicleManager] Adapter enabled but no ExternalVehicleClass set and City Sample not found; using placeholder Actor."));
-			}
-		}
-	}
-
-	TSubclassOf<ATrafficVehicleBase> VehicleClass = bUseAdapter
-		? ATrafficVehicleAdapter::StaticClass()
-		: ATrafficVehicleBase::StaticClass();
-
-	if (!bUseAdapter && VehicleSettings && VehicleSettings->DefaultTestVehicleClass.IsValid())
-	{
-		if (TSubclassOf<ATrafficVehicleBase> UserClass = VehicleSettings->DefaultTestVehicleClass.LoadSynchronous())
-		{
-			VehicleClass = UserClass;
-		}
-	}
-
-	if (!VehicleClass)
-	{
-		UE_LOG(LogTraffic, Warning, TEXT("[VehicleManager] No vehicle class resolved; using ATrafficVehicleBase placeholder."));
-		VehicleClass = ATrafficVehicleBase::StaticClass();
-	}
-	else if (bUseAdapter)
-	{
-		UE_LOG(LogTraffic, Log, TEXT("[VehicleManager] Using adapter vehicle; visual class=%s"),
-			ResolvedVisual.IsNull() ? TEXT("<none>") : *ResolvedVisual.ToString());
+		UE_LOG(LogTraffic, Log, TEXT("[VehicleManager] Using vehicle profile '%s' (%s)."),
+			*Profile->GetName(),
+			Profile->VehicleClass.IsNull() ? TEXT("<no class>") : *Profile->VehicleClass.ToString());
 	}
 	else
 	{
-		UE_LOG(LogTraffic, Log, TEXT("[VehicleManager] Using vehicle class: %s"), *VehicleClass->GetName());
+		UE_LOG(LogTraffic, Warning, TEXT("[VehicleManager] No default vehicle profile configured. Using TrafficVehicleBase only."));
+	}
+
+	TSubclassOf<ATrafficVehicleBase> LogicClass = ATrafficVehicleBase::StaticClass();
+	TSubclassOf<APawn> VisualClass = nullptr;
+	if (Profile && Profile->VehicleClass.IsValid())
+	{
+		VisualClass = Profile->VehicleClass.LoadSynchronous();
 	}
 
 	const TArray<FTrafficLane>& Lanes = NetworkAsset->Network.Lanes;
@@ -145,24 +159,34 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 			const float SpacingCm = 5000.f;
 			const float InitialS = i * SpacingCm;
 
-			ATrafficVehicleBase* Vehicle = World->SpawnActor<ATrafficVehicleBase>(VehicleClass);
+			ATrafficVehicleBase* Vehicle = World->SpawnActor<ATrafficVehicleBase>(LogicClass);
 			if (!Vehicle)
 			{
-				UE_LOG(LogTraffic, Warning, TEXT("[VehicleManager] Failed to spawn vehicle for lane %d (class %s)."), LaneIndex, *VehicleClass->GetName());
+				UE_LOG(LogTraffic, Warning, TEXT("[VehicleManager] Failed to spawn vehicle for lane %d (class %s)."), LaneIndex, *LogicClass->GetName());
 				continue;
-			}
-
-			if (bUseAdapter)
-			{
-				if (ATrafficVehicleAdapter* Adapter = Cast<ATrafficVehicleAdapter>(Vehicle))
-				{
-					Adapter->SetExternalVisualClass(ResolvedVisual);
-					Adapter->EnsureVisualAttached();
-				}
 			}
 
 			Vehicle->InitializeOnLane(&Lane, InitialS, SpeedCmPerSec);
 			Vehicles.Add(Vehicle);
+
+			if (VisualClass)
+			{
+				FActorSpawnParameters Params;
+				Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+				Params.Owner = this;
+				APawn* VisualPawn = World->SpawnActor<APawn>(VisualClass, Vehicle->GetActorTransform(), Params);
+				if (VisualPawn)
+				{
+					VisualPawn->SetActorEnableCollision(false);
+					ATrafficVehicleAdapter* Adapter = World->SpawnActor<ATrafficVehicleAdapter>(Params);
+					if (Adapter)
+					{
+						Adapter->Initialize(Vehicle, VisualPawn);
+						Adapters.Add(Adapter);
+					}
+					VisualVehicles.Add(VisualPawn);
+				}
+			}
 		}
 	}
 

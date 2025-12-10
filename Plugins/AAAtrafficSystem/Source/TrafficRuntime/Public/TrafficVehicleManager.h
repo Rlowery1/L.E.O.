@@ -6,6 +6,8 @@
 
 class UTrafficNetworkAsset;
 class ATrafficVehicleBase;
+class ATrafficVehicleAdapter;
+class UTrafficVehicleProfile;
 
 UCLASS()
 class TRAFFICRUNTIME_API ATrafficVehicleManager : public AActor
@@ -29,6 +31,13 @@ private:
 	UPROPERTY()
 	TArray<ATrafficVehicleBase*> Vehicles;
 
-	UTrafficNetworkAsset* FindNetworkAsset() const;
-};
+	UPROPERTY()
+	TArray<TWeakObjectPtr<APawn>> VisualVehicles;
 
+	UPROPERTY()
+	TArray<TWeakObjectPtr<ATrafficVehicleAdapter>> Adapters;
+
+	UTrafficNetworkAsset* FindNetworkAsset() const;
+	const UTrafficVehicleProfile* ResolveDefaultVehicleProfile() const;
+	void DestroyAdaptersAndVisuals();
+};

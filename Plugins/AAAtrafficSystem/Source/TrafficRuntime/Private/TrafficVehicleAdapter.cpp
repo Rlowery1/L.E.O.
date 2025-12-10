@@ -1,92 +1,42 @@
 #include "TrafficVehicleAdapter.h"
 #include "TrafficRuntimeModule.h"
+#include "TrafficVehicleBase.h"
 
 ATrafficVehicleAdapter::ATrafficVehicleAdapter()
 {
-	// Hide the base cube by default; visuals come from the external actor.
-	if (Body)
-	{
-		Body->SetHiddenInGame(true);
-		Body->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	}
+	PrimaryActorTick.bCanEverTick = true;
 }
 
-void ATrafficVehicleAdapter::SetExternalVisualClass(const TSoftClassPtr<AActor>& InClass)
+void ATrafficVehicleAdapter::Initialize(ATrafficVehicleBase* InLogic, APawn* InChaos)
 {
-	ExternalVehicleClass = InClass;
+	LogicVehicle = InLogic;
+	ChaosVehicle = InChaos;
+
+	if (ChaosVehicle.IsValid())
+	{
+		ChaosVehicle->SetActorEnableCollision(false);
+	}
 }
 
 void ATrafficVehicleAdapter::BeginPlay()
 {
 	Super::BeginPlay();
-	EnsureVisualSpawned();
 }
 
 void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	SyncVisualTransform();
-}
 
-void ATrafficVehicleAdapter::EnsureVisualSpawned()
-{
-	if (SpawnedVisual || !GetWorld())
+	if (!LogicVehicle.IsValid() || !ChaosVehicle.IsValid())
 	{
 		return;
 	}
 
-	UClass* VisualClass = nullptr;
-	if (!ExternalVehicleClass.IsNull())
-	{
-		VisualClass = ExternalVehicleClass.LoadSynchronous();
-	}
-	if (!VisualClass)
-	{
-		VisualClass = AActor::StaticClass();
-	}
-
-	if (!VisualClass)
-	{
-		UE_LOG(LogTraffic, Warning, TEXT("[VehicleAdapter] No ExternalVehicleClass set; using base cube visual."));
-		return;
-	}
-
-	FActorSpawnParameters Params;
-	Params.Owner = this;
-	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-	SpawnedVisual = GetWorld()->SpawnActor<AActor>(VisualClass, GetActorTransform(), Params);
-	if (!SpawnedVisual)
-	{
-		UE_LOG(LogTraffic, Warning, TEXT("[VehicleAdapter] Failed to spawn visual actor of class %s"), *VisualClass->GetName());
-		return;
-	}
-
-	SpawnedVisual->AttachToActor(this, FAttachmentTransformRules::KeepWorldTransform);
-	SpawnedVisual->SetActorEnableCollision(false);
-
-	// Also hide the base cube mesh to avoid double visuals.
-	if (Body)
-	{
-		Body->SetHiddenInGame(true);
-		Body->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	}
-
-	UE_LOG(LogTraffic, Log, TEXT("[VehicleAdapter] Spawned visual actor %s for %s"), *SpawnedVisual->GetName(), *GetName());
-}
-
-void ATrafficVehicleAdapter::SyncVisualTransform()
-{
-	if (!SpawnedVisual)
-	{
-		return;
-	}
-
-	SpawnedVisual->SetActorLocationAndRotation(GetActorLocation(), GetActorRotation(), false, nullptr, ETeleportType::TeleportPhysics);
-}
-
-void ATrafficVehicleAdapter::EnsureVisualAttached()
-{
-	EnsureVisualSpawned();
-	SyncVisualTransform();
+	// Simple transform-follow mode for deterministic tests.
+	ChaosVehicle->SetActorLocationAndRotation(
+		LogicVehicle->GetActorLocation(),
+		LogicVehicle->GetActorRotation(),
+		false,
+		nullptr,
+		ETeleportType::TeleportPhysics);
 }

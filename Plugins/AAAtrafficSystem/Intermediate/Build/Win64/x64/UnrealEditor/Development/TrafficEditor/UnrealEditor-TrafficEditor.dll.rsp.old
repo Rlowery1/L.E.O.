@@ -59,7 +59,6 @@
 "../Intermediate/Build/Win64/x64/UnrealEditor/Development/LevelEditor/UnrealEditor-LevelEditor.lib"
 "../Intermediate/Build/Win64/x64/UnrealEditor/Development/ToolMenus/UnrealEditor-ToolMenus.lib"
 "../Plugins/Runtime/ProceduralMeshComponent/Intermediate/Build/Win64/x64/UnrealEditor/Development/ProceduralMeshComponent/UnrealEditor-ProceduralMeshComponent.lib"
-"../Intermediate/Build/Win64/x64/UnrealEditor/Development/Landscape/UnrealEditor-Landscape.lib"
 "delayimp.lib"
 "wininet.lib"
 "rpcrt4.lib"

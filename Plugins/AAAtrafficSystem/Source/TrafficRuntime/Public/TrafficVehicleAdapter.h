@@ -1,44 +1,34 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "TrafficVehicleBase.h"
+#include "GameFramework/Actor.h"
 #include "TrafficVehicleAdapter.generated.h"
 
+class ATrafficVehicleBase;
+
 /**
- * Adapter vehicle that drives with the AAA kinematic follower but renders any user-supplied vehicle Blueprint/Class.
- * The spawned visual is attached and collision-disabled so it does not fight the kinematic pathing.
+ * Adapter that binds a logic vehicle (ATrafficVehicleBase) to a visual/Chaos pawn.
+ * For now, the adapter simply teleports the visual to the logic transform each tick.
  */
 UCLASS()
-class TRAFFICRUNTIME_API ATrafficVehicleAdapter : public ATrafficVehicleBase
+class TRAFFICRUNTIME_API ATrafficVehicleAdapter : public AActor
 {
 	GENERATED_BODY()
 
 public:
 	ATrafficVehicleAdapter();
 
-	/** Optional external vehicle class to spawn and attach for visuals (can be any Actor, e.g. Chaos vehicle BP). */
-	UPROPERTY(EditAnywhere, Category="Vehicle")
-	TSoftClassPtr<AActor> ExternalVehicleClass;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="TrafficVehicle")
+	TWeakObjectPtr<ATrafficVehicleBase> LogicVehicle;
 
-	/** Explicitly set the visual class before spawning traffic (used by the manager). */
-	void SetExternalVisualClass(const TSoftClassPtr<AActor>& InClass);
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="TrafficVehicle")
+	TWeakObjectPtr<APawn> ChaosVehicle;
 
-	/** True if a visual actor was spawned and attached. */
-	bool HasVisualAttached() const { return SpawnedVisual != nullptr; }
+	/** Initialize bindings after spawn. */
+	void Initialize(ATrafficVehicleBase* InLogic, APawn* InChaos);
 
-	/** Access the spawned visual actor (may be null). */
-	AActor* GetVisualActor() const { return SpawnedVisual; }
-	/** Force-spawn the visual immediately (useful in editor/automation where BeginPlay may not run). */
-	void EnsureVisualAttached();
+	virtual void Tick(float DeltaSeconds) override;
 
 protected:
 	virtual void BeginPlay() override;
-	virtual void Tick(float DeltaSeconds) override;
-
-private:
-	UPROPERTY()
-	AActor* SpawnedVisual = nullptr;
-
-	void EnsureVisualSpawned();
-	void SyncVisualTransform();
 };

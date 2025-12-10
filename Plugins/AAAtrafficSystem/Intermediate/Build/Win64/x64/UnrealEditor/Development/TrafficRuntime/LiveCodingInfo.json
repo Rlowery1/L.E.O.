@@ -21,6 +21,7 @@
 			"TrafficVehicleAdapter.gen.cpp.obj",
 			"TrafficVehicleBase.gen.cpp.obj",
 			"TrafficVehicleManager.gen.cpp.obj",
+			"TrafficVehicleProfile.gen.cpp.obj",
 			"TrafficVehicleSettings.gen.cpp.obj",
 			"TrafficVisualSettings.gen.cpp.obj",
 			"PerModuleInline.gen.cpp.obj",
@@ -41,11 +42,12 @@
 			"TrafficRoadMetadataComponent.cpp.obj",
 			"TrafficRuntimeModule.cpp.obj",
 			"TrafficSystemController.cpp.obj",
-			"TrafficVehicleAdapter.cpp.obj",
 			"TrafficVehicleBase.cpp.obj",
+			"TrafficVisualSettings.cpp.obj",
+			"TrafficVehicleAdapter.cpp.obj",
 			"TrafficVehicleManager.cpp.obj",
-			"TrafficVehicleSettings.cpp.obj",
-			"TrafficVisualSettings.cpp.obj"
+			"TrafficVehicleProfile.cpp.obj",
+			"TrafficVehicleSettings.cpp.obj"
 		]
 	}
 }

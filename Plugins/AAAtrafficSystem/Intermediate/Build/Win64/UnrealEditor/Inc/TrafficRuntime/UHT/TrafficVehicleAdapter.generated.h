@@ -20,18 +20,18 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
 struct Z_Construct_UClass_ATrafficVehicleAdapter_Statics;
 TRAFFICRUNTIME_API UClass* Z_Construct_UClass_ATrafficVehicleAdapter_NoRegister();
 
-#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleAdapter_h_14_INCLASS_NO_PURE_DECLS \
+#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleAdapter_h_16_INCLASS_NO_PURE_DECLS \
 private: \
 	static void StaticRegisterNativesATrafficVehicleAdapter(); \
 	friend struct ::Z_Construct_UClass_ATrafficVehicleAdapter_Statics; \
 	static UClass* GetPrivateStaticClass(); \
 	friend TRAFFICRUNTIME_API UClass* ::Z_Construct_UClass_ATrafficVehicleAdapter_NoRegister(); \
 public: \
-	DECLARE_CLASS2(ATrafficVehicleAdapter, ATrafficVehicleBase, COMPILED_IN_FLAGS(0 | CLASS_Config), CASTCLASS_None, TEXT("/Script/TrafficRuntime"), Z_Construct_UClass_ATrafficVehicleAdapter_NoRegister) \
+	DECLARE_CLASS2(ATrafficVehicleAdapter, AActor, COMPILED_IN_FLAGS(0 | CLASS_Config), CASTCLASS_None, TEXT("/Script/TrafficRuntime"), Z_Construct_UClass_ATrafficVehicleAdapter_NoRegister) \
 	DECLARE_SERIALIZER(ATrafficVehicleAdapter)
 
 
-#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleAdapter_h_14_ENHANCED_CONSTRUCTORS \
+#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleAdapter_h_16_ENHANCED_CONSTRUCTORS \
 	/** Deleted move- and copy-constructors, should never be used */ \
 	ATrafficVehicleAdapter(ATrafficVehicleAdapter&&) = delete; \
 	ATrafficVehicleAdapter(const ATrafficVehicleAdapter&) = delete; \
@@ -41,12 +41,12 @@ public: \
 	NO_API virtual ~ATrafficVehicleAdapter();
 
 
-#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleAdapter_h_11_PROLOG
-#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleAdapter_h_14_GENERATED_BODY \
+#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleAdapter_h_13_PROLOG
+#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleAdapter_h_16_GENERATED_BODY \
 PRAGMA_DISABLE_DEPRECATION_WARNINGS \
 public: \
-	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleAdapter_h_14_INCLASS_NO_PURE_DECLS \
-	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleAdapter_h_14_ENHANCED_CONSTRUCTORS \
+	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleAdapter_h_16_INCLASS_NO_PURE_DECLS \
+	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleAdapter_h_16_ENHANCED_CONSTRUCTORS \
 private: \
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 

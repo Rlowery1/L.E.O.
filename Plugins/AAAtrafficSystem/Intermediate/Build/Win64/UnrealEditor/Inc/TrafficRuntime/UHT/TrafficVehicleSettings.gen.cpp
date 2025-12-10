@@ -6,16 +6,15 @@
 
 #include "UObject/GeneratedCppIncludes.h"
 #include "TrafficVehicleSettings.h"
+#include "UObject/SoftObjectPath.h"
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
 static_assert(!UE_WITH_CONSTINIT_UOBJECT, "This generated code can only be compiled with !UE_WITH_CONSTINIT_OBJECT");
 void EmptyLinkFunctionForGeneratedCodeTrafficVehicleSettings() {}
 
 // ********** Begin Cross Module References ********************************************************
-COREUOBJECT_API UClass* Z_Construct_UClass_UClass_NoRegister();
+COREUOBJECT_API UScriptStruct* Z_Construct_UScriptStruct_FSoftObjectPath();
 DEVELOPERSETTINGS_API UClass* Z_Construct_UClass_UDeveloperSettings();
-ENGINE_API UClass* Z_Construct_UClass_AActor_NoRegister();
-TRAFFICRUNTIME_API UClass* Z_Construct_UClass_ATrafficVehicleBase_NoRegister();
 TRAFFICRUNTIME_API UClass* Z_Construct_UClass_UTrafficVehicleSettings();
 TRAFFICRUNTIME_API UClass* Z_Construct_UClass_UTrafficVehicleSettings_NoRegister();
 UPackage* Z_Construct_UPackage__Script_TrafficRuntime();
@@ -64,44 +63,32 @@ struct Z_Construct_UClass_UTrafficVehicleSettings_Statics
 		{ "ToolTip", "Vehicle defaults for AAA Traffic (test vehicles, Chaos class selection, etc.)" },
 #endif
 	};
-	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_DefaultTestVehicleClass_MetaData[] = {
-		{ "Category", "Vehicles" },
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_DefaultVehicleProfile_MetaData[] = {
+		{ "Category", "TrafficVehicle" },
 #if !UE_BUILD_SHIPPING
-		{ "Comment", "/** Default vehicle class to spawn for test traffic (e.g., a Chaos vehicle BP from CitySample). */" },
+		{ "Comment", "/** Default vehicle profile data asset (can point to a Chaos vehicle profile in project content). */" },
 #endif
 		{ "ModuleRelativePath", "Public/TrafficVehicleSettings.h" },
 #if !UE_BUILD_SHIPPING
-		{ "ToolTip", "Default vehicle class to spawn for test traffic (e.g., a Chaos vehicle BP from CitySample)." },
+		{ "ToolTip", "Default vehicle profile data asset (can point to a Chaos vehicle profile in project content)." },
 #endif
 	};
-	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_bUseExternalVehicleAdapter_MetaData[] = {
-		{ "Category", "Vehicles" },
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_AdditionalVehicleProfiles_MetaData[] = {
+		{ "Category", "TrafficVehicle" },
 #if !UE_BUILD_SHIPPING
-		{ "Comment", "/** Use an external visual Chaos vehicle (any Actor class) attached to an adapter that follows traffic lanes. */" },
+		{ "Comment", "/** Optional additional profiles for variety (not yet sampled automatically). */" },
 #endif
 		{ "ModuleRelativePath", "Public/TrafficVehicleSettings.h" },
 #if !UE_BUILD_SHIPPING
-		{ "ToolTip", "Use an external visual Chaos vehicle (any Actor class) attached to an adapter that follows traffic lanes." },
-#endif
-	};
-	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_ExternalVehicleClass_MetaData[] = {
-		{ "Category", "Vehicles" },
-#if !UE_BUILD_SHIPPING
-		{ "Comment", "/** The external vehicle Blueprint/Class to attach when using the adapter (can be City Sample or any Chaos vehicle). */" },
-#endif
-		{ "EditCondition", "bUseExternalVehicleAdapter" },
-		{ "ModuleRelativePath", "Public/TrafficVehicleSettings.h" },
-#if !UE_BUILD_SHIPPING
-		{ "ToolTip", "The external vehicle Blueprint/Class to attach when using the adapter (can be City Sample or any Chaos vehicle)." },
+		{ "ToolTip", "Optional additional profiles for variety (not yet sampled automatically)." },
 #endif
 	};
 #endif // WITH_METADATA
 
 // ********** Begin Class UTrafficVehicleSettings constinit property declarations ******************
-	static const UECodeGen_Private::FSoftClassPropertyParams NewProp_DefaultTestVehicleClass;
-	static void NewProp_bUseExternalVehicleAdapter_SetBit(void* Obj);
-	static const UECodeGen_Private::FBoolPropertyParams NewProp_bUseExternalVehicleAdapter;
-	static const UECodeGen_Private::FSoftClassPropertyParams NewProp_ExternalVehicleClass;
+	static const UECodeGen_Private::FStructPropertyParams NewProp_DefaultVehicleProfile;
+	static const UECodeGen_Private::FStructPropertyParams NewProp_AdditionalVehicleProfiles_Inner;
+	static const UECodeGen_Private::FArrayPropertyParams NewProp_AdditionalVehicleProfiles;
 	static const UECodeGen_Private::FPropertyParamsBase* const PropPointers[];
 // ********** End Class UTrafficVehicleSettings constinit property declarations ********************
 	static UObject* (*const DependentSingletons[])();
@@ -112,17 +99,13 @@ struct Z_Construct_UClass_UTrafficVehicleSettings_Statics
 }; // struct Z_Construct_UClass_UTrafficVehicleSettings_Statics
 
 // ********** Begin Class UTrafficVehicleSettings Property Definitions *****************************
-const UECodeGen_Private::FSoftClassPropertyParams Z_Construct_UClass_UTrafficVehicleSettings_Statics::NewProp_DefaultTestVehicleClass = { "DefaultTestVehicleClass", nullptr, (EPropertyFlags)0x0014000000004001, UECodeGen_Private::EPropertyGenFlags::SoftClass, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(UTrafficVehicleSettings, DefaultTestVehicleClass), Z_Construct_UClass_ATrafficVehicleBase_NoRegister, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_DefaultTestVehicleClass_MetaData), NewProp_DefaultTestVehicleClass_MetaData) };
-void Z_Construct_UClass_UTrafficVehicleSettings_Statics::NewProp_bUseExternalVehicleAdapter_SetBit(void* Obj)
-{
-	((UTrafficVehicleSettings*)Obj)->bUseExternalVehicleAdapter = 1;
-}
-const UECodeGen_Private::FBoolPropertyParams Z_Construct_UClass_UTrafficVehicleSettings_Statics::NewProp_bUseExternalVehicleAdapter = { "bUseExternalVehicleAdapter", nullptr, (EPropertyFlags)0x0010000000004001, UECodeGen_Private::EPropertyGenFlags::Bool | UECodeGen_Private::EPropertyGenFlags::NativeBool, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, sizeof(bool), sizeof(UTrafficVehicleSettings), &Z_Construct_UClass_UTrafficVehicleSettings_Statics::NewProp_bUseExternalVehicleAdapter_SetBit, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_bUseExternalVehicleAdapter_MetaData), NewProp_bUseExternalVehicleAdapter_MetaData) };
-const UECodeGen_Private::FSoftClassPropertyParams Z_Construct_UClass_UTrafficVehicleSettings_Statics::NewProp_ExternalVehicleClass = { "ExternalVehicleClass", nullptr, (EPropertyFlags)0x0014000000004001, UECodeGen_Private::EPropertyGenFlags::SoftClass, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(UTrafficVehicleSettings, ExternalVehicleClass), Z_Construct_UClass_AActor_NoRegister, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_ExternalVehicleClass_MetaData), NewProp_ExternalVehicleClass_MetaData) };
+const UECodeGen_Private::FStructPropertyParams Z_Construct_UClass_UTrafficVehicleSettings_Statics::NewProp_DefaultVehicleProfile = { "DefaultVehicleProfile", nullptr, (EPropertyFlags)0x0010000000004001, UECodeGen_Private::EPropertyGenFlags::Struct, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(UTrafficVehicleSettings, DefaultVehicleProfile), Z_Construct_UScriptStruct_FSoftObjectPath, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_DefaultVehicleProfile_MetaData), NewProp_DefaultVehicleProfile_MetaData) }; // 2425717601
+const UECodeGen_Private::FStructPropertyParams Z_Construct_UClass_UTrafficVehicleSettings_Statics::NewProp_AdditionalVehicleProfiles_Inner = { "AdditionalVehicleProfiles", nullptr, (EPropertyFlags)0x0000000000004000, UECodeGen_Private::EPropertyGenFlags::Struct, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, 0, Z_Construct_UScriptStruct_FSoftObjectPath, METADATA_PARAMS(0, nullptr) }; // 2425717601
+const UECodeGen_Private::FArrayPropertyParams Z_Construct_UClass_UTrafficVehicleSettings_Statics::NewProp_AdditionalVehicleProfiles = { "AdditionalVehicleProfiles", nullptr, (EPropertyFlags)0x0010000000004001, UECodeGen_Private::EPropertyGenFlags::Array, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(UTrafficVehicleSettings, AdditionalVehicleProfiles), EArrayPropertyFlags::None, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_AdditionalVehicleProfiles_MetaData), NewProp_AdditionalVehicleProfiles_MetaData) }; // 2425717601
 const UECodeGen_Private::FPropertyParamsBase* const Z_Construct_UClass_UTrafficVehicleSettings_Statics::PropPointers[] = {
-	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_UTrafficVehicleSettings_Statics::NewProp_DefaultTestVehicleClass,
-	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_UTrafficVehicleSettings_Statics::NewProp_bUseExternalVehicleAdapter,
-	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_UTrafficVehicleSettings_Statics::NewProp_ExternalVehicleClass,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_UTrafficVehicleSettings_Statics::NewProp_DefaultVehicleProfile,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_UTrafficVehicleSettings_Statics::NewProp_AdditionalVehicleProfiles_Inner,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_UTrafficVehicleSettings_Statics::NewProp_AdditionalVehicleProfiles,
 };
 static_assert(UE_ARRAY_COUNT(Z_Construct_UClass_UTrafficVehicleSettings_Statics::PropPointers) < 2048);
 // ********** End Class UTrafficVehicleSettings Property Definitions *******************************
@@ -165,10 +148,10 @@ UTrafficVehicleSettings::~UTrafficVehicleSettings() {}
 struct Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleSettings_h__Script_TrafficRuntime_Statics
 {
 	static constexpr FClassRegisterCompiledInInfo ClassInfo[] = {
-		{ Z_Construct_UClass_UTrafficVehicleSettings, UTrafficVehicleSettings::StaticClass, TEXT("UTrafficVehicleSettings"), &Z_Registration_Info_UClass_UTrafficVehicleSettings, CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(UTrafficVehicleSettings), 1728041763U) },
+		{ Z_Construct_UClass_UTrafficVehicleSettings, UTrafficVehicleSettings::StaticClass, TEXT("UTrafficVehicleSettings"), &Z_Registration_Info_UClass_UTrafficVehicleSettings, CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(UTrafficVehicleSettings), 3759990086U) },
 	};
 }; // Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleSettings_h__Script_TrafficRuntime_Statics 
-static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleSettings_h__Script_TrafficRuntime_4143899843{
+static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleSettings_h__Script_TrafficRuntime_1309856342{
 	TEXT("/Script/TrafficRuntime"),
 	Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleSettings_h__Script_TrafficRuntime_Statics::ClassInfo, UE_ARRAY_COUNT(Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleSettings_h__Script_TrafficRuntime_Statics::ClassInfo),
 	nullptr, 0,

@@ -4,8 +4,7 @@
 #include "Engine/DeveloperSettings.h"
 #include "TrafficVehicleSettings.generated.h"
 
-class ATrafficVehicleBase;
-class AActor;
+class UTrafficVehicleProfile;
 
 /**
  * Vehicle defaults for AAA Traffic (test vehicles, Chaos class selection, etc.)
@@ -17,20 +16,15 @@ class TRAFFICRUNTIME_API UTrafficVehicleSettings : public UDeveloperSettings
 public:
 	UTrafficVehicleSettings();
 
-	/** Default vehicle class to spawn for test traffic (e.g., a Chaos vehicle BP from CitySample). */
-	UPROPERTY(EditAnywhere, Config, Category="Vehicles")
-	TSoftClassPtr<ATrafficVehicleBase> DefaultTestVehicleClass;
+	/** Default vehicle profile data asset (can point to a Chaos vehicle profile in project content). */
+	UPROPERTY(EditAnywhere, Config, Category="TrafficVehicle")
+	FSoftObjectPath DefaultVehicleProfile;
 
-	/** Use an external visual Chaos vehicle (any Actor class) attached to an adapter that follows traffic lanes. */
-	UPROPERTY(EditAnywhere, Config, Category="Vehicles")
-	bool bUseExternalVehicleAdapter = false;
+	/** Optional additional profiles for variety (not yet sampled automatically). */
+	UPROPERTY(EditAnywhere, Config, Category="TrafficVehicle")
+	TArray<FSoftObjectPath> AdditionalVehicleProfiles;
 
-	/** The external vehicle Blueprint/Class to attach when using the adapter (can be City Sample or any Chaos vehicle). */
-	UPROPERTY(EditAnywhere, Config, Category="Vehicles", meta=(EditCondition="bUseExternalVehicleAdapter"))
-	TSoftClassPtr<AActor> ExternalVehicleClass;
-
-	/** Tries to auto-resolve a City Sample Chaos sedan if the pack is installed. Returns null if not found. */
-	static TSoftClassPtr<AActor> ResolveCitySampleDefaultVisual();
+	static const UTrafficVehicleSettings* Get();
 
 	virtual FName GetCategoryName() const override { return FName(TEXT("Plugins")); }
 	virtual FName GetSectionName() const override { return FName(TEXT("AAA Traffic Vehicle Settings")); }

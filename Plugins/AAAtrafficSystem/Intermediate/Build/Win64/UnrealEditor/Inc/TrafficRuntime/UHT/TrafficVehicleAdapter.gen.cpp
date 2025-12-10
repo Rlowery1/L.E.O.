@@ -12,11 +12,11 @@ static_assert(!UE_WITH_CONSTINIT_UOBJECT, "This generated code can only be compi
 void EmptyLinkFunctionForGeneratedCodeTrafficVehicleAdapter() {}
 
 // ********** Begin Cross Module References ********************************************************
-COREUOBJECT_API UClass* Z_Construct_UClass_UClass_NoRegister();
-ENGINE_API UClass* Z_Construct_UClass_AActor_NoRegister();
+ENGINE_API UClass* Z_Construct_UClass_AActor();
+ENGINE_API UClass* Z_Construct_UClass_APawn_NoRegister();
 TRAFFICRUNTIME_API UClass* Z_Construct_UClass_ATrafficVehicleAdapter();
 TRAFFICRUNTIME_API UClass* Z_Construct_UClass_ATrafficVehicleAdapter_NoRegister();
-TRAFFICRUNTIME_API UClass* Z_Construct_UClass_ATrafficVehicleBase();
+TRAFFICRUNTIME_API UClass* Z_Construct_UClass_ATrafficVehicleBase_NoRegister();
 UPackage* Z_Construct_UPackage__Script_TrafficRuntime();
 // ********** End Cross Module References **********************************************************
 
@@ -55,32 +55,27 @@ struct Z_Construct_UClass_ATrafficVehicleAdapter_Statics
 #if WITH_METADATA
 	static constexpr UECodeGen_Private::FMetaDataPairParam Class_MetaDataParams[] = {
 #if !UE_BUILD_SHIPPING
-		{ "Comment", "/**\n * Adapter vehicle that drives with the AAA kinematic follower but renders any user-supplied vehicle Blueprint/Class.\n * The spawned visual is attached and collision-disabled so it does not fight the kinematic pathing.\n */" },
+		{ "Comment", "/**\n * Adapter that binds a logic vehicle (ATrafficVehicleBase) to a visual/Chaos pawn.\n * For now, the adapter simply teleports the visual to the logic transform each tick.\n */" },
 #endif
 		{ "IncludePath", "TrafficVehicleAdapter.h" },
 		{ "ModuleRelativePath", "Public/TrafficVehicleAdapter.h" },
 #if !UE_BUILD_SHIPPING
-		{ "ToolTip", "Adapter vehicle that drives with the AAA kinematic follower but renders any user-supplied vehicle Blueprint/Class.\nThe spawned visual is attached and collision-disabled so it does not fight the kinematic pathing." },
+		{ "ToolTip", "Adapter that binds a logic vehicle (ATrafficVehicleBase) to a visual/Chaos pawn.\nFor now, the adapter simply teleports the visual to the logic transform each tick." },
 #endif
 	};
-	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_ExternalVehicleClass_MetaData[] = {
-		{ "Category", "Vehicle" },
-#if !UE_BUILD_SHIPPING
-		{ "Comment", "/** Optional external vehicle class to spawn and attach for visuals (can be any Actor, e.g. Chaos vehicle BP). */" },
-#endif
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_LogicVehicle_MetaData[] = {
+		{ "Category", "TrafficVehicle" },
 		{ "ModuleRelativePath", "Public/TrafficVehicleAdapter.h" },
-#if !UE_BUILD_SHIPPING
-		{ "ToolTip", "Optional external vehicle class to spawn and attach for visuals (can be any Actor, e.g. Chaos vehicle BP)." },
-#endif
 	};
-	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_SpawnedVisual_MetaData[] = {
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_ChaosVehicle_MetaData[] = {
+		{ "Category", "TrafficVehicle" },
 		{ "ModuleRelativePath", "Public/TrafficVehicleAdapter.h" },
 	};
 #endif // WITH_METADATA
 
 // ********** Begin Class ATrafficVehicleAdapter constinit property declarations *******************
-	static const UECodeGen_Private::FSoftClassPropertyParams NewProp_ExternalVehicleClass;
-	static const UECodeGen_Private::FObjectPropertyParams NewProp_SpawnedVisual;
+	static const UECodeGen_Private::FWeakObjectPropertyParams NewProp_LogicVehicle;
+	static const UECodeGen_Private::FWeakObjectPropertyParams NewProp_ChaosVehicle;
 	static const UECodeGen_Private::FPropertyParamsBase* const PropPointers[];
 // ********** End Class ATrafficVehicleAdapter constinit property declarations *********************
 	static UObject* (*const DependentSingletons[])();
@@ -91,16 +86,16 @@ struct Z_Construct_UClass_ATrafficVehicleAdapter_Statics
 }; // struct Z_Construct_UClass_ATrafficVehicleAdapter_Statics
 
 // ********** Begin Class ATrafficVehicleAdapter Property Definitions ******************************
-const UECodeGen_Private::FSoftClassPropertyParams Z_Construct_UClass_ATrafficVehicleAdapter_Statics::NewProp_ExternalVehicleClass = { "ExternalVehicleClass", nullptr, (EPropertyFlags)0x0014000000000001, UECodeGen_Private::EPropertyGenFlags::SoftClass, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(ATrafficVehicleAdapter, ExternalVehicleClass), Z_Construct_UClass_AActor_NoRegister, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_ExternalVehicleClass_MetaData), NewProp_ExternalVehicleClass_MetaData) };
-const UECodeGen_Private::FObjectPropertyParams Z_Construct_UClass_ATrafficVehicleAdapter_Statics::NewProp_SpawnedVisual = { "SpawnedVisual", nullptr, (EPropertyFlags)0x0040000000000000, UECodeGen_Private::EPropertyGenFlags::Object, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(ATrafficVehicleAdapter, SpawnedVisual), Z_Construct_UClass_AActor_NoRegister, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_SpawnedVisual_MetaData), NewProp_SpawnedVisual_MetaData) };
+const UECodeGen_Private::FWeakObjectPropertyParams Z_Construct_UClass_ATrafficVehicleAdapter_Statics::NewProp_LogicVehicle = { "LogicVehicle", nullptr, (EPropertyFlags)0x0014000000020015, UECodeGen_Private::EPropertyGenFlags::WeakObject, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(ATrafficVehicleAdapter, LogicVehicle), Z_Construct_UClass_ATrafficVehicleBase_NoRegister, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_LogicVehicle_MetaData), NewProp_LogicVehicle_MetaData) };
+const UECodeGen_Private::FWeakObjectPropertyParams Z_Construct_UClass_ATrafficVehicleAdapter_Statics::NewProp_ChaosVehicle = { "ChaosVehicle", nullptr, (EPropertyFlags)0x0014000000020015, UECodeGen_Private::EPropertyGenFlags::WeakObject, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(ATrafficVehicleAdapter, ChaosVehicle), Z_Construct_UClass_APawn_NoRegister, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_ChaosVehicle_MetaData), NewProp_ChaosVehicle_MetaData) };
 const UECodeGen_Private::FPropertyParamsBase* const Z_Construct_UClass_ATrafficVehicleAdapter_Statics::PropPointers[] = {
-	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_ATrafficVehicleAdapter_Statics::NewProp_ExternalVehicleClass,
-	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_ATrafficVehicleAdapter_Statics::NewProp_SpawnedVisual,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_ATrafficVehicleAdapter_Statics::NewProp_LogicVehicle,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_ATrafficVehicleAdapter_Statics::NewProp_ChaosVehicle,
 };
 static_assert(UE_ARRAY_COUNT(Z_Construct_UClass_ATrafficVehicleAdapter_Statics::PropPointers) < 2048);
 // ********** End Class ATrafficVehicleAdapter Property Definitions ********************************
 UObject* (*const Z_Construct_UClass_ATrafficVehicleAdapter_Statics::DependentSingletons[])() = {
-	(UObject* (*)())Z_Construct_UClass_ATrafficVehicleBase,
+	(UObject* (*)())Z_Construct_UClass_AActor,
 	(UObject* (*)())Z_Construct_UPackage__Script_TrafficRuntime,
 };
 static_assert(UE_ARRAY_COUNT(Z_Construct_UClass_ATrafficVehicleAdapter_Statics::DependentSingletons) < 16);
@@ -138,10 +133,10 @@ ATrafficVehicleAdapter::~ATrafficVehicleAdapter() {}
 struct Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleAdapter_h__Script_TrafficRuntime_Statics
 {
 	static constexpr FClassRegisterCompiledInInfo ClassInfo[] = {
-		{ Z_Construct_UClass_ATrafficVehicleAdapter, ATrafficVehicleAdapter::StaticClass, TEXT("ATrafficVehicleAdapter"), &Z_Registration_Info_UClass_ATrafficVehicleAdapter, CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(ATrafficVehicleAdapter), 946681702U) },
+		{ Z_Construct_UClass_ATrafficVehicleAdapter, ATrafficVehicleAdapter::StaticClass, TEXT("ATrafficVehicleAdapter"), &Z_Registration_Info_UClass_ATrafficVehicleAdapter, CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(ATrafficVehicleAdapter), 2714958072U) },
 	};
 }; // Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleAdapter_h__Script_TrafficRuntime_Statics 
-static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleAdapter_h__Script_TrafficRuntime_1080529452{
+static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleAdapter_h__Script_TrafficRuntime_3244143516{
 	TEXT("/Script/TrafficRuntime"),
 	Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleAdapter_h__Script_TrafficRuntime_Statics::ClassInfo, UE_ARRAY_COUNT(Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficVehicleAdapter_h__Script_TrafficRuntime_Statics::ClassInfo),
 	nullptr, 0,
