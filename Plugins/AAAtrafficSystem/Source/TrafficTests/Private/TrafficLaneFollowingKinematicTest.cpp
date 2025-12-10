@@ -5,6 +5,10 @@
 #include "TrafficAutomationLogger.h"
 #include "Modules/ModuleManager.h"
 #include "TrafficRuntimeModule.h"
+#include "TrafficVehicleBase.h"
+#include "Engine/World.h"
+#include "EngineUtils.h"
+#include "Editor.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FTrafficLaneFollowingKinematicStraightTest,
@@ -57,12 +61,38 @@ bool FTrafficLaneFollowingKinematicStraightTest::RunTest(const FString& Paramete
 	UTrafficAutomationLogger::LogMetricFloat(TEXT("TotalTime"), TotalTime, 3);
 
 	FTrafficRunMetrics Metrics;
+	TArray<ATrafficVehicleBase*> SpawnedVehicles;
+
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (World)
+	{
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		ATrafficVehicleBase* Vehicle = World->SpawnActor<ATrafficVehicleBase>(ATrafficVehicleBase::StaticClass(), FTransform::Identity, Params);
+		if (Vehicle)
+		{
+			Vehicle->InitializeOnLane(&Lane, 0.0f, SpeedCmPerSec);
+			SpawnedVehicles.Add(Vehicle);
+			Metrics.VehiclesSpawned = SpawnedVehicles.Num();
+		}
+	}
+
 	float MaxLateralErrorCm = 0.0f;
 	float SumLateralErrorSq = 0.0f;
 	float MaxHeadingErrorDeg = 0.0f;
 
 	for (int32 StepIndex = 0; StepIndex < NumSteps; ++StepIndex)
 	{
+		if (World)
+		{
+			World->Tick(LEVELTICK_All, DeltaTime);
+			for (TActorIterator<ATrafficVehicleBase> It(World); It; ++It)
+			{
+				It->SampleLaneTrackingError(Metrics);
+				It->SampleDynamics(Metrics, DeltaTime);
+			}
+		}
+
 		Follower->Step(DeltaTime);
 
 		FVector Pos, Tangent;
@@ -140,6 +170,14 @@ bool FTrafficLaneFollowingKinematicStraightTest::RunTest(const FString& Paramete
 	Metrics.Finalize();
 	UTrafficAutomationLogger::LogRunMetrics(LocalTestName, Metrics);
 	UTrafficAutomationLogger::EndTestLog();
+
+	for (ATrafficVehicleBase* Vehicle : SpawnedVehicles)
+	{
+		if (Vehicle && Vehicle->IsValidLowLevel())
+		{
+			Vehicle->Destroy();
+		}
+	}
 
 	return bWithinMaxLat && bWithinRmsLat && bWithinHeading;
 }
