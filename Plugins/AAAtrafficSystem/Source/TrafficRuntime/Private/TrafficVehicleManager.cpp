@@ -64,6 +64,7 @@ void ATrafficVehicleManager::ClearVehicles()
 		}
 	}
 	Vehicles.Empty();
+	LastLaneSpawnTimes.Empty();
 }
 
 void ATrafficVehicleManager::DestroyAdaptersAndVisuals()
@@ -85,6 +86,11 @@ void ATrafficVehicleManager::DestroyAdaptersAndVisuals()
 		}
 	}
 	VisualVehicles.Empty();
+}
+
+void ATrafficVehicleManager::SetActiveRunMetrics(FTrafficRunMetrics* InMetrics)
+{
+	ActiveMetrics = InMetrics;
 }
 
 const UTrafficVehicleProfile* ATrafficVehicleManager::ResolveDefaultVehicleProfile() const
@@ -144,6 +150,7 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 	}
 
 	const TArray<FTrafficLane>& Lanes = NetworkAsset->Network.Lanes;
+	LastLaneSpawnTimes.Empty();
 
 	for (int32 LaneIndex = 0; LaneIndex < Lanes.Num(); ++LaneIndex)
 	{
@@ -166,8 +173,23 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 				continue;
 			}
 
+			const int32 LaneKey = (Lane.LaneId >= 0) ? Lane.LaneId : LaneIndex;
+			const float Now = World->GetTimeSeconds();
+			if (ActiveMetrics)
+			{
+				if (const float* LastTime = LastLaneSpawnTimes.Find(LaneKey))
+				{
+					ActiveMetrics->AccumulateHeadway(Now - *LastTime);
+				}
+			}
+			LastLaneSpawnTimes.Add(LaneKey, Now);
+
 			Vehicle->InitializeOnLane(&Lane, InitialS, SpeedCmPerSec);
 			Vehicles.Add(Vehicle);
+			if (ActiveMetrics)
+			{
+				ActiveMetrics->VehiclesSpawned++;
+			}
 
 			if (VisualClass)
 			{

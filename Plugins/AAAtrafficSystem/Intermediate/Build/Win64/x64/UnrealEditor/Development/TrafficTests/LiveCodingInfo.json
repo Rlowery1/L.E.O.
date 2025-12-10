@@ -6,16 +6,16 @@
 			"TrafficCityBLDProviderTest.cpp.obj",
 			"TrafficFamilyAssignmentTest.cpp.obj",
 			"TrafficLaneCalibrationTest.cpp.obj",
+			"TrafficLaneFollowingKinematicTest.cpp.obj",
+			"TrafficLaneFollowingTest.cpp.obj",
 			"TrafficLaneGenerationTest.cpp.obj",
 			"TrafficPingTest.cpp.obj",
 			"TrafficRoadFamiliesTest.cpp.obj",
 			"TrafficRoadLabPIETest.cpp.obj",
 			"TrafficTestsModule.cpp.obj",
-			"TrafficLaneFollowingKinematicTest.cpp.obj",
-			"TrafficLaneFollowingTest.cpp.obj",
-			"TrafficRoadLabIntegrationTest.cpp.obj",
 			"TrafficTurnKinematicsKinematicTest.cpp.obj",
-			"TrafficTurnKinematicsTest.cpp.obj"
+			"TrafficTurnKinematicsTest.cpp.obj",
+			"TrafficRoadLabIntegrationTest.cpp.obj"
 		]
 	}
 }

@@ -305,6 +305,7 @@ bool FTrafficPIESpawnAndRunCommand::Update()
 		}
 		return true;
 	}
+	Manager->SetActiveRunMetrics(&State->Metrics);
 	Manager->SpawnTestVehicles(3, 800.f);
 
 	int32 VehicleCount = 0;
@@ -490,6 +491,24 @@ bool FTrafficRoadLabIntegrationTest::RunTest(const FString& Parameters)
 	UTrafficAutomationLogger::LogLine(TEXT("Phase=Build"));
 	Subsys->DoBuild();
 	TickEditorWorld(World, 0.1f);
+
+	// Ensure a vehicle manager exists and is wired to metrics before spawning cars.
+	ATrafficVehicleManager* Manager = nullptr;
+	for (TActorIterator<ATrafficVehicleManager> It(World); It; ++It)
+	{
+		Manager = *It;
+		break;
+	}
+	if (!Manager)
+	{
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		Manager = World->SpawnActor<ATrafficVehicleManager>(Params);
+	}
+	if (Manager)
+	{
+		Manager->SetActiveRunMetrics(&Metrics);
+	}
 
 	// Log network summary for human-like verification.
 	int32 RoadCount = 0, LaneCount = 0, IntersectionCount = 0, MovementCount = 0;
