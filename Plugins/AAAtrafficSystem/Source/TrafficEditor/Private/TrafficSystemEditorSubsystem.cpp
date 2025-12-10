@@ -131,7 +131,7 @@ int32 UTrafficSystemEditorSubsystem::GetNumActorsForFamily(const FGuid& FamilyId
 		return 0;
 	}
 
-	const URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get(this);
+	const URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get();
 	if (!Registry)
 	{
 		return 0;
