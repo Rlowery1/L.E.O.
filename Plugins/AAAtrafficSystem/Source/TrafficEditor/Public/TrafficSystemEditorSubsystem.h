@@ -76,6 +76,9 @@ public:
 
 	bool HasAnyCalibratedFamilies() const;
 
+	// Returns how many actors for this road family exist in the current editor world.
+	int32 GetNumActorsForFamily(const FGuid& FamilyId) const;
+
 private:
 	void TagAsRoadLab(AActor* Actor);
 	void FocusCameraOnActor(AActor* Actor);

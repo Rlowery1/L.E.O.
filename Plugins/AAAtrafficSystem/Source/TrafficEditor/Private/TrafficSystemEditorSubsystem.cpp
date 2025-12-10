@@ -123,6 +123,43 @@ bool UTrafficSystemEditorSubsystem::HasAnyCalibratedFamilies() const
 	return false;
 }
 
+int32 UTrafficSystemEditorSubsystem::GetNumActorsForFamily(const FGuid& FamilyId) const
+{
+	UWorld* World = GetEditorWorld();
+	if (!World)
+	{
+		return 0;
+	}
+
+	const URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get(this);
+	if (!Registry)
+	{
+		return 0;
+	}
+
+	const FRoadFamilyInfo* Info = Registry->FindFamilyById(FamilyId);
+	if (!Info)
+	{
+		return 0;
+	}
+
+	UClass* RoadClass = Info->RoadClassPath.TryLoadClass<AActor>();
+	if (!RoadClass)
+	{
+		return 0;
+	}
+
+	int32 Count = 0;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->IsA(RoadClass))
+		{
+			++Count;
+		}
+	}
+	return Count;
+}
+
 void UTrafficSystemEditorSubsystem::TagAsRoadLab(AActor* Actor)
 {
 	if (Actor && !Actor->Tags.Contains(RoadLabTag))
@@ -846,6 +883,24 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 	if (FamilyInfo->FamilyDefinition.FamilyName.IsNone())
 	{
 		FamilyInfo->FamilyDefinition.FamilyName = FName(*FamilyInfo->DisplayName);
+	}
+
+	const int32 NumInstances = GetNumActorsForFamily(FamilyId);
+	if (NumInstances <= 0)
+	{
+		UE_LOG(LogTraffic, Warning,
+			TEXT("[TrafficEditor] BeginCalibrationForFamily: Family %s has 0 actors in this level."),
+			*FamilyId.ToString());
+
+		FMessageDialog::Open(
+			EAppMsgType::Ok,
+			NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_NoActorsForFamily",
+				"There are no actors for this road family in this level.\n\n"
+				"This usually means:\n"
+				"  - You deleted all instances of this road class from the map, or\n"
+				"  - The World Partition / CityBLD regions that contain them are not loaded.\n\n"
+				"Place or load at least one road actor of this family before calibrating it."));
+		return;
 	}
 
 	UClass* RoadClass = FamilyInfo->RoadClassPath.TryLoadClass<AActor>();
