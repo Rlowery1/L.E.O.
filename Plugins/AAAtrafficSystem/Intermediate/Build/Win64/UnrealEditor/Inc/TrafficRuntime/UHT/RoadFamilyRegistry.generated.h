@@ -30,7 +30,7 @@ struct FRoadFamilyInfo;
 struct Z_Construct_UClass_URoadFamilyRegistry_Statics;
 TRAFFICRUNTIME_API UClass* Z_Construct_UClass_URoadFamilyRegistry_NoRegister();
 
-#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h_40_INCLASS_NO_PURE_DECLS \
+#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h_47_INCLASS_NO_PURE_DECLS \
 private: \
 	static void StaticRegisterNativesURoadFamilyRegistry(); \
 	friend struct ::Z_Construct_UClass_URoadFamilyRegistry_Statics; \
@@ -43,7 +43,7 @@ public: \
 
 
 
-#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h_40_ENHANCED_CONSTRUCTORS \
+#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h_47_ENHANCED_CONSTRUCTORS \
 	/** Standard constructor, called after all reflected properties have been initialized */ \
 	NO_API URoadFamilyRegistry(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get()); \
 	/** Deleted move- and copy-constructors, should never be used */ \
@@ -55,12 +55,12 @@ public: \
 	NO_API virtual ~URoadFamilyRegistry();
 
 
-#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h_37_PROLOG
-#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h_40_GENERATED_BODY \
+#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h_44_PROLOG
+#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h_47_GENERATED_BODY \
 PRAGMA_DISABLE_DEPRECATION_WARNINGS \
 public: \
-	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h_40_INCLASS_NO_PURE_DECLS \
-	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h_40_ENHANCED_CONSTRUCTORS \
+	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h_47_INCLASS_NO_PURE_DECLS \
+	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h_47_ENHANCED_CONSTRUCTORS \
 private: \
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 

@@ -28,6 +28,13 @@ struct TRAFFICRUNTIME_API FRoadFamilyInfo
 
 	UPROPERTY(EditAnywhere, Config, Category="Traffic")
 	bool bIsCalibrated = false;
+
+	// Last calibration snapshot (backup) for quick restore.
+	UPROPERTY()
+	FTrafficLaneFamilyCalibration BackupCalibration;
+
+	UPROPERTY()
+	bool bHasBackupCalibration = false;
 };
 
 /**
@@ -61,6 +68,9 @@ public:
 
 	/** Apply calibration data and mark calibrated. */
 	void ApplyCalibration(const FGuid& FamilyId, const FTrafficLaneFamilyCalibration& NewCalibration);
+
+	/** Restore last backed-up calibration if present. */
+	bool RestoreLastCalibration(const FGuid& FamilyId);
 
 	/** Find a family by id (const). */
 	const FRoadFamilyInfo* GetFamilyById(const FGuid& FamilyId) const { return FindFamilyById(FamilyId); }

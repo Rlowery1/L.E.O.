@@ -60,6 +60,18 @@ struct Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics
 		{ "Category", "Traffic" },
 		{ "ModuleRelativePath", "Public/RoadFamilyRegistry.h" },
 	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_BackupCalibration_MetaData[] = {
+#if !UE_BUILD_SHIPPING
+		{ "Comment", "// Last calibration snapshot (backup) for quick restore.\n" },
+#endif
+		{ "ModuleRelativePath", "Public/RoadFamilyRegistry.h" },
+#if !UE_BUILD_SHIPPING
+		{ "ToolTip", "Last calibration snapshot (backup) for quick restore." },
+#endif
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_bHasBackupCalibration_MetaData[] = {
+		{ "ModuleRelativePath", "Public/RoadFamilyRegistry.h" },
+	};
 #endif // WITH_METADATA
 
 // ********** Begin ScriptStruct FRoadFamilyInfo constinit property declarations *******************
@@ -70,6 +82,9 @@ struct Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics
 	static const UECodeGen_Private::FStructPropertyParams NewProp_CalibrationData;
 	static void NewProp_bIsCalibrated_SetBit(void* Obj);
 	static const UECodeGen_Private::FBoolPropertyParams NewProp_bIsCalibrated;
+	static const UECodeGen_Private::FStructPropertyParams NewProp_BackupCalibration;
+	static void NewProp_bHasBackupCalibration_SetBit(void* Obj);
+	static const UECodeGen_Private::FBoolPropertyParams NewProp_bHasBackupCalibration;
 	static const UECodeGen_Private::FPropertyParamsBase* const PropPointers[];
 // ********** End ScriptStruct FRoadFamilyInfo constinit property declarations *********************
 	static void* NewStructOps()
@@ -99,6 +114,12 @@ void Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics::NewProp_bIsCalibrated_Se
 	((FRoadFamilyInfo*)Obj)->bIsCalibrated = 1;
 }
 const UECodeGen_Private::FBoolPropertyParams Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics::NewProp_bIsCalibrated = { "bIsCalibrated", nullptr, (EPropertyFlags)0x0010000000004001, UECodeGen_Private::EPropertyGenFlags::Bool | UECodeGen_Private::EPropertyGenFlags::NativeBool, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, sizeof(bool), sizeof(FRoadFamilyInfo), &Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics::NewProp_bIsCalibrated_SetBit, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_bIsCalibrated_MetaData), NewProp_bIsCalibrated_MetaData) };
+const UECodeGen_Private::FStructPropertyParams Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics::NewProp_BackupCalibration = { "BackupCalibration", nullptr, (EPropertyFlags)0x0010000000000000, UECodeGen_Private::EPropertyGenFlags::Struct, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(FRoadFamilyInfo, BackupCalibration), Z_Construct_UScriptStruct_FTrafficLaneFamilyCalibration, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_BackupCalibration_MetaData), NewProp_BackupCalibration_MetaData) }; // 1801600758
+void Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics::NewProp_bHasBackupCalibration_SetBit(void* Obj)
+{
+	((FRoadFamilyInfo*)Obj)->bHasBackupCalibration = 1;
+}
+const UECodeGen_Private::FBoolPropertyParams Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics::NewProp_bHasBackupCalibration = { "bHasBackupCalibration", nullptr, (EPropertyFlags)0x0010000000000000, UECodeGen_Private::EPropertyGenFlags::Bool | UECodeGen_Private::EPropertyGenFlags::NativeBool, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, sizeof(bool), sizeof(FRoadFamilyInfo), &Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics::NewProp_bHasBackupCalibration_SetBit, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_bHasBackupCalibration_MetaData), NewProp_bHasBackupCalibration_MetaData) };
 const UECodeGen_Private::FPropertyParamsBase* const Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics::PropPointers[] = {
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics::NewProp_FamilyId,
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics::NewProp_DisplayName,
@@ -106,6 +127,8 @@ const UECodeGen_Private::FPropertyParamsBase* const Z_Construct_UScriptStruct_FR
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics::NewProp_FamilyDefinition,
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics::NewProp_CalibrationData,
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics::NewProp_bIsCalibrated,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics::NewProp_BackupCalibration,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics::NewProp_bHasBackupCalibration,
 };
 static_assert(UE_ARRAY_COUNT(Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics::PropPointers) < 2048);
 // ********** End ScriptStruct FRoadFamilyInfo Property Definitions ********************************
@@ -193,8 +216,8 @@ struct Z_Construct_UClass_URoadFamilyRegistry_Statics
 }; // struct Z_Construct_UClass_URoadFamilyRegistry_Statics
 
 // ********** Begin Class URoadFamilyRegistry Property Definitions *********************************
-const UECodeGen_Private::FStructPropertyParams Z_Construct_UClass_URoadFamilyRegistry_Statics::NewProp_Families_Inner = { "Families", nullptr, (EPropertyFlags)0x0000000000004000, UECodeGen_Private::EPropertyGenFlags::Struct, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, 0, Z_Construct_UScriptStruct_FRoadFamilyInfo, METADATA_PARAMS(0, nullptr) }; // 2808500417
-const UECodeGen_Private::FArrayPropertyParams Z_Construct_UClass_URoadFamilyRegistry_Statics::NewProp_Families = { "Families", nullptr, (EPropertyFlags)0x0040000000004000, UECodeGen_Private::EPropertyGenFlags::Array, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(URoadFamilyRegistry, Families), EArrayPropertyFlags::None, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_Families_MetaData), NewProp_Families_MetaData) }; // 2808500417
+const UECodeGen_Private::FStructPropertyParams Z_Construct_UClass_URoadFamilyRegistry_Statics::NewProp_Families_Inner = { "Families", nullptr, (EPropertyFlags)0x0000000000004000, UECodeGen_Private::EPropertyGenFlags::Struct, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, 0, Z_Construct_UScriptStruct_FRoadFamilyInfo, METADATA_PARAMS(0, nullptr) }; // 994629464
+const UECodeGen_Private::FArrayPropertyParams Z_Construct_UClass_URoadFamilyRegistry_Statics::NewProp_Families = { "Families", nullptr, (EPropertyFlags)0x0040000000004000, UECodeGen_Private::EPropertyGenFlags::Array, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(URoadFamilyRegistry, Families), EArrayPropertyFlags::None, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_Families_MetaData), NewProp_Families_MetaData) }; // 994629464
 const UECodeGen_Private::FPropertyParamsBase* const Z_Construct_UClass_URoadFamilyRegistry_Statics::PropPointers[] = {
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_URoadFamilyRegistry_Statics::NewProp_Families_Inner,
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_URoadFamilyRegistry_Statics::NewProp_Families,
@@ -241,13 +264,13 @@ URoadFamilyRegistry::~URoadFamilyRegistry() {}
 struct Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h__Script_TrafficRuntime_Statics
 {
 	static constexpr FStructRegisterCompiledInInfo ScriptStructInfo[] = {
-		{ FRoadFamilyInfo::StaticStruct, Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics::NewStructOps, TEXT("RoadFamilyInfo"),&Z_Registration_Info_UScriptStruct_FRoadFamilyInfo, CONSTRUCT_RELOAD_VERSION_INFO(FStructReloadVersionInfo, sizeof(FRoadFamilyInfo), 2808500417U) },
+		{ FRoadFamilyInfo::StaticStruct, Z_Construct_UScriptStruct_FRoadFamilyInfo_Statics::NewStructOps, TEXT("RoadFamilyInfo"),&Z_Registration_Info_UScriptStruct_FRoadFamilyInfo, CONSTRUCT_RELOAD_VERSION_INFO(FStructReloadVersionInfo, sizeof(FRoadFamilyInfo), 994629464U) },
 	};
 	static constexpr FClassRegisterCompiledInInfo ClassInfo[] = {
-		{ Z_Construct_UClass_URoadFamilyRegistry, URoadFamilyRegistry::StaticClass, TEXT("URoadFamilyRegistry"), &Z_Registration_Info_UClass_URoadFamilyRegistry, CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(URoadFamilyRegistry), 1857378389U) },
+		{ Z_Construct_UClass_URoadFamilyRegistry, URoadFamilyRegistry::StaticClass, TEXT("URoadFamilyRegistry"), &Z_Registration_Info_UClass_URoadFamilyRegistry, CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(URoadFamilyRegistry), 776711177U) },
 	};
 }; // Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h__Script_TrafficRuntime_Statics 
-static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h__Script_TrafficRuntime_2504468316{
+static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h__Script_TrafficRuntime_1802167768{
 	TEXT("/Script/TrafficRuntime"),
 	Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h__Script_TrafficRuntime_Statics::ClassInfo, UE_ARRAY_COUNT(Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h__Script_TrafficRuntime_Statics::ClassInfo),
 	Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h__Script_TrafficRuntime_Statics::ScriptStructInfo, UE_ARRAY_COUNT(Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_RoadFamilyRegistry_h__Script_TrafficRuntime_Statics::ScriptStructInfo),

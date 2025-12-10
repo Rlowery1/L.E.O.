@@ -150,6 +150,10 @@ void URoadFamilyRegistry::ApplyCalibration(const FGuid& FamilyId, const FTraffic
 	{
 		if (Info.FamilyId == FamilyId)
 		{
+			// Backup current calibration before overwriting.
+			Info.BackupCalibration = Info.CalibrationData;
+			Info.bHasBackupCalibration = Info.bIsCalibrated;
+
 			Info.CalibrationData = NewCalibration;
 			Info.bIsCalibrated = true;
 
@@ -168,4 +172,35 @@ void URoadFamilyRegistry::ApplyCalibration(const FGuid& FamilyId, const FTraffic
 			return;
 		}
 	}
+}
+
+bool URoadFamilyRegistry::RestoreLastCalibration(const FGuid& FamilyId)
+{
+	for (FRoadFamilyInfo& Info : Families)
+	{
+		if (Info.FamilyId == FamilyId)
+		{
+			if (!Info.bHasBackupCalibration)
+			{
+				return false;
+			}
+
+			Swap(Info.CalibrationData, Info.BackupCalibration);
+			Info.bIsCalibrated = true;
+
+			Info.FamilyDefinition.FamilyName = Info.FamilyDefinition.FamilyName.IsNone()
+				? FName(*Info.DisplayName)
+				: Info.FamilyDefinition.FamilyName;
+			Info.FamilyDefinition.Forward.NumLanes = Info.CalibrationData.NumLanesPerSideForward;
+			Info.FamilyDefinition.Backward.NumLanes = Info.CalibrationData.NumLanesPerSideBackward;
+			Info.FamilyDefinition.Forward.LaneWidthCm = Info.CalibrationData.LaneWidthCm;
+			Info.FamilyDefinition.Backward.LaneWidthCm = Info.CalibrationData.LaneWidthCm;
+			Info.FamilyDefinition.Forward.InnerLaneCenterOffsetCm = Info.CalibrationData.CenterlineOffsetCm;
+			Info.FamilyDefinition.Backward.InnerLaneCenterOffsetCm = Info.CalibrationData.CenterlineOffsetCm;
+
+			SaveConfig();
+			return true;
+		}
+	}
+	return false;
 }

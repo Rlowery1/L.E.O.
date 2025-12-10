@@ -15,8 +15,21 @@
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Misc/MessageDialog.h"
 #include "Internationalization/Text.h"
+#include "HAL/IConsoleManager.h"
 
 #define LOCTEXT_NAMESPACE "STrafficSystemPanel"
+
+namespace
+{
+	bool IsDestructiveResetEnabled()
+	{
+		if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.EnableDestructiveResets")))
+		{
+			return CVar->GetInt() != 0;
+		}
+		return false;
+	}
+}
 
 void STrafficSystemPanel::Construct(const FArguments& InArgs)
 {
@@ -205,6 +218,29 @@ void STrafficSystemPanel::Construct(const FArguments& InArgs)
 					]
 				]
 
+				// Restore last calibration
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0.0f, 0.0f, 0.0f, 6.0f)
+				[
+					SNew(SButton)
+					.ButtonStyle(&FAppStyle::Get().GetWidgetStyle<FButtonStyle>("SecondaryButton"))
+					.HAlign(HAlign_Left)
+					.ContentPadding(FMargin(16.0f, 8.0f))
+					.OnClicked(this, &STrafficSystemPanel::OnRestoreCalibrationClicked)
+					.IsEnabled_Lambda([this]()
+					{
+						return SelectedFamily.IsValid() && HasBackupForSelected();
+					})
+					.ToolTipText(LOCTEXT("RestoreCalib_Tooltip", "Restore the previous calibration snapshot for this family (if one exists)."))
+					[
+						SNew(STextBlock)
+						.Text(LOCTEXT("RestoreCalib_Label", "Restore Last Calibration"))
+						.Font(SubtitleFont)
+						.ColorAndOpacity(FLinearColor::White)
+					]
+				]
+
 				// Calibration families dropdown + rename
 				+ SVerticalBox::Slot()
 				.AutoHeight()
@@ -256,6 +292,7 @@ void STrafficSystemPanel::Construct(const FArguments& InArgs)
 					.HAlign(HAlign_Left)
 					.ContentPadding(FMargin(16.0f, 8.0f))
 					.OnClicked(this, &STrafficSystemPanel::OnResetLabClicked)
+					.ToolTipText(LOCTEXT("ResetAAA_Tooltip", "Remove AAA traffic overlay/controllers/vehicles. User roads and calibration remain untouched."))
 					[
 						SNew(SVerticalBox)
 						+ SVerticalBox::Slot()
@@ -279,38 +316,6 @@ void STrafficSystemPanel::Construct(const FArguments& InArgs)
 					]
 				]
 
-				// Reset including tagged user roads
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(0.0f, 0.0f, 0.0f, 6.0f)
-				[
-					SNew(SButton)
-					.ButtonStyle(&FAppStyle::Get().GetWidgetStyle<FButtonStyle>("PrimaryButton"))
-					.HAlign(HAlign_Left)
-					.ContentPadding(FMargin(16.0f, 8.0f))
-					.OnClicked(this, &STrafficSystemPanel::OnResetLabIncludingTaggedClicked)
-					[
-						SNew(SVerticalBox)
-						+ SVerticalBox::Slot()
-						.AutoHeight()
-						[
-							SNew(STextBlock)
-							.Text(FText::FromString(TEXT("RESET AAA + TAGGED USER ROADS")))
-							.Font(TitleFont)
-							.ColorAndOpacity(FLinearColor::White)
-						]
-						+ SVerticalBox::Slot()
-						.AutoHeight()
-						.Padding(0.0f, 2.0f, 0.0f, 0.0f)
-						[
-							SNew(STextBlock)
-							.Text(FText::FromString(TEXT("Also remove roads tagged for AAA conversion (destructive).")))
-							.Font(SubtitleFont)
-							.ColorAndOpacity(FLinearColor(0.8f, 0.8f, 0.8f))
-							.WrapTextAt(420.0f)
-						]
-					]
-				]
 			]
 
 			// Run group
@@ -406,6 +411,26 @@ void STrafficSystemPanel::Construct(const FArguments& InArgs)
 							]
 						]
 					]
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0.0f, 0.0f, 0.0f, 6.0f)
+					[
+						SNew(SButton)
+						.Visibility_Lambda([]() { return IsDestructiveResetEnabled() ? EVisibility::Visible : EVisibility::Collapsed; })
+						.ButtonStyle(&FAppStyle::Get().GetWidgetStyle<FButtonStyle>("PrimaryButton"))
+						.HAlign(HAlign_Left)
+						.ContentPadding(FMargin(16.0f, 8.0f))
+						.OnClicked(this, &STrafficSystemPanel::OnResetLabIncludingTaggedClicked)
+						.ToolTipText(LOCTEXT("ResetTagged_Tooltip", "Deletes AAA actors AND user road actors tagged for conversion. Destructive and hidden unless explicitly enabled."))
+						[
+							SNew(STextBlock)
+							.Text(FText::FromString(TEXT("DEV-ONLY: DELETE AAA + Tagged Road Actors (DESTRUCTIVE)")))
+							.Font(TitleFont)
+							.ColorAndOpacity(FLinearColor::White)
+							.WrapTextAt(420.0f)
+						]
+					]
 				]
 			]
 		]
@@ -476,6 +501,17 @@ FReply STrafficSystemPanel::OnResetLabIncludingTaggedClicked()
 {
 	if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
 	{
+		const EAppReturnType::Type Resp = FMessageDialog::Open(
+			EAppMsgType::OkCancel,
+			LOCTEXT("Traffic_ConfirmDestructiveReset",
+				"WARNING: This will DELETE road actors tagged for AAA conversion from this level.\n"
+				"This is DESTRUCTIVE and cannot be undone.\n\n"
+				"Are you sure you want to continue?"));
+		if (Resp != EAppReturnType::Ok)
+		{
+			return FReply::Handled();
+		}
+
 		Subsys->Editor_ResetRoadLabHard(true);
 	}
 	return FReply::Handled();
@@ -486,6 +522,19 @@ FReply STrafficSystemPanel::OnConvertSelectedClicked()
 	if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
 	{
 		Subsys->ConvertSelectedSplineActors();
+	}
+	return FReply::Handled();
+}
+
+FReply STrafficSystemPanel::OnRestoreCalibrationClicked()
+{
+	if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
+	{
+		if (SelectedFamily.IsValid())
+		{
+			Subsys->Editor_RestoreCalibrationForFamily(SelectedFamily->FamilyId);
+			RefreshFamilyList();
+		}
 	}
 	return FReply::Handled();
 }
@@ -671,6 +720,26 @@ bool STrafficSystemPanel::HasDetectedFamilies() const
 {
 	const URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get();
 	return Registry && Registry->GetAllFamilies().Num() > 0;
+}
+
+bool STrafficSystemPanel::HasBackupForSelected() const
+{
+	if (!SelectedFamily.IsValid())
+	{
+		return false;
+	}
+
+	if (const URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get())
+	{
+		for (const FRoadFamilyInfo& Info : Registry->GetAllFamilies())
+		{
+			if (Info.FamilyId == SelectedFamily->FamilyId)
+			{
+				return Info.bHasBackupCalibration;
+			}
+		}
+	}
+	return false;
 }
 
 #undef LOCTEXT_NAMESPACE

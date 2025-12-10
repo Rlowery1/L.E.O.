@@ -30,7 +30,7 @@ public:
 		bool bHasUnderlyingMesh);
 
 	// Build overlay lanes from a provided centerline and calibration data.
-	void BuildFromCenterline(const TArray<FVector>& CenterlinePoints, const FTrafficLaneFamilyCalibration& Calibration);
+	void BuildFromCenterline(const TArray<FVector>& CenterlinePoints, const FTrafficLaneFamilyCalibration& Calibration, const FTransform& RoadTransform = FTransform::Identity);
 
 	void ClearOverlay();
 
@@ -49,6 +49,14 @@ public:
 
 	void ApplyCalibrationSettings(int32 InNumForward, int32 InNumBackward, float InLaneWidthCm, float InCenterOffsetCm);
 
+	// Rebuild overlay from cached data (used by editor property edits).
+	UFUNCTION(CallInEditor, Category="Traffic|Calibration")
+	void Editor_RebuildFromCachedCenterline();
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+
 private:
 	UPROPERTY()
 	TArray<UProceduralMeshComponent*> LaneRibbonMeshes;
@@ -65,6 +73,8 @@ private:
 	TArray<FVector> ComputeLaneCenterline(
 		const TArray<FVector>& RoadCenterline,
 		float LateralOffset);
+
+	bool IsCalibrationValid(const FTrafficLaneFamilyCalibration& Calib) const;
 
 	void BuildLaneRibbon(
 		const TArray<FVector>& LaneCenterPoints,
@@ -84,4 +94,13 @@ private:
 	UMaterialInstanceDynamic* CreateArrowMaterialInstance(
 		UInstancedStaticMeshComponent* ISM,
 		const FLinearColor& Color);
+
+	UPROPERTY()
+	TArray<FVector> CachedCenterlinePoints;
+
+	UPROPERTY()
+	FTrafficLaneFamilyCalibration CachedCalibration;
+
+	UPROPERTY()
+	FTransform CachedRoadTransform;
 };

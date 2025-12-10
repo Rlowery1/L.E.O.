@@ -206,6 +206,61 @@ DEFINE_FUNCTION(UTrafficSystemEditorSubsystem::execEditor_BeginCalibrationForFam
 }
 // ********** End Class UTrafficSystemEditorSubsystem Function Editor_BeginCalibrationForFamily ****
 
+// ********** Begin Class UTrafficSystemEditorSubsystem Function Editor_RestoreCalibrationForFamily 
+struct Z_Construct_UFunction_UTrafficSystemEditorSubsystem_Editor_RestoreCalibrationForFamily_Statics
+{
+	struct TrafficSystemEditorSubsystem_eventEditor_RestoreCalibrationForFamily_Parms
+	{
+		FGuid FamilyId;
+	};
+#if WITH_METADATA
+	static constexpr UECodeGen_Private::FMetaDataPairParam Function_MetaDataParams[] = {
+		{ "CallInEditor", "true" },
+		{ "ModuleRelativePath", "Public/TrafficSystemEditorSubsystem.h" },
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_FamilyId_MetaData[] = {
+		{ "NativeConst", "" },
+	};
+#endif // WITH_METADATA
+
+// ********** Begin Function Editor_RestoreCalibrationForFamily constinit property declarations ****
+	static const UECodeGen_Private::FStructPropertyParams NewProp_FamilyId;
+	static const UECodeGen_Private::FPropertyParamsBase* const PropPointers[];
+// ********** End Function Editor_RestoreCalibrationForFamily constinit property declarations ******
+	static const UECodeGen_Private::FFunctionParams FuncParams;
+};
+
+// ********** Begin Function Editor_RestoreCalibrationForFamily Property Definitions ***************
+const UECodeGen_Private::FStructPropertyParams Z_Construct_UFunction_UTrafficSystemEditorSubsystem_Editor_RestoreCalibrationForFamily_Statics::NewProp_FamilyId = { "FamilyId", nullptr, (EPropertyFlags)0x0010000008000182, UECodeGen_Private::EPropertyGenFlags::Struct, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(TrafficSystemEditorSubsystem_eventEditor_RestoreCalibrationForFamily_Parms, FamilyId), Z_Construct_UScriptStruct_FGuid, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_FamilyId_MetaData), NewProp_FamilyId_MetaData) };
+const UECodeGen_Private::FPropertyParamsBase* const Z_Construct_UFunction_UTrafficSystemEditorSubsystem_Editor_RestoreCalibrationForFamily_Statics::PropPointers[] = {
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UFunction_UTrafficSystemEditorSubsystem_Editor_RestoreCalibrationForFamily_Statics::NewProp_FamilyId,
+};
+static_assert(UE_ARRAY_COUNT(Z_Construct_UFunction_UTrafficSystemEditorSubsystem_Editor_RestoreCalibrationForFamily_Statics::PropPointers) < 2048);
+// ********** End Function Editor_RestoreCalibrationForFamily Property Definitions *****************
+const UECodeGen_Private::FFunctionParams Z_Construct_UFunction_UTrafficSystemEditorSubsystem_Editor_RestoreCalibrationForFamily_Statics::FuncParams = { { (UObject*(*)())Z_Construct_UClass_UTrafficSystemEditorSubsystem, nullptr, "Editor_RestoreCalibrationForFamily", 	Z_Construct_UFunction_UTrafficSystemEditorSubsystem_Editor_RestoreCalibrationForFamily_Statics::PropPointers, 
+	UE_ARRAY_COUNT(Z_Construct_UFunction_UTrafficSystemEditorSubsystem_Editor_RestoreCalibrationForFamily_Statics::PropPointers), 
+sizeof(Z_Construct_UFunction_UTrafficSystemEditorSubsystem_Editor_RestoreCalibrationForFamily_Statics::TrafficSystemEditorSubsystem_eventEditor_RestoreCalibrationForFamily_Parms),
+RF_Public|RF_Transient|RF_MarkAsNative, (EFunctionFlags)0x00C20401, 0, 0, METADATA_PARAMS(UE_ARRAY_COUNT(Z_Construct_UFunction_UTrafficSystemEditorSubsystem_Editor_RestoreCalibrationForFamily_Statics::Function_MetaDataParams), Z_Construct_UFunction_UTrafficSystemEditorSubsystem_Editor_RestoreCalibrationForFamily_Statics::Function_MetaDataParams)},  };
+static_assert(sizeof(Z_Construct_UFunction_UTrafficSystemEditorSubsystem_Editor_RestoreCalibrationForFamily_Statics::TrafficSystemEditorSubsystem_eventEditor_RestoreCalibrationForFamily_Parms) < MAX_uint16);
+UFunction* Z_Construct_UFunction_UTrafficSystemEditorSubsystem_Editor_RestoreCalibrationForFamily()
+{
+	static UFunction* ReturnFunction = nullptr;
+	if (!ReturnFunction)
+	{
+		UECodeGen_Private::ConstructUFunction(&ReturnFunction, Z_Construct_UFunction_UTrafficSystemEditorSubsystem_Editor_RestoreCalibrationForFamily_Statics::FuncParams);
+	}
+	return ReturnFunction;
+}
+DEFINE_FUNCTION(UTrafficSystemEditorSubsystem::execEditor_RestoreCalibrationForFamily)
+{
+	P_GET_STRUCT_REF(FGuid,Z_Param_Out_FamilyId);
+	P_FINISH;
+	P_NATIVE_BEGIN;
+	P_THIS->Editor_RestoreCalibrationForFamily(Z_Param_Out_FamilyId);
+	P_NATIVE_END;
+}
+// ********** End Class UTrafficSystemEditorSubsystem Function Editor_RestoreCalibrationForFamily **
+
 // ********** Begin Class UTrafficSystemEditorSubsystem ********************************************
 FClassRegistrationInfo Z_Registration_Info_UClass_UTrafficSystemEditorSubsystem;
 UClass* UTrafficSystemEditorSubsystem::GetPrivateStaticClass()
@@ -269,11 +324,13 @@ struct Z_Construct_UClass_UTrafficSystemEditorSubsystem_Statics
 	static constexpr UE::CodeGen::FClassNativeFunction Funcs[] = {
 		{ .NameUTF8 = UTF8TEXT("Editor_BakeCalibrationForActiveFamily"), .Pointer = &UTrafficSystemEditorSubsystem::execEditor_BakeCalibrationForActiveFamily },
 		{ .NameUTF8 = UTF8TEXT("Editor_BeginCalibrationForFamily"), .Pointer = &UTrafficSystemEditorSubsystem::execEditor_BeginCalibrationForFamily },
+		{ .NameUTF8 = UTF8TEXT("Editor_RestoreCalibrationForFamily"), .Pointer = &UTrafficSystemEditorSubsystem::execEditor_RestoreCalibrationForFamily },
 	};
 	static UObject* (*const DependentSingletons[])();
 	static constexpr FClassFunctionLinkInfo FuncInfo[] = {
 		{ &Z_Construct_UFunction_UTrafficSystemEditorSubsystem_Editor_BakeCalibrationForActiveFamily, "Editor_BakeCalibrationForActiveFamily" }, // 1132299146
 		{ &Z_Construct_UFunction_UTrafficSystemEditorSubsystem_Editor_BeginCalibrationForFamily, "Editor_BeginCalibrationForFamily" }, // 457308696
+		{ &Z_Construct_UFunction_UTrafficSystemEditorSubsystem_Editor_RestoreCalibrationForFamily, "Editor_RestoreCalibrationForFamily" }, // 2424003025
 	};
 	static_assert(UE_ARRAY_COUNT(FuncInfo) < 2048);
 	static constexpr FCppClassTypeInfoStatic StaticCppClassTypeInfo = {
@@ -342,10 +399,10 @@ struct Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Sour
 		{ FCalibrationSnippet::StaticStruct, Z_Construct_UScriptStruct_FCalibrationSnippet_Statics::NewStructOps, TEXT("CalibrationSnippet"),&Z_Registration_Info_UScriptStruct_FCalibrationSnippet, CONSTRUCT_RELOAD_VERSION_INFO(FStructReloadVersionInfo, sizeof(FCalibrationSnippet), 3668550008U) },
 	};
 	static constexpr FClassRegisterCompiledInInfo ClassInfo[] = {
-		{ Z_Construct_UClass_UTrafficSystemEditorSubsystem, UTrafficSystemEditorSubsystem::StaticClass, TEXT("UTrafficSystemEditorSubsystem"), &Z_Registration_Info_UClass_UTrafficSystemEditorSubsystem, CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(UTrafficSystemEditorSubsystem), 2253121419U) },
+		{ Z_Construct_UClass_UTrafficSystemEditorSubsystem, UTrafficSystemEditorSubsystem::StaticClass, TEXT("UTrafficSystemEditorSubsystem"), &Z_Registration_Info_UClass_UTrafficSystemEditorSubsystem, CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(UTrafficSystemEditorSubsystem), 670864258U) },
 	};
 }; // Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficEditor_Public_TrafficSystemEditorSubsystem_h__Script_TrafficEditor_Statics 
-static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficEditor_Public_TrafficSystemEditorSubsystem_h__Script_TrafficEditor_2626391231{
+static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficEditor_Public_TrafficSystemEditorSubsystem_h__Script_TrafficEditor_3241464848{
 	TEXT("/Script/TrafficEditor"),
 	Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficEditor_Public_TrafficSystemEditorSubsystem_h__Script_TrafficEditor_Statics::ClassInfo, UE_ARRAY_COUNT(Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficEditor_Public_TrafficSystemEditorSubsystem_h__Script_TrafficEditor_Statics::ClassInfo),
 	Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficEditor_Public_TrafficSystemEditorSubsystem_h__Script_TrafficEditor_Statics::ScriptStructInfo, UE_ARRAY_COUNT(Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficEditor_Public_TrafficSystemEditorSubsystem_h__Script_TrafficEditor_Statics::ScriptStructInfo),

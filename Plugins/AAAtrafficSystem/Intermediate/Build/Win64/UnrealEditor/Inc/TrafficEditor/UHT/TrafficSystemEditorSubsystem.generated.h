@@ -29,6 +29,7 @@ struct FCalibrationSnippet;
 
 // ********** Begin Class UTrafficSystemEditorSubsystem ********************************************
 #define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficEditor_Public_TrafficSystemEditorSubsystem_h_35_RPC_WRAPPERS_NO_PURE_DECLS \
+	DECLARE_FUNCTION(execEditor_RestoreCalibrationForFamily); \
 	DECLARE_FUNCTION(execEditor_BakeCalibrationForActiveFamily); \
 	DECLARE_FUNCTION(execEditor_BeginCalibrationForFamily);
 
