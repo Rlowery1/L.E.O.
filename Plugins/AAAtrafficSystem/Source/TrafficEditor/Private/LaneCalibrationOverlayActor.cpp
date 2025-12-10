@@ -7,6 +7,8 @@
 #include "Engine/StaticMesh.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Misc/MessageDialog.h"
+#include "UObject/UnrealType.h"
 
 ALaneCalibrationOverlayActor::ALaneCalibrationOverlayActor()
 {
@@ -17,6 +19,7 @@ ALaneCalibrationOverlayActor::ALaneCalibrationOverlayActor()
 	NumLanesPerSideBackward = 1;
 	LaneWidthCm = 350.f;
 	CenterlineOffsetCm = 175.f;
+	CachedRoadTransform = FTransform::Identity;
 
 	FallbackArrowMesh = FTrafficCalibrationVisuals::GetOrCreateCalibrationArrowMesh();
 	DefaultArrowMaterial = LoadObject<UMaterialInterface>(
@@ -103,6 +106,12 @@ void ALaneCalibrationOverlayActor::ApplyCalibrationSettings(int32 InNumForward, 
 	NumLanesPerSideBackward = FMath::Max(0, InNumBackward);
 	LaneWidthCm = FMath::Max(1.f, InLaneWidthCm);
 	CenterlineOffsetCm = InCenterOffsetCm;
+}
+
+bool ALaneCalibrationOverlayActor::IsCalibrationValid(const FTrafficLaneFamilyCalibration& Calib) const
+{
+	const int32 TotalLanes = Calib.NumLanesPerSideForward + Calib.NumLanesPerSideBackward;
+	return TotalLanes > 0 && Calib.LaneWidthCm > KINDA_SMALL_NUMBER;
 }
 
 UStaticMesh* ALaneCalibrationOverlayActor::GetArrowMesh(bool bForwardDirection, const UTrafficVisualSettings* VisualSettings) const
@@ -345,6 +354,23 @@ void ALaneCalibrationOverlayActor::BuildForRoad(
 	LaneWidthCm = Family.Forward.LaneWidthCm;
 	CenterlineOffsetCm = Family.Forward.InnerLaneCenterOffsetCm;
 
+	CachedCenterlinePoints = CenterlinePoints;
+	CachedRoadTransform = RoadTransform;
+	CachedCalibration.NumLanesPerSideForward = NumLanesPerSideForward;
+	CachedCalibration.NumLanesPerSideBackward = NumLanesPerSideBackward;
+	CachedCalibration.LaneWidthCm = LaneWidthCm;
+	CachedCalibration.CenterlineOffsetCm = CenterlineOffsetCm;
+
+	if (!IsCalibrationValid(CachedCalibration))
+	{
+		UE_LOG(LogTraffic, Warning,
+			TEXT("[LaneCalibrationOverlay] Invalid calibration (TotalLanes=%d, Width=%.1f). "
+				 "At least one lane and a positive width are required."),
+			CachedCalibration.NumLanesPerSideForward + CachedCalibration.NumLanesPerSideBackward,
+			CachedCalibration.LaneWidthCm);
+		return;
+	}
+
 	int32 LaneIndex = 0;
 
 	for (int32 i = 0; i < NumLanesPerSideForward; ++i)
@@ -397,15 +423,73 @@ void ALaneCalibrationOverlayActor::BuildForRoad(
 		LaneIndex, NumLanesPerSideForward, NumLanesPerSideBackward);
 }
 
-void ALaneCalibrationOverlayActor::BuildFromCenterline(const TArray<FVector>& CenterlinePoints, const FTrafficLaneFamilyCalibration& Calibration)
+void ALaneCalibrationOverlayActor::BuildFromCenterline(const TArray<FVector>& CenterlinePoints, const FTrafficLaneFamilyCalibration& Calibration, const FTransform& RoadTransform)
 {
-	FRoadFamilyDefinition TempFamily;
-	TempFamily.Forward.NumLanes = Calibration.NumLanesPerSideForward;
-	TempFamily.Backward.NumLanes = Calibration.NumLanesPerSideBackward;
-	TempFamily.Forward.LaneWidthCm = Calibration.LaneWidthCm;
-	TempFamily.Backward.LaneWidthCm = Calibration.LaneWidthCm;
-	TempFamily.Forward.InnerLaneCenterOffsetCm = Calibration.CenterlineOffsetCm;
-	TempFamily.Backward.InnerLaneCenterOffsetCm = Calibration.CenterlineOffsetCm;
+	CachedCenterlinePoints = CenterlinePoints;
+	CachedCalibration = Calibration;
+	CachedRoadTransform = RoadTransform;
 
-	BuildForRoad(CenterlinePoints, TempFamily, FTransform::Identity, false);
+	if (!IsCalibrationValid(CachedCalibration))
+	{
+		UE_LOG(LogTraffic, Warning,
+			TEXT("[LaneCalibrationOverlay] Invalid calibration (TotalLanes=%d, Width=%.1f). "
+				 "At least one lane and a positive width are required."),
+			CachedCalibration.NumLanesPerSideForward + CachedCalibration.NumLanesPerSideBackward,
+			CachedCalibration.LaneWidthCm);
+		return;
+	}
+
+	FRoadFamilyDefinition TempFamily;
+	TempFamily.Forward.NumLanes = CachedCalibration.NumLanesPerSideForward;
+	TempFamily.Backward.NumLanes = CachedCalibration.NumLanesPerSideBackward;
+	TempFamily.Forward.LaneWidthCm = CachedCalibration.LaneWidthCm;
+	TempFamily.Backward.LaneWidthCm = CachedCalibration.LaneWidthCm;
+	TempFamily.Forward.InnerLaneCenterOffsetCm = CachedCalibration.CenterlineOffsetCm;
+	TempFamily.Backward.InnerLaneCenterOffsetCm = CachedCalibration.CenterlineOffsetCm;
+
+	BuildForRoad(CachedCenterlinePoints, TempFamily, CachedRoadTransform, false);
 }
+
+void ALaneCalibrationOverlayActor::Editor_RebuildFromCachedCenterline()
+{
+#if WITH_EDITOR
+	if (CachedCenterlinePoints.Num() < 2)
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[LaneCalibrationOverlay] No cached centerline to rebuild from."));
+		return;
+	}
+
+	CachedCalibration.NumLanesPerSideForward = NumLanesPerSideForward;
+	CachedCalibration.NumLanesPerSideBackward = NumLanesPerSideBackward;
+	CachedCalibration.LaneWidthCm = LaneWidthCm;
+	CachedCalibration.CenterlineOffsetCm = CenterlineOffsetCm;
+
+	if (!IsCalibrationValid(CachedCalibration))
+	{
+		FMessageDialog::Open(
+			EAppMsgType::Ok,
+			NSLOCTEXT("LaneCalibrationOverlay", "InvalidCalibration",
+				"The current calibration has zero lanes or an invalid lane width.\n"
+				"Set at least one forward or backward lane and a positive lane width before previewing."));
+		return;
+	}
+
+	BuildFromCenterline(CachedCenterlinePoints, CachedCalibration, CachedRoadTransform);
+#endif
+}
+
+#if WITH_EDITOR
+void ALaneCalibrationOverlayActor::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	const FName PropName = PropertyChangedEvent.Property ? PropertyChangedEvent.Property->GetFName() : NAME_None;
+	if (PropName == GET_MEMBER_NAME_CHECKED(ALaneCalibrationOverlayActor, NumLanesPerSideForward) ||
+		PropName == GET_MEMBER_NAME_CHECKED(ALaneCalibrationOverlayActor, NumLanesPerSideBackward) ||
+		PropName == GET_MEMBER_NAME_CHECKED(ALaneCalibrationOverlayActor, LaneWidthCm) ||
+		PropName == GET_MEMBER_NAME_CHECKED(ALaneCalibrationOverlayActor, CenterlineOffsetCm))
+	{
+		Editor_RebuildFromCachedCenterline();
+	}
+}
+#endif

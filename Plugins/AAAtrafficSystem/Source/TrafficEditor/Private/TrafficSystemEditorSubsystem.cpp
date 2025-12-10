@@ -2,6 +2,7 @@
 #include "TrafficCalibrationSubsystem.h"
 #include "TrafficRuntimeModule.h"
 #include "TrafficRoadFamilySettings.h"
+#include "TrafficLaneCalibration.h"
 #include "RoadFamilyRegistry.h"
 #include "TrafficSystemController.h"
 #include "TrafficVehicleManager.h"
@@ -423,6 +424,20 @@ void UTrafficSystemEditorSubsystem::Editor_PrepareMapForTraffic()
 	Registry->RefreshCache();
 	Registry->SaveConfig();
 
+	if (ActorsFound == 0)
+	{
+		UE_LOG(LogTraffic, Warning,
+			TEXT("[TrafficEditor] PrepareAllRoads: Found 0 spline roads. If this level uses World Partition or CityBLD streaming, ensure regions containing roads are loaded."));
+		FMessageDialog::Open(
+			EAppMsgType::Ok,
+			NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_Prepare_NoSplineRoads",
+				"AAA Traffic did not find any spline-based roads in this level.\n\n"
+				"This usually means:\n"
+				"  - Road actors have not been placed yet, or\n"
+				"  - Your World Partition / CityBLD regions that contain roads are not loaded.\n\n"
+				"If this map uses World Partition or CityBLD streaming, load the regions containing your roads and run PREPARE MAP again."));
+	}
+
 	UE_LOG(LogTraffic, Log, TEXT("[TrafficPrep] Summary: Actors=%d; FamiliesCreated=%d; MetadataAttached=%d"),
 		ActorsFound, FamiliesCreated, MetadataAttached);
 #endif
@@ -443,6 +458,20 @@ void UTrafficSystemEditorSubsystem::DoPrepare()
 	{
 		UE_LOG(LogTraffic, Log, TEXT("[TrafficEditor] PREPARE: Running PrepareAllRoads()."));
 		Calib->PrepareAllRoads();
+
+		if (!HasAnyPreparedRoads())
+		{
+			UE_LOG(LogTraffic, Warning,
+				TEXT("[TrafficEditor] PrepareAllRoads: Found 0 spline roads. If this level uses World Partition or CityBLD streaming, ensure regions containing roads are loaded."));
+			FMessageDialog::Open(
+				EAppMsgType::Ok,
+				NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_Prepare_NoSplineRoads",
+					"AAA Traffic did not find any spline-based roads in this level.\n\n"
+					"This usually means:\n"
+					"  - Road actors have not been placed yet, or\n"
+					"  - Your World Partition / CityBLD regions that contain roads are not loaded.\n\n"
+					"If this map uses World Partition or CityBLD streaming, load the regions containing your roads and run PREPARE MAP again."));
+		}
 	}
 	else
 	{
@@ -528,9 +557,10 @@ void UTrafficSystemEditorSubsystem::DoCars()
 			NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_EmptyNetwork",
 				"AAA Traffic could not build any roads or lanes in this level.\n\n"
 				"This usually means:\n"
-				"  • PREPARE MAP was not run,\n"
-				"  • No road actors are tagged for traffic,\n"
-				"  • Or the active geometry provider does not support your road kit.\n\n"
+				"  - PREPARE MAP was not run,\n"
+				"  - No road actors are tagged for traffic,\n"
+				"  - Your World Partition / CityBLD regions that contain roads are not loaded, or\n"
+				"  - The active geometry provider does not support your road kit.\n\n"
 				"Run PREPARE MAP and ensure at least one road family is calibrated and included in traffic."));
 		return;
 	}
@@ -912,7 +942,13 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 		FamilyInfo->FamilyDefinition.Forward.LaneWidthCm,
 		FamilyInfo->FamilyDefinition.Forward.InnerLaneCenterOffsetCm);
 
-	Overlay->BuildForRoad(CenterlinePoints, FamilyInfo->FamilyDefinition, RoadActor->GetActorTransform(), bHasUnderlyingMesh);
+	FTrafficLaneFamilyCalibration Calib;
+	Calib.NumLanesPerSideForward = FamilyInfo->FamilyDefinition.Forward.NumLanes;
+	Calib.NumLanesPerSideBackward = FamilyInfo->FamilyDefinition.Backward.NumLanes;
+	Calib.LaneWidthCm = FamilyInfo->FamilyDefinition.Forward.LaneWidthCm;
+	Calib.CenterlineOffsetCm = FamilyInfo->FamilyDefinition.Forward.InnerLaneCenterOffsetCm;
+
+	Overlay->BuildFromCenterline(CenterlinePoints, Calib, RoadActor->GetActorTransform());
 	FocusCameraOnActor(Overlay);
 
 	ActiveFamilyId = FamilyId;
@@ -1244,7 +1280,14 @@ void UTrafficSystemEditorSubsystem::CalibrateSelectedRoad()
 	if (CalibrationOverlayActor.IsValid())
 	{
 		TagAsRoadLab(CalibrationOverlayActor.Get());
-		CalibrationOverlayActor->BuildForRoad(CenterlinePoints, Family, RoadActor->GetActorTransform(), bHasUnderlyingMesh);
+
+		FTrafficLaneFamilyCalibration Calib;
+		Calib.NumLanesPerSideForward = Family.Forward.NumLanes;
+		Calib.NumLanesPerSideBackward = Family.Backward.NumLanes;
+		Calib.LaneWidthCm = Family.Forward.LaneWidthCm;
+		Calib.CenterlineOffsetCm = Family.Forward.InnerLaneCenterOffsetCm;
+
+		CalibrationOverlayActor->BuildFromCenterline(CenterlinePoints, Calib, RoadActor->GetActorTransform());
 		FocusCameraOnActor(CalibrationOverlayActor.Get());
 		ActiveFamilyId = FamilyInfo->FamilyId;
 		ActiveCalibrationRoadActor = RoadActor;
