@@ -36,6 +36,7 @@ namespace
 		bool bFailed = false;
 		FString FailureMessage;
 		UWorld* PIEWorld = nullptr;
+		FTrafficRunMetrics Metrics;
 	};
 
 	static void TickEditorWorld(UWorld* World, float DeltaSeconds)
@@ -43,6 +44,20 @@ namespace
 		if (World)
 		{
 			World->Tick(LEVELTICK_All, DeltaSeconds);
+		}
+	}
+
+	static void SampleVehicleMetrics(UWorld* World, FTrafficRunMetrics& Metrics, float DeltaSeconds)
+	{
+		if (!World)
+		{
+			return;
+		}
+
+		for (TActorIterator<ATrafficVehicleBase> It(World); It; ++It)
+		{
+			It->SampleLaneTrackingError(Metrics);
+			It->SampleDynamics(Metrics, DeltaSeconds);
 		}
 	}
 
@@ -318,6 +333,21 @@ bool FTrafficPIESpawnAndRunCommand::Update()
 	}
 
 	UTrafficAutomationLogger::LogLine(FString::Printf(TEXT("PIE_VehicleCount=%d"), VehicleCount));
+
+	State->Metrics.VehiclesSpawned = VehicleCount;
+	const float SimDuration = 3.0f;
+	const float SimStep = 0.1f;
+	float Simulated = 0.0f;
+	while (Simulated < SimDuration)
+	{
+		PIEWorld->Tick(LEVELTICK_All, SimStep);
+		SampleVehicleMetrics(PIEWorld, State->Metrics, SimStep);
+		Simulated += SimStep;
+	}
+	State->Metrics.SimulatedSeconds = Simulated;
+	State->Metrics.Finalize();
+	UTrafficAutomationLogger::LogRunMetrics(TEXT("Traffic.RoadLab.PIE"), State->Metrics);
+
 	UTrafficAutomationLogger::LogLine(TEXT("PIE_Result=Success"));
 #endif
 	return true;
@@ -444,6 +474,8 @@ bool FTrafficRoadLabIntegrationTest::RunTest(const FString& Parameters)
 	Subsys->DoPrepare();
 	TickEditorWorld(World, 0.1f);
 
+	FTrafficRunMetrics Metrics;
+
 	// Ensure at least one family is calibrated for build/test gating.
 	if (URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get())
 	{
@@ -493,6 +525,22 @@ bool FTrafficRoadLabIntegrationTest::RunTest(const FString& Parameters)
 		}
 	}
 	UTrafficAutomationLogger::LogLine(FString::Printf(TEXT("VehicleCount=%d"), VehicleCount));
+
+	Metrics.VehiclesSpawned = VehicleCount;
+
+	// Run a short simulated loop to gather motion metrics.
+	const float SimDuration = 3.0f;
+	const float SimStep = 0.1f;
+	float Simulated = 0.0f;
+	while (Simulated < SimDuration)
+	{
+		TickEditorWorld(World, SimStep);
+		SampleVehicleMetrics(World, Metrics, SimStep);
+		Simulated += SimStep;
+	}
+	Metrics.SimulatedSeconds = Simulated;
+	Metrics.Finalize();
+	UTrafficAutomationLogger::LogRunMetrics(LocalTestName, Metrics);
 
 	UTrafficAutomationLogger::LogLine(TEXT("Result=Success"));
 	UTrafficAutomationLogger::EndTestLog();

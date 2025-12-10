@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "TrafficAutomationLogger.h"
 #include "TrafficVehicleBase.generated.h"
 
 class UStaticMeshComponent;
@@ -22,6 +23,9 @@ public:
 	void InitializeOnLane(const FTrafficLane* Lane, float InitialS, float SpeedCmPerSec);
 	void InitializeOnMovement(const FTrafficMovement* Movement, float InitialS, float SpeedCmPerSec);
 
+	void SampleLaneTrackingError(FTrafficRunMetrics& Metrics) const;
+	void SampleDynamics(FTrafficRunMetrics& Metrics, float DeltaSeconds);
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -32,6 +36,10 @@ protected:
 	UPROPERTY()
 	UTrafficKinematicFollower* Follower;
 
+	mutable FVector LastPos = FVector::ZeroVector;
+	mutable float LastSpeed = 0.f;
+	mutable float LastAccel = 0.f;
+	mutable float LastJerk = 0.f;
+
 	UTrafficKinematicFollower* EnsureFollower();
 };
-

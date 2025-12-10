@@ -105,6 +105,7 @@ bool FTrafficTurnKinematicsKinematicSimpleCrossTest::RunTest(const FString& Para
 	UTrafficAutomationLogger::LogMetric(TEXT("NumSteps"), FString::FromInt(NumSteps));
 	UTrafficAutomationLogger::LogMetricFloat(TEXT("TotalTime"), TotalTime, 3);
 
+	FTrafficRunMetrics Metrics;
 	float MaxHeadingStepDeg = 0.0f;
 	float MaxCurvature = 0.0f;
 
@@ -146,6 +147,8 @@ bool FTrafficTurnKinematicsKinematicSimpleCrossTest::RunTest(const FString& Para
 			const float AngleRad = FMath::Acos(Dot);
 			const float AngleDeg = FMath::RadiansToDegrees(AngleRad);
 			MaxHeadingStepDeg = FMath::Max(MaxHeadingStepDeg, AngleDeg);
+
+			Metrics.AccumulateHeadingError(FMath::Abs(AngleDeg));
 		}
 
 		PrevTangent = Tangent;
@@ -164,6 +167,9 @@ bool FTrafficTurnKinematicsKinematicSimpleCrossTest::RunTest(const FString& Para
 		AddError(FString::Printf(TEXT("MaxHeadingStepDeg too large: %f"), MaxHeadingStepDeg));
 	}
 
+	Metrics.SimulatedSeconds = TotalTime;
+	Metrics.Finalize();
+	UTrafficAutomationLogger::LogRunMetrics(LocalTestName, Metrics);
 	UTrafficAutomationLogger::EndTestLog();
 
 	return bHeadingSmooth;

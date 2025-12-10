@@ -47,6 +47,8 @@ bool FTrafficLaneFollowingStraightSyntheticTest::RunTest(const FString& Paramete
 	const int32 NumSamples = 100;
 	UTrafficAutomationLogger::LogMetric(TEXT("NumSamples"), FString::FromInt(NumSamples));
 
+	FTrafficRunMetrics Metrics;
+
 	float MaxLateralErrorCm = 0.0f;
 	float SumLateralErrorSq = 0.0f;
 	float MaxHeadingErrorDeg = 0.0f;
@@ -109,6 +111,9 @@ bool FTrafficLaneFollowingStraightSyntheticTest::RunTest(const FString& Paramete
 		MaxLateralErrorCm = FMath::Max(MaxLateralErrorCm, FMath::Abs(LateralError));
 		MaxHeadingErrorDeg = FMath::Max(MaxHeadingErrorDeg, FMath::Abs(HeadingError));
 		SumLateralErrorSq += LateralError * LateralError;
+
+		Metrics.AccumulateLateralError(FMath::Abs(LateralError));
+		Metrics.AccumulateHeadingError(FMath::Abs(HeadingError));
 	}
 
 	const float RmsLateralErrorCm = (NumSamples > 0)
@@ -145,6 +150,9 @@ bool FTrafficLaneFollowingStraightSyntheticTest::RunTest(const FString& Paramete
 	UTrafficAutomationLogger::LogMetric(TEXT("WithinMaxLateralTolerance"), bWithinMaxLat ? TEXT("true") : TEXT("false"));
 	UTrafficAutomationLogger::LogMetric(TEXT("WithinRmsLateralTolerance"), bWithinRmsLat ? TEXT("true") : TEXT("false"));
 	UTrafficAutomationLogger::LogMetric(TEXT("WithinHeadingTolerance"), bWithinHeading ? TEXT("true") : TEXT("false"));
+
+	Metrics.Finalize();
+	UTrafficAutomationLogger::LogRunMetrics(LocalTestName, Metrics);
 
 	UTrafficAutomationLogger::EndTestLog();
 

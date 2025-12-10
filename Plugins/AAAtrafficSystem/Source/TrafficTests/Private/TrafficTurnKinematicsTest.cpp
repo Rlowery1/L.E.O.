@@ -71,6 +71,8 @@ bool FTrafficTurnKinematicsSimpleCrossTest::RunTest(const FString& Parameters)
 	const int32 MovementCount = Network.Movements.Num();
 	const int32 LaneCount = Network.Lanes.Num();
 
+	FTrafficRunMetrics Metrics;
+
 	UTrafficAutomationLogger::LogMetric(TEXT("IntersectionCount"), FString::FromInt(IntersectionCount));
 	UTrafficAutomationLogger::LogMetric(TEXT("MovementCount"), FString::FromInt(MovementCount));
 	UTrafficAutomationLogger::LogMetric(TEXT("LaneCount"), FString::FromInt(LaneCount));
@@ -111,6 +113,8 @@ bool FTrafficTurnKinematicsSimpleCrossTest::RunTest(const FString& Parameters)
 				const float AngleRad = FMath::Acos(Dot);
 				const float AngleDeg = FMath::RadiansToDegrees(AngleRad);
 				MaxHeadingStepDeg = FMath::Max(MaxHeadingStepDeg, AngleDeg);
+
+				Metrics.AccumulateHeadingError(FMath::Abs(AngleDeg));
 			}
 		}
 
@@ -135,6 +139,8 @@ bool FTrafficTurnKinematicsSimpleCrossTest::RunTest(const FString& Parameters)
 
 	UTrafficAutomationLogger::LogMetric(TEXT("HeadingSmooth"), bHeadingSmooth ? TEXT("true") : TEXT("false"));
 
+	Metrics.Finalize();
+	UTrafficAutomationLogger::LogRunMetrics(LocalTestName, Metrics);
 	UTrafficAutomationLogger::EndTestLog();
 
 	return bHeadingSmooth;

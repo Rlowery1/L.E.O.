@@ -17,7 +17,7 @@
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
 
 // ********** Begin Class UTrafficAutomationLogger *************************************************
-#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h_9_RPC_WRAPPERS_NO_PURE_DECLS \
+#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h_45_RPC_WRAPPERS_NO_PURE_DECLS \
 	DECLARE_FUNCTION(execEndTestLog); \
 	DECLARE_FUNCTION(execLogMetricFloat); \
 	DECLARE_FUNCTION(execLogMetric); \
@@ -28,7 +28,7 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
 struct Z_Construct_UClass_UTrafficAutomationLogger_Statics;
 TRAFFICRUNTIME_API UClass* Z_Construct_UClass_UTrafficAutomationLogger_NoRegister();
 
-#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h_9_INCLASS_NO_PURE_DECLS \
+#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h_45_INCLASS_NO_PURE_DECLS \
 private: \
 	static void StaticRegisterNativesUTrafficAutomationLogger(); \
 	friend struct ::Z_Construct_UClass_UTrafficAutomationLogger_Statics; \
@@ -39,7 +39,7 @@ public: \
 	DECLARE_SERIALIZER(UTrafficAutomationLogger)
 
 
-#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h_9_ENHANCED_CONSTRUCTORS \
+#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h_45_ENHANCED_CONSTRUCTORS \
 	/** Standard constructor, called after all reflected properties have been initialized */ \
 	NO_API UTrafficAutomationLogger(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get()); \
 	/** Deleted move- and copy-constructors, should never be used */ \
@@ -51,13 +51,13 @@ public: \
 	NO_API virtual ~UTrafficAutomationLogger();
 
 
-#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h_6_PROLOG
-#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h_9_GENERATED_BODY \
+#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h_42_PROLOG
+#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h_45_GENERATED_BODY \
 PRAGMA_DISABLE_DEPRECATION_WARNINGS \
 public: \
-	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h_9_RPC_WRAPPERS_NO_PURE_DECLS \
-	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h_9_INCLASS_NO_PURE_DECLS \
-	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h_9_ENHANCED_CONSTRUCTORS \
+	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h_45_RPC_WRAPPERS_NO_PURE_DECLS \
+	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h_45_INCLASS_NO_PURE_DECLS \
+	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h_45_ENHANCED_CONSTRUCTORS \
 private: \
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 

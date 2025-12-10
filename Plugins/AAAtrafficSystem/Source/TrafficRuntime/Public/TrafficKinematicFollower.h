@@ -46,6 +46,9 @@ public:
 	bool GetCurrentPose(FVector& OutPosition, FVector& OutTangent) const;
 
 	const FPathFollowState& GetState() const { return State; }
+	float GetCurrentSpeedCmPerSec() const { return State.SpeedCmPerSec; }
+	float GetDistanceAlongLane() const { return State.S; }
+	const FTrafficLane* GetCurrentLane() const { return LanePtr; }
 
 private:
 	FPathFollowState State;

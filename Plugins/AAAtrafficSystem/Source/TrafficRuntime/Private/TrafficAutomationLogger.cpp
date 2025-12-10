@@ -8,6 +8,45 @@
 FString UTrafficAutomationLogger::CurrentLogFilePath;
 bool UTrafficAutomationLogger::bLogOpen = false;
 
+void FTrafficRunMetrics::AccumulateLateralError(float ErrorCm)
+{
+	MaxLateralErrorCm = FMath::Max(MaxLateralErrorCm, ErrorCm);
+	SumLateralErrorCm += ErrorCm;
+	++LateralSamples;
+}
+
+void FTrafficRunMetrics::AccumulateHeadingError(float ErrorDeg)
+{
+	MaxHeadingErrorDeg = FMath::Max(MaxHeadingErrorDeg, ErrorDeg);
+	SumHeadingErrorDeg += ErrorDeg;
+	++HeadingSamples;
+}
+
+void FTrafficRunMetrics::AccumulateHeadway(float HeadwaySeconds)
+{
+	if (HeadwaySeconds >= 0.f)
+	{
+		MinHeadwaySeconds = FMath::Min(MinHeadwaySeconds, HeadwaySeconds);
+		SumHeadwaySeconds += HeadwaySeconds;
+		++HeadwaySamples;
+	}
+}
+
+void FTrafficRunMetrics::AccumulateAccel(float AccelCmPerSec2)
+{
+	MaxAccelCmPerSec2 = FMath::Max(MaxAccelCmPerSec2, AccelCmPerSec2);
+}
+
+void FTrafficRunMetrics::AccumulateJerk(float JerkCmPerSec3)
+{
+	MaxJerkCmPerSec3 = FMath::Max(MaxJerkCmPerSec3, JerkCmPerSec3);
+}
+
+void FTrafficRunMetrics::Finalize()
+{
+	// Averages are computed on demand in LogRunMetrics.
+}
+
 void UTrafficAutomationLogger::EnsureDirectoryExists()
 {
 	const FString BaseDir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("TrafficAutomation"));
@@ -106,5 +145,25 @@ void UTrafficAutomationLogger::EndTestLog()
 	AppendToFile(TEXT("\n# EndOfLog\n"));
 	UE_LOG(LogTraffic, Log, TEXT("Traffic automation log finished: %s"), *CurrentLogFilePath);
 	bLogOpen = false;
+}
+
+void UTrafficAutomationLogger::LogRunMetrics(const FString& TestName, const FTrafficRunMetrics& M)
+{
+	const float AvgLat = (M.LateralSamples > 0) ? (M.SumLateralErrorCm / M.LateralSamples) : 0.f;
+	const float AvgHead = (M.HeadingSamples > 0) ? (M.SumHeadingErrorDeg / M.HeadingSamples) : 0.f;
+	const float AvgHeadway = (M.HeadwaySamples > 0) ? (M.SumHeadwaySeconds / M.HeadwaySamples) : 0.f;
+	const float MinHeadway = (M.HeadwaySamples > 0) ? M.MinHeadwaySeconds : 0.f;
+
+	UE_LOG(LogTraffic, Display, TEXT("[TrafficMetrics] Test=%s"), *TestName);
+	UE_LOG(LogTraffic, Display, TEXT("[TrafficMetrics] VehiclesSpawned=%d VehiclesCompleted=%d VehiclesStuck=%d VehiclesCulled=%d"),
+		M.VehiclesSpawned, M.VehiclesCompleted, M.VehiclesStuck, M.VehiclesCulled);
+	UE_LOG(LogTraffic, Display, TEXT("[TrafficMetrics] MaxLatErrCm=%.2f AvgLatErrCm=%.2f MaxHeadErrDeg=%.2f AvgHeadErrDeg=%.2f"),
+		M.MaxLateralErrorCm, AvgLat, M.MaxHeadingErrorDeg, AvgHead);
+	UE_LOG(LogTraffic, Display, TEXT("[TrafficMetrics] MinHeadwaySec=%.2f AvgHeadwaySec=%.2f HeadwaySamples=%d"),
+		MinHeadway, AvgHeadway, M.HeadwaySamples);
+	UE_LOG(LogTraffic, Display, TEXT("[TrafficMetrics] MaxAccel=%.2f MaxJerk=%.2f EmergencyBrakes=%d HardCollisions=%d GridlockSec=%.2f SimTimeSec=%.2f"),
+		M.MaxAccelCmPerSec2, M.MaxJerkCmPerSec3,
+		M.NumEmergencyBrakes, M.NumHardCollisions,
+		M.GridlockSeconds, M.SimulatedSeconds);
 }
 

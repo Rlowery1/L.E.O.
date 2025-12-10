@@ -11,11 +11,11 @@
 			"TrafficLaneGenerationTest.cpp.obj",
 			"TrafficPingTest.cpp.obj",
 			"TrafficRoadFamiliesTest.cpp.obj",
-			"TrafficRoadLabIntegrationTest.cpp.obj",
 			"TrafficRoadLabPIETest.cpp.obj",
 			"TrafficTestsModule.cpp.obj",
 			"TrafficTurnKinematicsKinematicTest.cpp.obj",
-			"TrafficTurnKinematicsTest.cpp.obj"
+			"TrafficTurnKinematicsTest.cpp.obj",
+			"TrafficRoadLabIntegrationTest.cpp.obj"
 		]
 	}
 }
