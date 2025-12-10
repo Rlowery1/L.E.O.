@@ -93,6 +93,11 @@ void ATrafficVehicleManager::SetActiveRunMetrics(FTrafficRunMetrics* InMetrics)
 	ActiveMetrics = InMetrics;
 }
 
+void ATrafficVehicleManager::SetForceLogicOnlyForTests(bool bInForce)
+{
+	bForceLogicOnlyForTests = bInForce;
+}
+
 const UTrafficVehicleProfile* ATrafficVehicleManager::ResolveDefaultVehicleProfile() const
 {
 	const UTrafficVehicleSettings* Settings = UTrafficVehicleSettings::Get();
@@ -131,20 +136,16 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 	ClearVehicles();
 
 	const UTrafficVehicleProfile* Profile = ResolveDefaultVehicleProfile();
-	if (Profile)
+	if (Profile && !bForceLogicOnlyForTests)
 	{
 		UE_LOG(LogTraffic, Log, TEXT("[VehicleManager] Using vehicle profile '%s' (%s)."),
 			*Profile->GetName(),
 			Profile->VehicleClass.IsNull() ? TEXT("<no class>") : *Profile->VehicleClass.ToString());
 	}
-	else
-	{
-		UE_LOG(LogTraffic, Warning, TEXT("[VehicleManager] No default vehicle profile configured. Using TrafficVehicleBase only."));
-	}
 
 	TSubclassOf<ATrafficVehicleBase> LogicClass = ATrafficVehicleBase::StaticClass();
 	TSubclassOf<APawn> VisualClass = nullptr;
-	if (Profile && Profile->VehicleClass.IsValid())
+	if (!bForceLogicOnlyForTests && Profile && Profile->VehicleClass.IsValid())
 	{
 		VisualClass = Profile->VehicleClass.LoadSynchronous();
 	}
@@ -210,6 +211,11 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 				}
 			}
 		}
+	}
+
+	if (!VisualClass && !Profile && !bForceLogicOnlyForTests)
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[VehicleManager] No default vehicle profile configured. Using TrafficVehicleBase only."));
 	}
 
 	UE_LOG(LogTraffic, Log, TEXT("[VehicleManager] Spawned %d vehicles."), Vehicles.Num());
