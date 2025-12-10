@@ -68,6 +68,9 @@ public:
 	UFUNCTION(CallInEditor)
 	void Editor_BakeCalibrationForActiveFamily();
 
+	UFUNCTION(CallInEditor)
+	void Editor_RestoreCalibrationForFamily(const FGuid& FamilyId);
+
 	// True if any actor in the editor world has traffic road metadata (prepared).
 	bool HasAnyPreparedRoads() const;
 

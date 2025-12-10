@@ -219,7 +219,7 @@ void UTrafficSystemEditorSubsystem::ResetRoadLab()
 	ActiveFamilyId.Invalidate();
 	RoadLabRibbonMeshes.Empty();
 
-	UE_LOG(LogTraffic, Log, TEXT("[TrafficEditor] ResetRoadLab: Destroyed %d AAA_RoadLab actors."), DestroyedCount);
+	UE_LOG(LogTraffic, Log, TEXT("[TrafficEditor] ResetRoadLab: Destroyed %d AAA_RoadLab actors (AAA overlay/controllers/vehicles only; user roads untouched)."), DestroyedCount);
 #endif
 }
 
@@ -990,6 +990,31 @@ void UTrafficSystemEditorSubsystem::Editor_BakeCalibrationForActiveFamily()
 		NewCalib.NumLanesPerSideBackward,
 		NewCalib.LaneWidthCm,
 		NewCalib.CenterlineOffsetCm);
+#endif
+}
+
+void UTrafficSystemEditorSubsystem::Editor_RestoreCalibrationForFamily(const FGuid& FamilyId)
+{
+#if WITH_EDITOR
+	URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get();
+	if (!Registry)
+	{
+		return;
+	}
+
+	if (!Registry->RestoreLastCalibration(FamilyId))
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[TrafficCalib] No backup calibration available for family %s."), *FamilyId.ToString());
+		return;
+	}
+
+	UE_LOG(LogTraffic, Log, TEXT("[TrafficCalib] Restored last calibration for family %s."), *FamilyId.ToString());
+
+	// Refresh overlay if restoring the active family.
+	if (ActiveFamilyId == FamilyId && ActiveFamilyId.IsValid())
+	{
+		Editor_BeginCalibrationForFamily(FamilyId);
+	}
 #endif
 }
 

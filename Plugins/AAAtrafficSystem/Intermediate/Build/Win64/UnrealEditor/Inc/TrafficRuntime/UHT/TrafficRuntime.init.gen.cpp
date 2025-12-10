@@ -17,7 +17,7 @@ static_assert(!UE_WITH_CONSTINIT_UOBJECT, "This generated code can only be compi
 			nullptr,
 			0,
 			PKG_CompiledIn | 0x00000000,
-			0x5DD474C6,
+			0x02543319,
 			0x3000C0EF,
 			METADATA_PARAMS(0, nullptr)
 		};
@@ -25,5 +25,5 @@ static_assert(!UE_WITH_CONSTINIT_UOBJECT, "This generated code can only be compi
 	}
 	return Z_Registration_Info_UPackage__Script_TrafficRuntime.OuterSingleton;
 }
-static FRegisterCompiledInInfo Z_CompiledInDeferPackage_UPackage__Script_TrafficRuntime(Z_Construct_UPackage__Script_TrafficRuntime, TEXT("/Script/TrafficRuntime"), Z_Registration_Info_UPackage__Script_TrafficRuntime, CONSTRUCT_RELOAD_VERSION_INFO(FPackageReloadVersionInfo, 0x5DD474C6, 0x3000C0EF));
+static FRegisterCompiledInInfo Z_CompiledInDeferPackage_UPackage__Script_TrafficRuntime(Z_Construct_UPackage__Script_TrafficRuntime, TEXT("/Script/TrafficRuntime"), Z_Registration_Info_UPackage__Script_TrafficRuntime, CONSTRUCT_RELOAD_VERSION_INFO(FPackageReloadVersionInfo, 0x02543319, 0x3000C0EF));
 PRAGMA_ENABLE_DEPRECATION_WARNINGS

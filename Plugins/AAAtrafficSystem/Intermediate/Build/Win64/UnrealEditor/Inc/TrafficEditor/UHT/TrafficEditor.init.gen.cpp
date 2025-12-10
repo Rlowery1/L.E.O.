@@ -17,7 +17,7 @@ static_assert(!UE_WITH_CONSTINIT_UOBJECT, "This generated code can only be compi
 			nullptr,
 			0,
 			PKG_CompiledIn | 0x00000040,
-			0x41D4FB21,
+			0x7A302D5F,
 			0x522E2AB8,
 			METADATA_PARAMS(0, nullptr)
 		};
@@ -25,5 +25,5 @@ static_assert(!UE_WITH_CONSTINIT_UOBJECT, "This generated code can only be compi
 	}
 	return Z_Registration_Info_UPackage__Script_TrafficEditor.OuterSingleton;
 }
-static FRegisterCompiledInInfo Z_CompiledInDeferPackage_UPackage__Script_TrafficEditor(Z_Construct_UPackage__Script_TrafficEditor, TEXT("/Script/TrafficEditor"), Z_Registration_Info_UPackage__Script_TrafficEditor, CONSTRUCT_RELOAD_VERSION_INFO(FPackageReloadVersionInfo, 0x41D4FB21, 0x522E2AB8));
+static FRegisterCompiledInInfo Z_CompiledInDeferPackage_UPackage__Script_TrafficEditor(Z_Construct_UPackage__Script_TrafficEditor, TEXT("/Script/TrafficEditor"), Z_Registration_Info_UPackage__Script_TrafficEditor, CONSTRUCT_RELOAD_VERSION_INFO(FPackageReloadVersionInfo, 0x7A302D5F, 0x522E2AB8));
 PRAGMA_ENABLE_DEPRECATION_WARNINGS

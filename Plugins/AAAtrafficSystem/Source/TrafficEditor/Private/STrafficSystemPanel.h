@@ -26,6 +26,7 @@ private:
 
 	FReply OnBeginCalibrationClicked();
 	FReply OnBakeCalibrationClicked();
+	FReply OnRestoreCalibrationClicked();
 	FReply OnResetLabClicked();
 	FReply OnResetLabIncludingTaggedClicked();
 	FReply OnConvertSelectedClicked();
@@ -46,6 +47,7 @@ private:
 	FText GetSelectedFamilyEditableText() const;
 	void OnFamilyNameCommitted(const FText& NewText, ETextCommit::Type CommitType);
 	bool HasDetectedFamilies() const;
+	bool HasBackupForSelected() const;
 
 	TArray<TSharedPtr<FFamilyListItem>> FamilyItems;
 	TSharedPtr<FFamilyListItem> SelectedFamily;
