@@ -305,6 +305,7 @@ bool FTrafficPIESpawnAndRunCommand::Update()
 		}
 		return true;
 	}
+	Manager->SetForceLogicOnlyForTests(true);
 	Manager->SetActiveRunMetrics(&State->Metrics);
 	Manager->SpawnTestVehicles(3, 800.f);
 
@@ -508,6 +509,7 @@ bool FTrafficRoadLabIntegrationTest::RunTest(const FString& Parameters)
 	if (Manager)
 	{
 		Manager->SetActiveRunMetrics(&Metrics);
+		Manager->SetForceLogicOnlyForTests(true);
 	}
 
 	// Log network summary for human-like verification.

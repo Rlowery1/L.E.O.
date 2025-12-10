@@ -22,6 +22,7 @@ public:
 	void SpawnTestVehicles(int32 VehiclesPerLane = 3, float SpeedCmPerSec = 800.f);
 	void ClearVehicles();
 	void SetActiveRunMetrics(FTrafficRunMetrics* InMetrics);
+	void SetForceLogicOnlyForTests(bool bInForce);
 
 protected:
 	virtual void BeginPlay() override;
@@ -41,6 +42,7 @@ private:
 
 	FTrafficRunMetrics* ActiveMetrics = nullptr;
 	TMap<int32, float> LastLaneSpawnTimes;
+	bool bForceLogicOnlyForTests = false;
 
 	UTrafficNetworkAsset* FindNetworkAsset() const;
 	const UTrafficVehicleProfile* ResolveDefaultVehicleProfile() const;
