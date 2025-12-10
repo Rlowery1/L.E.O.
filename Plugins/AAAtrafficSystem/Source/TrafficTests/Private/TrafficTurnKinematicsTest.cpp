@@ -6,6 +6,10 @@
 #include "TrafficAutomationLogger.h"
 #include "Modules/ModuleManager.h"
 #include "TrafficRuntimeModule.h"
+#include "TrafficVehicleBase.h"
+#include "Engine/World.h"
+#include "EngineUtils.h"
+#include "Editor.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FTrafficTurnKinematicsSimpleCrossTest,
@@ -72,6 +76,34 @@ bool FTrafficTurnKinematicsSimpleCrossTest::RunTest(const FString& Parameters)
 	const int32 LaneCount = Network.Lanes.Num();
 
 	FTrafficRunMetrics Metrics;
+	TArray<ATrafficVehicleBase*> SpawnedVehicles;
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (World && Network.Lanes.Num() > 0)
+	{
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		ATrafficVehicleBase* Vehicle = World->SpawnActor<ATrafficVehicleBase>(ATrafficVehicleBase::StaticClass(), FTransform::Identity, Params);
+		if (Vehicle)
+		{
+			Vehicle->InitializeOnLane(&Network.Lanes[0], 0.0f, 800.f);
+			SpawnedVehicles.Add(Vehicle);
+			Metrics.VehiclesSpawned = SpawnedVehicles.Num();
+		}
+
+		// Short simulation to populate metrics.
+		const float Step = 0.05f;
+		const float SimTime = 0.5f;
+		for (float T = 0.f; T < SimTime; T += Step)
+		{
+			World->Tick(LEVELTICK_All, Step);
+			for (TActorIterator<ATrafficVehicleBase> It(World); It; ++It)
+			{
+				It->SampleLaneTrackingError(Metrics);
+				It->SampleDynamics(Metrics, Step);
+			}
+		}
+		Metrics.SimulatedSeconds = SimTime;
+	}
 
 	UTrafficAutomationLogger::LogMetric(TEXT("IntersectionCount"), FString::FromInt(IntersectionCount));
 	UTrafficAutomationLogger::LogMetric(TEXT("MovementCount"), FString::FromInt(MovementCount));
@@ -142,6 +174,14 @@ bool FTrafficTurnKinematicsSimpleCrossTest::RunTest(const FString& Parameters)
 	Metrics.Finalize();
 	UTrafficAutomationLogger::LogRunMetrics(LocalTestName, Metrics);
 	UTrafficAutomationLogger::EndTestLog();
+
+	for (ATrafficVehicleBase* Vehicle : SpawnedVehicles)
+	{
+		if (Vehicle && Vehicle->IsValidLowLevel())
+		{
+			Vehicle->Destroy();
+		}
+	}
 
 	return bHeadingSmooth;
 }

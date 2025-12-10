@@ -19,11 +19,14 @@
 #include "UObject/SoftObjectPath.h"
 #include "FileHelpers.h"
 #include "HAL/FileManager.h"
+#include "Misc/MessageDialog.h"
 
 #include "Editor.h"
 #include "Engine/World.h"
 #include "Engine/Selection.h"
 #include "EngineUtils.h"
+#include "TrafficGeometryProviderFactory.h"
+#include "TrafficGeometryProvider.h"
 
 const FName UTrafficSystemEditorSubsystem::RoadLabTag = FName(TEXT("AAA_RoadLab"));
 
@@ -80,6 +83,24 @@ bool UTrafficSystemEditorSubsystem::EnsureDetectedFamilies(const TCHAR* Context)
 		return false;
 	}
 	return true;
+}
+
+bool UTrafficSystemEditorSubsystem::HasAnyPreparedRoads() const
+{
+	UWorld* World = GetEditorWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->FindComponentByClass<UTrafficRoadMetadataComponent>())
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 bool UTrafficSystemEditorSubsystem::HasAnyCalibratedFamilies() const
@@ -479,9 +500,38 @@ void UTrafficSystemEditorSubsystem::DoCars()
 		return;
 	}
 
+	if (!HasAnyPreparedRoads())
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] DoCars: No prepared roads. Run Prepare Map first."));
+		return;
+	}
+
 	if (!HasAnyCalibratedFamilies())
 	{
 		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] DoCars: No calibrated families. Calibrate at least one family first."));
+		return;
+	}
+
+	ATrafficSystemController* Controller = GetOrSpawnController();
+	if (!Controller)
+	{
+		return;
+	}
+
+	const int32 NumRoads = Controller->GetNumRoads();
+	const int32 NumLanes = Controller->GetNumLanes();
+	if (NumRoads <= 0 || NumLanes <= 0)
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] Build produced an empty traffic network (Roads=%d, Lanes=%d). No vehicles will be spawned."), NumRoads, NumLanes);
+		FMessageDialog::Open(
+			EAppMsgType::Ok,
+			NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_EmptyNetwork",
+				"AAA Traffic could not build any roads or lanes in this level.\n\n"
+				"This usually means:\n"
+				"  • PREPARE MAP was not run,\n"
+				"  • No road actors are tagged for traffic,\n"
+				"  • Or the active geometry provider does not support your road kit.\n\n"
+				"Run PREPARE MAP and ensure at least one road family is calibrated and included in traffic."));
 		return;
 	}
 
@@ -775,6 +825,26 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 		return;
 	}
 
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	// Try to use a selected actor of this family if present; otherwise spawn a preview instance.
+	AActor* RoadActor = nullptr;
+	if (GEditor && GEditor->GetSelectedActors())
+	{
+		for (FSelectionIterator It(*GEditor->GetSelectedActors()); It; ++It)
+		{
+			if (AActor* Candidate = Cast<AActor>(*It))
+			{
+				if (Candidate->IsA(RoadClass))
+				{
+					RoadActor = Candidate;
+					break;
+				}
+			}
+		}
+	}
+
 	// Cleanup previous preview actors.
 	if (ActiveCalibrationRoadActor.IsValid())
 	{
@@ -786,29 +856,42 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 		CalibrationOverlayActor.Reset();
 	}
 
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	AActor* RoadActor = World->SpawnActor<AActor>(RoadClass, FTransform::Identity, SpawnParams);
 	if (!RoadActor)
 	{
-		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] BeginCalibrationForFamily: Failed to spawn road actor of class %s"), *RoadClass->GetName());
-		return;
+		RoadActor = World->SpawnActor<AActor>(RoadClass, FTransform::Identity, SpawnParams);
+		if (!RoadActor)
+		{
+			UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] BeginCalibrationForFamily: Failed to spawn road actor of class %s"), *RoadClass->GetName());
+			return;
+		}
+		TagAsRoadLab(RoadActor);
 	}
 
-	TagAsRoadLab(RoadActor);
-	USplineComponent* Spline = RoadActor->FindComponentByClass<USplineComponent>();
-	if (!Spline || Spline->GetNumberOfSplinePoints() < 2)
-	{
-		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] BeginCalibrationForFamily: Road actor missing valid spline."));
-		RoadActor->Destroy();
-		return;
-	}
+	TArray<TObjectPtr<UObject>> ProviderObjects;
+	TArray<ITrafficRoadGeometryProvider*> Providers;
+	UTrafficGeometryProviderFactory::CreateProviderChainForEditorWorld(World, ProviderObjects, Providers);
 
 	TArray<FVector> CenterlinePoints;
-	const int32 NumSplinePoints = Spline->GetNumberOfSplinePoints();
-	for (int32 i = 0; i < NumSplinePoints; ++i)
+	for (ITrafficRoadGeometryProvider* Provider : Providers)
 	{
-		CenterlinePoints.Add(Spline->GetLocationAtSplinePoint(i, ESplineCoordinateSpace::World));
+		if (Provider && Provider->GetDisplayCenterlineForActor(RoadActor, CenterlinePoints) && CenterlinePoints.Num() >= 2)
+		{
+			break;
+		}
+	}
+
+	if (CenterlinePoints.Num() < 2)
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] BeginCalibrationForFamily: Provider could not supply a display centerline for %s."), *GetNameSafe(RoadActor));
+		if (RoadActor == ActiveCalibrationRoadActor.Get())
+		{
+			RoadActor = nullptr;
+		}
+		else if (RoadActor && RoadActor->Tags.Contains(RoadLabTag))
+		{
+			RoadActor->Destroy();
+		}
+		return;
 	}
 
 	const bool bHasUnderlyingMesh = (RoadActor->FindComponentByClass<UStaticMeshComponent>() != nullptr);

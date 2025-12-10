@@ -79,3 +79,13 @@ void ATrafficSystemController::Editor_SpawnTestVehicles()
 	UE_LOG(LogTraffic, Log, TEXT("[TrafficSystemController] Editor_SpawnTestVehicles: Stub - vehicle spawning not yet implemented."));
 #endif
 }
+
+int32 ATrafficSystemController::GetNumRoads() const
+{
+	return BuiltNetworkAsset ? BuiltNetworkAsset->Network.Roads.Num() : 0;
+}
+
+int32 ATrafficSystemController::GetNumLanes() const
+{
+	return BuiltNetworkAsset ? BuiltNetworkAsset->Network.Lanes.Num() : 0;
+}

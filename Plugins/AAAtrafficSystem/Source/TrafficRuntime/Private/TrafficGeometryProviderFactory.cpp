@@ -32,3 +32,25 @@ TObjectPtr<UObject> UTrafficGeometryProviderFactory::CreateProvider(
 	return ProviderObject;
 }
 
+void UTrafficGeometryProviderFactory::CreateProviderChainForEditorWorld(
+	UWorld* World,
+	TArray<TObjectPtr<UObject>>& OutProviders,
+	TArray<ITrafficRoadGeometryProvider*>& OutInterfaces)
+{
+	OutProviders.Empty();
+	OutInterfaces.Empty();
+
+	const TSharedPtr<IPlugin> CityBLDPlugin = IPluginManager::Get().FindPlugin(TEXT("CityBLD"));
+	if (CityBLDPlugin.IsValid() && CityBLDPlugin->IsEnabled())
+	{
+		UCityBLDRoadGeometryProvider* CityProvider = NewObject<UCityBLDRoadGeometryProvider>(GetTransientPackage());
+		OutInterfaces.Add(static_cast<ITrafficRoadGeometryProvider*>(CityProvider));
+		OutProviders.Add(CityProvider);
+	}
+
+	// Always add generic fallback.
+	UGenericSplineRoadGeometryProvider* GenericProvider = NewObject<UGenericSplineRoadGeometryProvider>(GetTransientPackage());
+	OutInterfaces.Add(static_cast<ITrafficRoadGeometryProvider*>(GenericProvider));
+	OutProviders.Add(GenericProvider);
+}
+

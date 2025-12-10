@@ -10,9 +10,9 @@
 			"PerModuleInline.gen.cpp.obj",
 			"LaneCalibrationOverlayActor.cpp.obj",
 			"RoadLanePreviewActor.cpp.obj",
-			"STrafficSystemPanel.cpp.obj",
 			"TrafficCalibrationSubsystem.cpp.obj",
 			"TrafficEditorModule.cpp.obj",
+			"STrafficSystemPanel.cpp.obj",
 			"TrafficSystemEditorSubsystem.cpp.obj"
 		]
 	}

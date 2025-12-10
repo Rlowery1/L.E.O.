@@ -2,15 +2,17 @@
 	"RemapUnityFiles": 
 	{
 		"Module.TrafficEditor.cpp.obj": [
+			"LaneCalibrationOverlayActor.gen.cpp.obj",
 			"RoadLanePreviewActor.gen.cpp.obj",
 			"TrafficCalibrationSubsystem.gen.cpp.obj",
 			"TrafficEditor.init.gen.cpp.obj",
 			"TrafficSystemEditorSubsystem.gen.cpp.obj",
 			"PerModuleInline.gen.cpp.obj",
 			"RoadLanePreviewActor.cpp.obj",
-			"STrafficSystemPanel.cpp.obj",
 			"TrafficCalibrationSubsystem.cpp.obj",
 			"TrafficEditorModule.cpp.obj",
+			"LaneCalibrationOverlayActor.cpp.obj",
+			"STrafficSystemPanel.cpp.obj",
 			"TrafficSystemEditorSubsystem.cpp.obj"
 		]
 	}

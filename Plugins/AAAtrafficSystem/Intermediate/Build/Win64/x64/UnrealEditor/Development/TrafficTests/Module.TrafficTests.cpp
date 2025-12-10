@@ -8,6 +8,7 @@
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficTests/Private/TrafficLaneGenerationTest.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficTests/Private/TrafficPingTest.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficTests/Private/TrafficRoadFamiliesTest.cpp"
+#include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficTests/Private/TrafficRoadLabIntegrationTest.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficTests/Private/TrafficRoadLabPIETest.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficTests/Private/TrafficTestsModule.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficTests/Private/TrafficTurnKinematicsKinematicTest.cpp"
