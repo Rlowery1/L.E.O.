@@ -1,0 +1,30 @@
+{
+    "Version": "1.2",
+    "Data": {
+        "Source": "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\private\\trafficgeometryproviderfactory.cpp",
+        "ProvidedModule": "",
+        "PCH": "c:\\users\\rllax\\l_e_o\\intermediate\\build\\win64\\x64\\l_e_oeditor\\development\\unrealed\\sharedpch.unrealed.project.valapi.valexpapi.cpp20.h.pch",
+        "Includes": [
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\x64\\unrealeditor\\development\\trafficruntime\\definitions.trafficruntime.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\public\\trafficgeometryproviderfactory.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficruntime\\uht\\trafficgeometryproviderfactory.generated.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\public\\trafficgeometryprovider.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\public\\trafficroadtypes.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficruntime\\uht\\trafficroadtypes.generated.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficruntime\\uht\\trafficgeometryprovider.generated.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\public\\citybldroadgeometryprovider.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficruntime\\uht\\citybldroadgeometryprovider.generated.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\public\\trafficruntimemodule.h",
+            "c:\\program files\\epic games\\ue_5.7\\engine\\source\\runtime\\projects\\public\\interfaces\\ipluginmanager.h",
+            "c:\\program files\\epic games\\ue_5.7\\engine\\source\\runtime\\projects\\public\\plugindescriptor.h",
+            "c:\\program files\\epic games\\ue_5.7\\engine\\source\\runtime\\projects\\public\\custombuildsteps.h",
+            "c:\\program files\\epic games\\ue_5.7\\engine\\source\\runtime\\projects\\public\\localizationdescriptor.h",
+            "c:\\program files\\epic games\\ue_5.7\\engine\\source\\runtime\\projects\\public\\moduledescriptor.h",
+            "c:\\program files\\epic games\\ue_5.7\\engine\\source\\runtime\\projects\\public\\plugindisalloweddescriptor.h",
+            "c:\\program files\\epic games\\ue_5.7\\engine\\source\\runtime\\projects\\public\\pluginreferencedescriptor.h",
+            "c:\\program files\\epic games\\ue_5.7\\engine\\source\\runtime\\projects\\public\\versescope.h"
+        ],
+        "ImportedModules": [],
+        "ImportedHeaderUnits": []
+    }
+}

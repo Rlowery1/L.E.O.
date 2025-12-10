@@ -1,0 +1,17 @@
+/NOLOGO
+/errorReport:prompt
+/MACHINE:x64
+/SUBSYSTEM:WINDOWS
+/DEF
+/NAME:"UnrealEditor-TrafficEditor.dll"
+/IGNORE:4221
+/NODEFAULTLIB
+"C:/Users/rllax/L_E_O/Intermediate/Build/Win64/x64/L_E_OEditor/Development/UnrealEd/SharedPCH.UnrealEd.Project.ValApi.ValExpApi.Cpp20.h.obj"
+"C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Intermediate/Build/Win64/x64/UnrealEditor/Development/TrafficEditor/Module.TrafficEditor.cpp.obj"
+"C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Intermediate/Build/Win64/x64/UnrealEditor/Development/TrafficEditor/RoadLanePreviewActor.cpp.obj"
+"C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Intermediate/Build/Win64/x64/UnrealEditor/Development/TrafficEditor/STrafficSystemPanel.cpp.obj"
+"C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Intermediate/Build/Win64/x64/UnrealEditor/Development/TrafficEditor/TrafficCalibrationSubsystem.cpp.obj"
+"C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Intermediate/Build/Win64/x64/UnrealEditor/Development/TrafficEditor/TrafficEditorModule.cpp.obj"
+"C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Intermediate/Build/Win64/x64/UnrealEditor/Development/TrafficEditor/TrafficSystemEditorSubsystem.cpp.obj"
+"C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Intermediate/Build/Win64/x64/UnrealEditor/Development/TrafficEditor/Default.rc2.res"
+/OUT:"C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Intermediate/Build/Win64/x64/UnrealEditor/Development/TrafficEditor/UnrealEditor-TrafficEditor.lib"

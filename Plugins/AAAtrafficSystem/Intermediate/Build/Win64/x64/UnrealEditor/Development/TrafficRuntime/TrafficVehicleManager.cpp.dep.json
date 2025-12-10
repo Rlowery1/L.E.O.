@@ -1,0 +1,30 @@
+{
+    "Version": "1.2",
+    "Data": {
+        "Source": "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\private\\trafficvehiclemanager.cpp",
+        "ProvidedModule": "",
+        "PCH": "c:\\users\\rllax\\l_e_o\\intermediate\\build\\win64\\x64\\l_e_oeditor\\development\\unrealed\\sharedpch.unrealed.project.valapi.valexpapi.cpp20.h.pch",
+        "Includes": [
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\x64\\unrealeditor\\development\\trafficruntime\\definitions.trafficruntime.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\public\\trafficvehiclemanager.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficruntime\\uht\\trafficvehiclemanager.generated.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\public\\trafficvehiclebase.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficruntime\\uht\\trafficvehiclebase.generated.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\public\\trafficnetworkasset.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\public\\trafficroadtypes.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficruntime\\uht\\trafficroadtypes.generated.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficruntime\\uht\\trafficnetworkasset.generated.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\public\\trafficsystemcontroller.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficruntime\\uht\\trafficsystemcontroller.generated.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\public\\trafficruntimemodule.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\public\\trafficvehiclesettings.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficruntime\\uht\\trafficvehiclesettings.generated.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\public\\trafficvehicleadapter.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficruntime\\uht\\trafficvehicleadapter.generated.h",
+            "c:\\program files\\epic games\\ue_5.7\\engine\\source\\runtime\\engine\\public\\engineutils.h",
+            "c:\\program files\\epic games\\ue_5.7\\engine\\source\\runtime\\core\\public\\misc\\stringoutputdevice.h"
+        ],
+        "ImportedModules": [],
+        "ImportedHeaderUnits": []
+    }
+}

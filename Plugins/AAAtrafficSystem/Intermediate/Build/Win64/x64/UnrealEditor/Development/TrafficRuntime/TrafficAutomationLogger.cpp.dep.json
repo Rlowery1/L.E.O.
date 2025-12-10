@@ -1,0 +1,16 @@
+{
+    "Version": "1.2",
+    "Data": {
+        "Source": "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\private\\trafficautomationlogger.cpp",
+        "ProvidedModule": "",
+        "PCH": "c:\\users\\rllax\\l_e_o\\intermediate\\build\\win64\\x64\\l_e_oeditor\\development\\unrealed\\sharedpch.unrealed.project.valapi.valexpapi.cpp20.h.pch",
+        "Includes": [
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\x64\\unrealeditor\\development\\trafficruntime\\definitions.trafficruntime.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\public\\trafficautomationlogger.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficruntime\\uht\\trafficautomationlogger.generated.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\public\\trafficruntimemodule.h"
+        ],
+        "ImportedModules": [],
+        "ImportedHeaderUnits": []
+    }
+}

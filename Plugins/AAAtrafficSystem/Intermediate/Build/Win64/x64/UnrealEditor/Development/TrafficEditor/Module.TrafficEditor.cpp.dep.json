@@ -1,0 +1,30 @@
+{
+    "Version": "1.2",
+    "Data": {
+        "Source": "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\x64\\unrealeditor\\development\\trafficeditor\\module.trafficeditor.cpp",
+        "ProvidedModule": "",
+        "PCH": "c:\\users\\rllax\\l_e_o\\intermediate\\build\\win64\\x64\\l_e_oeditor\\development\\unrealed\\sharedpch.unrealed.project.valapi.valexpapi.cpp20.h.pch",
+        "Includes": [
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\x64\\unrealeditor\\development\\trafficeditor\\definitions.trafficeditor.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficeditor\\uht\\lanecalibrationoverlayactor.gen.cpp",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficeditor\\public\\lanecalibrationoverlayactor.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\public\\trafficroadfamilysettings.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficruntime\\uht\\trafficroadfamilysettings.generated.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficeditor\\uht\\lanecalibrationoverlayactor.generated.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficeditor\\uht\\roadlanepreviewactor.gen.cpp",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficeditor\\public\\roadlanepreviewactor.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficeditor\\uht\\roadlanepreviewactor.generated.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficeditor\\uht\\trafficcalibrationsubsystem.gen.cpp",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficeditor\\public\\trafficcalibrationsubsystem.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficeditor\\uht\\trafficcalibrationsubsystem.generated.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficeditor\\uht\\trafficeditor.init.gen.cpp",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficeditor\\uht\\trafficsystemeditorsubsystem.gen.cpp",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficeditor\\public\\trafficsystemeditorsubsystem.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficeditor\\uht\\trafficsystemeditorsubsystem.generated.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\x64\\unrealeditor\\development\\trafficeditor\\permoduleinline.gen.cpp",
+            "c:\\program files\\epic games\\ue_5.7\\engine\\source\\runtime\\core\\public\\hal\\permoduleinline.inl"
+        ],
+        "ImportedModules": [],
+        "ImportedHeaderUnits": []
+    }
+}
