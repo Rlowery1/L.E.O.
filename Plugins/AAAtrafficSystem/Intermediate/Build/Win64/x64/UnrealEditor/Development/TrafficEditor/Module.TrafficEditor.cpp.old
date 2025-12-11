@@ -7,7 +7,5 @@
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Intermediate/Build/Win64/x64/UnrealEditor/Development/TrafficEditor/PerModuleInline.gen.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficEditor/Private/LaneCalibrationOverlayActor.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficEditor/Private/RoadLanePreviewActor.cpp"
-#include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficEditor/Private/STrafficSystemPanel.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficEditor/Private/TrafficCalibrationSubsystem.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficEditor/Private/TrafficEditorModule.cpp"
-#include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficEditor/Private/TrafficSystemEditorSubsystem.cpp"

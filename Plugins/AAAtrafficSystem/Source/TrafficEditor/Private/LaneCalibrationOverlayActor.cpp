@@ -152,6 +152,19 @@ UStaticMesh* ALaneCalibrationOverlayActor::GetArrowMesh(bool bForwardDirection, 
 	return FallbackArrowMesh ? FallbackArrowMesh : FTrafficCalibrationVisuals::GetOrCreateCalibrationArrowMesh();
 }
 
+int32 ALaneCalibrationOverlayActor::GetArrowInstanceCount() const
+{
+	int32 Count = 0;
+	for (const UInstancedStaticMeshComponent* ISM : ChevronArrowComponents)
+	{
+		if (ISM)
+		{
+			Count += ISM->GetInstanceCount();
+		}
+	}
+	return Count;
+}
+
 UMaterialInstanceDynamic* ALaneCalibrationOverlayActor::CreateArrowMaterialInstance(
 	UInstancedStaticMeshComponent* ISM,
 	const FLinearColor& Color)
@@ -419,8 +432,15 @@ void ALaneCalibrationOverlayActor::BuildForRoad(
 		++LaneIndex;
 	}
 
-	UE_LOG(LogTraffic, Log, TEXT("[LaneCalibrationOverlay] Built chevron overlay with %d lanes (%d forward, %d backward)."),
-		LaneIndex, NumLanesPerSideForward, NumLanesPerSideBackward);
+	const int32 NumArrowInstances = GetArrowInstanceCount();
+	UE_LOG(LogTraffic, Log, TEXT("[LaneCalibrationOverlay] Built chevron overlay with %d lanes (%d forward, %d backward) and %d arrow instances."),
+		LaneIndex, NumLanesPerSideForward, NumLanesPerSideBackward, NumArrowInstances);
+	if (NumArrowInstances == 0)
+	{
+		UE_LOG(LogTraffic, Warning,
+			TEXT("[LaneCalibrationOverlay] Built chevron overlay but placed 0 arrow instances. "
+				 "Check centerline validity and calibration settings."));
+	}
 }
 
 void ALaneCalibrationOverlayActor::BuildFromCenterline(const TArray<FVector>& CenterlinePoints, const FTrafficLaneFamilyCalibration& Calibration, const FTransform& RoadTransform)

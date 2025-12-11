@@ -23,6 +23,8 @@
 #include "Misc/MessageDialog.h"
 
 #include "Editor.h"
+#include "EditorViewportClient.h"
+#include "LevelEditorViewport.h"
 #include "Engine/World.h"
 #include "Engine/Selection.h"
 #include "EngineUtils.h"
@@ -1004,7 +1006,28 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 	Calib.CenterlineOffsetCm = FamilyInfo->FamilyDefinition.Forward.InnerLaneCenterOffsetCm;
 
 	Overlay->BuildFromCenterline(CenterlinePoints, Calib, RoadActor->GetActorTransform());
-	FocusCameraOnActor(Overlay);
+#if WITH_EDITOR
+	if (GEditor)
+	{
+		GEditor->SelectNone(/*NoteSelectionChange=*/false, /*DeselectBSPSurfs=*/true, /*WarnAboutManyActors=*/false);
+		GEditor->SelectActor(Overlay, /*InSelected=*/true, /*Notify=*/true);
+		FocusCameraOnActor(Overlay);
+	}
+#endif
+	Overlay->SetActorHiddenInGame(false);
+	Overlay->SetIsTemporarilyHiddenInEditor(false);
+
+	const int32 NumArrowInstances = Overlay->GetArrowInstanceCount();
+	if (NumArrowInstances <= 0)
+	{
+		FMessageDialog::Open(
+			EAppMsgType::Ok,
+			NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_OverlayZeroInstances",
+				"Calibration overlay did not place any arrows.\n\n"
+				"This usually means the road's display centerline is degenerate (near-zero length)\n"
+				"or the calibration inputs are invalid.\n\n"
+				"Ensure the selected road piece has a non-zero length and valid lane settings, then try again."));
+	}
 
 	ActiveFamilyId = FamilyId;
 	ActiveCalibrationRoadActor = RoadActor;
