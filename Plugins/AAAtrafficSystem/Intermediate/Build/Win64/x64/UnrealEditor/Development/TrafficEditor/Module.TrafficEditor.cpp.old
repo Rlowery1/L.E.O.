@@ -9,3 +9,4 @@
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficEditor/Private/STrafficSystemPanel.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficEditor/Private/TrafficCalibrationSubsystem.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficEditor/Private/TrafficEditorModule.cpp"
+#include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficEditor/Private/TrafficSystemEditorSubsystem.cpp"
