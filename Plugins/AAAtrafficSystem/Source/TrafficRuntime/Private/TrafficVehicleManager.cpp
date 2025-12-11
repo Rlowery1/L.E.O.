@@ -12,6 +12,8 @@
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "HAL/IConsoleManager.h"
+#include "UObject/SoftObjectPath.h"
+#include "Misc/AutomationTest.h"
 
 static TAutoConsoleVariable<int32> CVarShowLogicDebugMesh(
 	TEXT("aaa.Traffic.ShowLogicDebugMesh"),
@@ -206,6 +208,35 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 	if (!bForceLogicOnlyForTests && Profile && Profile->VehicleClass.IsValid())
 	{
 		VisualClass = Profile->VehicleClass.LoadSynchronous();
+	}
+	else if (!bForceLogicOnlyForTests && !VisualClass && GIsAutomationTesting)
+	{
+		static const TCHAR* DevChaosClassPath = TEXT("/Game/CitySampleVehicles/vehicle07_Car/BP_vehicle07_Car.BP_vehicle07_Car_C");
+		UE_LOG(LogTraffic, Warning,
+			TEXT("[VehicleManager] Automation: DefaultVehicleProfile invalid. Attempting to load dev Chaos class at %s"),
+			DevChaosClassPath);
+
+		FSoftObjectPath DevPath(DevChaosClassPath);
+		UObject* LoadedObj = DevPath.TryLoad();
+		UClass* DevClass = Cast<UClass>(LoadedObj);
+		if (!DevClass)
+		{
+			DevClass = LoadClass<APawn>(nullptr, DevChaosClassPath);
+		}
+
+		if (DevClass)
+		{
+			VisualClass = DevClass;
+			UE_LOG(LogTraffic, Warning,
+				TEXT("[VehicleManager] Automation: Using dev Chaos class %s"),
+				DevChaosClassPath);
+		}
+		else
+		{
+			UE_LOG(LogTraffic, Error,
+				TEXT("[VehicleManager] Automation: Failed to load dev Chaos class at %s"),
+				DevChaosClassPath);
+		}
 	}
 
 	const TArray<FTrafficLane>& Lanes = NetworkAsset->Network.Lanes;

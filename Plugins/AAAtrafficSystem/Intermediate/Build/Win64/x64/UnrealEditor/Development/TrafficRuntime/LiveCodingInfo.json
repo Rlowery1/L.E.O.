@@ -44,10 +44,10 @@
 			"TrafficSystemController.cpp.obj",
 			"TrafficVehicleAdapter.cpp.obj",
 			"TrafficVehicleBase.cpp.obj",
-			"TrafficVehicleManager.cpp.obj",
 			"TrafficVehicleProfile.cpp.obj",
 			"TrafficVehicleSettings.cpp.obj",
-			"TrafficVisualSettings.cpp.obj"
+			"TrafficVisualSettings.cpp.obj",
+			"TrafficVehicleManager.cpp.obj"
 		]
 	}
 }
