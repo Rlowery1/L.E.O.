@@ -13,6 +13,7 @@
 			"TrafficRoadFamiliesTest.cpp.obj",
 			"TrafficRoadLabIntegrationTest.cpp.obj",
 			"TrafficRoadLabPIETest.cpp.obj",
+			"TrafficSpawnTest.cpp.obj",
 			"TrafficTestsModule.cpp.obj",
 			"TrafficTurnKinematicsKinematicTest.cpp.obj",
 			"TrafficTurnKinematicsTest.cpp.obj"

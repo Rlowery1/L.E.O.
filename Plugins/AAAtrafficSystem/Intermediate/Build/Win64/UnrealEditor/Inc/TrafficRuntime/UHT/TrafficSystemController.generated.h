@@ -17,7 +17,9 @@
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
 
 // ********** Begin Class ATrafficSystemController *************************************************
-#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficSystemController_h_12_RPC_WRAPPERS_NO_PURE_DECLS \
+#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficSystemController_h_13_RPC_WRAPPERS_NO_PURE_DECLS \
+	DECLARE_FUNCTION(execRuntime_SpawnTraffic); \
+	DECLARE_FUNCTION(execRuntime_BuildTrafficNetwork); \
 	DECLARE_FUNCTION(execEditor_SpawnTestVehicles); \
 	DECLARE_FUNCTION(execEditor_BuildTrafficNetwork);
 
@@ -25,7 +27,7 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
 struct Z_Construct_UClass_ATrafficSystemController_Statics;
 TRAFFICRUNTIME_API UClass* Z_Construct_UClass_ATrafficSystemController_NoRegister();
 
-#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficSystemController_h_12_INCLASS_NO_PURE_DECLS \
+#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficSystemController_h_13_INCLASS_NO_PURE_DECLS \
 private: \
 	static void StaticRegisterNativesATrafficSystemController(); \
 	friend struct ::Z_Construct_UClass_ATrafficSystemController_Statics; \
@@ -36,7 +38,7 @@ public: \
 	DECLARE_SERIALIZER(ATrafficSystemController)
 
 
-#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficSystemController_h_12_ENHANCED_CONSTRUCTORS \
+#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficSystemController_h_13_ENHANCED_CONSTRUCTORS \
 	/** Deleted move- and copy-constructors, should never be used */ \
 	ATrafficSystemController(ATrafficSystemController&&) = delete; \
 	ATrafficSystemController(const ATrafficSystemController&) = delete; \
@@ -46,13 +48,13 @@ public: \
 	NO_API virtual ~ATrafficSystemController();
 
 
-#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficSystemController_h_9_PROLOG
-#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficSystemController_h_12_GENERATED_BODY \
+#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficSystemController_h_10_PROLOG
+#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficSystemController_h_13_GENERATED_BODY \
 PRAGMA_DISABLE_DEPRECATION_WARNINGS \
 public: \
-	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficSystemController_h_12_RPC_WRAPPERS_NO_PURE_DECLS \
-	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficSystemController_h_12_INCLASS_NO_PURE_DECLS \
-	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficSystemController_h_12_ENHANCED_CONSTRUCTORS \
+	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficSystemController_h_13_RPC_WRAPPERS_NO_PURE_DECLS \
+	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficSystemController_h_13_INCLASS_NO_PURE_DECLS \
+	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficSystemController_h_13_ENHANCED_CONSTRUCTORS \
 private: \
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
