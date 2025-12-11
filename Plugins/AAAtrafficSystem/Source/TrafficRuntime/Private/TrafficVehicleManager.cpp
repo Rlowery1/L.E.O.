@@ -10,6 +10,14 @@
 #include "EngineUtils.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
+#include "HAL/IConsoleManager.h"
+
+static TAutoConsoleVariable<int32> CVarShowLogicDebugMesh(
+	TEXT("aaa.Traffic.ShowLogicDebugMesh"),
+	0,
+	TEXT("If non-zero, show the TrafficVehicleBase debug cube even when Chaos visuals are present.\n")
+	TEXT("Default: 0 (hide cube when Chaos pawn is spawned)."),
+	ECVF_Default);
 
 ATrafficVehicleManager::ATrafficVehicleManager()
 {
@@ -208,6 +216,13 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 						Adapters.Add(Adapter);
 					}
 					VisualVehicles.Add(VisualPawn);
+
+					// Hide the logic debug cube when Chaos visuals are active, unless dev CVar overrides it.
+					const int32 bShowDebugMesh = CVarShowLogicDebugMesh.GetValueOnGameThread();
+					if (!bForceLogicOnlyForTests && bShowDebugMesh == 0 && Vehicle)
+					{
+						Vehicle->SetDebugBodyVisible(false);
+					}
 				}
 			}
 		}

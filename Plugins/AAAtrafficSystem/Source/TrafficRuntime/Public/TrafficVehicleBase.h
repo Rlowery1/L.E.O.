@@ -26,6 +26,9 @@ public:
 	void SampleLaneTrackingError(FTrafficRunMetrics& Metrics) const;
 	void SampleDynamics(FTrafficRunMetrics& Metrics, float DeltaSeconds);
 
+	/** Show/hide the debug body mesh (the cube). Used when Chaos visuals are active. */
+	void SetDebugBodyVisible(bool bVisible);
+
 protected:
 	virtual void BeginPlay() override;
 

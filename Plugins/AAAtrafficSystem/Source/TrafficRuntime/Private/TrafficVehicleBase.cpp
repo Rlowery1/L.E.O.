@@ -133,3 +133,11 @@ void ATrafficVehicleBase::SampleDynamics(FTrafficRunMetrics& Metrics, float Delt
 	Metrics.AccumulateJerk(FMath::Abs(LastJerk));
 }
 
+void ATrafficVehicleBase::SetDebugBodyVisible(bool bVisible)
+{
+	if (Body)
+	{
+		Body->SetVisibility(bVisible, true);
+		Body->SetHiddenInGame(!bVisible);
+	}
+}
