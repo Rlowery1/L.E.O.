@@ -19,6 +19,8 @@
 #include "TrafficVehicleManager.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/Paths.h"
+#include "Engine/AssetManager.h"
+#include "UObject/SoftObjectPtr.h"
 
 #if WITH_EDITOR
 
@@ -335,9 +337,29 @@ bool FTrafficBaselineCurveRuntimeTest::RunTest(const FString& Parameters)
 	const UTrafficVehicleProfile* DefaultProfile = VehicleSettings ? Cast<UTrafficVehicleProfile>(ProfilePath.TryLoad()) : nullptr;
 	if (!DefaultProfile || !DefaultProfile->VehicleClass.IsValid())
 	{
-		AddError(TEXT("BaselineCurveChaos: DefaultVehicleProfile is not set or VehicleClass is invalid. "
-			"Install a Chaos vehicle (e.g., City Sample Cars) and set DefaultVehicleProfile in Project Settings -> AAA Traffic Vehicle Settings."));
-		UTrafficAutomationLogger::LogLine(TEXT("[TrafficBaselineCurve] DefaultVehicleProfile invalid or missing VehicleClass."));
+		static const TCHAR* DevProfilePath = TEXT("/Game/Traffic/Profiles/DA_VehicleProfile_CitySampleSedan.DA_VehicleProfile_CitySampleSedan");
+		UE_LOG(LogTraffic, Warning,
+			TEXT("[BaselineCurveChaos] DefaultVehicleProfile invalid from settings. Attempting to load dev profile asset at %s"),
+			DevProfilePath);
+
+		const FSoftObjectPath DevProfilePathObj(DevProfilePath);
+		TSoftObjectPtr<UTrafficVehicleProfile> DevProfileSoft(DevProfilePathObj);
+		UTrafficVehicleProfile* DevProfile = DevProfileSoft.LoadSynchronous();
+		if (DevProfile && DevProfile->VehicleClass.IsValid())
+		{
+			DefaultProfile = DevProfile;
+			UE_LOG(LogTraffic, Warning,
+				TEXT("[BaselineCurveChaos] Using dev profile asset %s"),
+				*DevProfileSoft.ToString());
+		}
+	}
+
+	if (!DefaultProfile || !DefaultProfile->VehicleClass.IsValid())
+	{
+		AddError(TEXT("BaselineCurveChaos: DefaultVehicleProfile invalid and dev fallback failed. "
+			"Ensure /Game/Traffic/Profiles/DA_VehicleProfile_CitySampleSedan exists and has a valid VehicleClass, "
+			"or set a valid DefaultVehicleProfile in Project Settings -> AAA Traffic Vehicle Settings."));
+		UTrafficAutomationLogger::LogLine(TEXT("[TrafficBaselineCurve] DefaultVehicleProfile invalid after fallback."));
 		UTrafficAutomationLogger::EndTestLog();
 		return false;
 	}
