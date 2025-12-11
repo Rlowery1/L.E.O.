@@ -223,7 +223,8 @@ void ALaneCalibrationOverlayActor::BuildLaneRibbon(
 	TArray<FColor> Colors;
 
 	const float HalfWidth = LaneWidth * 0.45f;
-	const float ZOffset = 5.f + (LaneIndex * 0.3f);
+	// Lift overlay significantly above the road to avoid z-fighting and make it visually obvious.
+	const float ZOffset = 30.f + (LaneIndex * 1.0f);
 
 	FColor LaneColor = bForwardDirection 
 		? FColor(40, 200, 80, 180)
@@ -307,7 +308,8 @@ void ALaneCalibrationOverlayActor::BuildChevronArrows(
 	const float DesiredArrowLength = (VisualSettings ? VisualSettings->ArrowLength : 450.f); // cm
 	const float DesiredArrowWidth = (VisualSettings ? VisualSettings->ArrowWidth : 180.f);   // cm
 	const float ArrowSpacing = (VisualSettings ? VisualSettings->ArrowSpacing : 600.f);      // cm
-	const float ZOffset = 5.f;
+	// Match ribbon hover height so arrows are clearly visible above the road.
+	const float ZOffset = 35.f;
 	constexpr float SourceArrowLength = 200.f; // cm, matches procedural arrow mesh
 	constexpr float SourceArrowWidth = 160.f;  // cm, matches procedural arrow mesh
 

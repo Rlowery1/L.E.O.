@@ -12,8 +12,8 @@
 			"STrafficSystemPanel.cpp.obj",
 			"TrafficCalibrationSubsystem.cpp.obj",
 			"TrafficEditorModule.cpp.obj",
-			"LaneCalibrationOverlayActor.cpp.obj",
-			"TrafficSystemEditorSubsystem.cpp.obj"
+			"TrafficSystemEditorSubsystem.cpp.obj",
+			"LaneCalibrationOverlayActor.cpp.obj"
 		]
 	}
 }
