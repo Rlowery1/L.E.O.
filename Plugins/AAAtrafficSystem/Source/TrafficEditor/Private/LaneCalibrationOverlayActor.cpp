@@ -361,7 +361,17 @@ void ALaneCalibrationOverlayActor::BuildForRoad(
 
 	const UTrafficVisualSettings* VisualSettings = GetDefault<UTrafficVisualSettings>();
 
+	// Match overlay actor to the road transform.
 	SetActorTransform(RoadTransform);
+
+	// Convert provider world-space centerline points into local space relative to the road transform.
+	TArray<FVector> LocalCenterlinePoints;
+	LocalCenterlinePoints.Reserve(CenterlinePoints.Num());
+	const FTransform InverseRoadTransform = RoadTransform.Inverse();
+	for (const FVector& WorldPos : CenterlinePoints)
+	{
+		LocalCenterlinePoints.Add(InverseRoadTransform.TransformPosition(WorldPos));
+	}
 
 	// Seed editable preview settings from the provided family definition.
 	NumLanesPerSideForward = Family.Forward.NumLanes;
@@ -369,6 +379,7 @@ void ALaneCalibrationOverlayActor::BuildForRoad(
 	LaneWidthCm = Family.Forward.LaneWidthCm;
 	CenterlineOffsetCm = Family.Forward.InnerLaneCenterOffsetCm;
 
+	// Cache original world-space data and current calibration for live rebuild.
 	CachedCenterlinePoints = CenterlinePoints;
 	CachedRoadTransform = RoadTransform;
 	CachedCalibration.NumLanesPerSideForward = NumLanesPerSideForward;
@@ -391,7 +402,7 @@ void ALaneCalibrationOverlayActor::BuildForRoad(
 	for (int32 i = 0; i < NumLanesPerSideForward; ++i)
 	{
 		float Offset = CenterlineOffsetCm + (i * LaneWidthCm);
-		TArray<FVector> LanePoints = ComputeLaneCenterline(CenterlinePoints, Offset);
+		TArray<FVector> LanePoints = ComputeLaneCenterline(LocalCenterlinePoints, Offset);
 
 		UStaticMesh* ArrowMesh = GetArrowMesh(true, VisualSettings);
 		if (ArrowMesh)
@@ -414,7 +425,7 @@ void ALaneCalibrationOverlayActor::BuildForRoad(
 	for (int32 i = 0; i < NumLanesPerSideBackward; ++i)
 	{
 		float Offset = -(CenterlineOffsetCm + (i * LaneWidthCm));
-		TArray<FVector> LanePoints = ComputeLaneCenterline(CenterlinePoints, Offset);
+		TArray<FVector> LanePoints = ComputeLaneCenterline(LocalCenterlinePoints, Offset);
 
 		UStaticMesh* ArrowMesh = GetArrowMesh(false, VisualSettings);
 		if (ArrowMesh)
