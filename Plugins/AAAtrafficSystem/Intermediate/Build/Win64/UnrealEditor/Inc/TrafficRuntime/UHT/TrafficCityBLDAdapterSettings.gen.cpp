@@ -111,6 +111,16 @@ struct Z_Construct_UClass_UTrafficCityBLDAdapterSettings_Statics
 		{ "ToolTip", "Negative keywords: exclude meshes if the name (component or mesh) contains any of these substrings." },
 #endif
 	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_MinMeshAspectRatio_MetaData[] = {
+		{ "Category", "Filtering" },
+#if !UE_BUILD_SHIPPING
+		{ "Comment", "/** Minimum bounding box aspect ratio (length/width) for a mesh to be considered part of the road. Set to 0 to disable. */" },
+#endif
+		{ "ModuleRelativePath", "Public/TrafficCityBLDAdapterSettings.h" },
+#if !UE_BUILD_SHIPPING
+		{ "ToolTip", "Minimum bounding box aspect ratio (length/width) for a mesh to be considered part of the road. Set to 0 to disable." },
+#endif
+	};
 #endif // WITH_METADATA
 
 // ********** Begin Class UTrafficCityBLDAdapterSettings constinit property declarations ***********
@@ -125,6 +135,7 @@ struct Z_Construct_UClass_UTrafficCityBLDAdapterSettings_Statics
 	static const UECodeGen_Private::FFloatPropertyParams NewProp_MaxMeshHeightCm;
 	static const UECodeGen_Private::FStrPropertyParams NewProp_ExcludedMeshNameKeywords_Inner;
 	static const UECodeGen_Private::FArrayPropertyParams NewProp_ExcludedMeshNameKeywords;
+	static const UECodeGen_Private::FFloatPropertyParams NewProp_MinMeshAspectRatio;
 	static const UECodeGen_Private::FPropertyParamsBase* const PropPointers[];
 // ********** End Class UTrafficCityBLDAdapterSettings constinit property declarations *************
 	static UObject* (*const DependentSingletons[])();
@@ -146,6 +157,7 @@ const UECodeGen_Private::FFloatPropertyParams Z_Construct_UClass_UTrafficCityBLD
 const UECodeGen_Private::FFloatPropertyParams Z_Construct_UClass_UTrafficCityBLDAdapterSettings_Statics::NewProp_MaxMeshHeightCm = { "MaxMeshHeightCm", nullptr, (EPropertyFlags)0x0010000000004001, UECodeGen_Private::EPropertyGenFlags::Float, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(UTrafficCityBLDAdapterSettings, MaxMeshHeightCm), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_MaxMeshHeightCm_MetaData), NewProp_MaxMeshHeightCm_MetaData) };
 const UECodeGen_Private::FStrPropertyParams Z_Construct_UClass_UTrafficCityBLDAdapterSettings_Statics::NewProp_ExcludedMeshNameKeywords_Inner = { "ExcludedMeshNameKeywords", nullptr, (EPropertyFlags)0x0000000000004000, UECodeGen_Private::EPropertyGenFlags::Str, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, 0, METADATA_PARAMS(0, nullptr) };
 const UECodeGen_Private::FArrayPropertyParams Z_Construct_UClass_UTrafficCityBLDAdapterSettings_Statics::NewProp_ExcludedMeshNameKeywords = { "ExcludedMeshNameKeywords", nullptr, (EPropertyFlags)0x0010000000004001, UECodeGen_Private::EPropertyGenFlags::Array, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(UTrafficCityBLDAdapterSettings, ExcludedMeshNameKeywords), EArrayPropertyFlags::None, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_ExcludedMeshNameKeywords_MetaData), NewProp_ExcludedMeshNameKeywords_MetaData) };
+const UECodeGen_Private::FFloatPropertyParams Z_Construct_UClass_UTrafficCityBLDAdapterSettings_Statics::NewProp_MinMeshAspectRatio = { "MinMeshAspectRatio", nullptr, (EPropertyFlags)0x0010000000004001, UECodeGen_Private::EPropertyGenFlags::Float, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(UTrafficCityBLDAdapterSettings, MinMeshAspectRatio), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_MinMeshAspectRatio_MetaData), NewProp_MinMeshAspectRatio_MetaData) };
 const UECodeGen_Private::FPropertyParamsBase* const Z_Construct_UClass_UTrafficCityBLDAdapterSettings_Statics::PropPointers[] = {
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_UTrafficCityBLDAdapterSettings_Statics::NewProp_RoadActorTag,
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_UTrafficCityBLDAdapterSettings_Statics::NewProp_RoadClassNameContains_Inner,
@@ -158,6 +170,7 @@ const UECodeGen_Private::FPropertyParamsBase* const Z_Construct_UClass_UTrafficC
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_UTrafficCityBLDAdapterSettings_Statics::NewProp_MaxMeshHeightCm,
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_UTrafficCityBLDAdapterSettings_Statics::NewProp_ExcludedMeshNameKeywords_Inner,
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_UTrafficCityBLDAdapterSettings_Statics::NewProp_ExcludedMeshNameKeywords,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_UTrafficCityBLDAdapterSettings_Statics::NewProp_MinMeshAspectRatio,
 };
 static_assert(UE_ARRAY_COUNT(Z_Construct_UClass_UTrafficCityBLDAdapterSettings_Statics::PropPointers) < 2048);
 // ********** End Class UTrafficCityBLDAdapterSettings Property Definitions ************************
@@ -200,10 +213,10 @@ UTrafficCityBLDAdapterSettings::~UTrafficCityBLDAdapterSettings() {}
 struct Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficCityBLDAdapterSettings_h__Script_TrafficRuntime_Statics
 {
 	static constexpr FClassRegisterCompiledInInfo ClassInfo[] = {
-		{ Z_Construct_UClass_UTrafficCityBLDAdapterSettings, UTrafficCityBLDAdapterSettings::StaticClass, TEXT("UTrafficCityBLDAdapterSettings"), &Z_Registration_Info_UClass_UTrafficCityBLDAdapterSettings, CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(UTrafficCityBLDAdapterSettings), 1956011281U) },
+		{ Z_Construct_UClass_UTrafficCityBLDAdapterSettings, UTrafficCityBLDAdapterSettings::StaticClass, TEXT("UTrafficCityBLDAdapterSettings"), &Z_Registration_Info_UClass_UTrafficCityBLDAdapterSettings, CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(UTrafficCityBLDAdapterSettings), 361162244U) },
 	};
 }; // Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficCityBLDAdapterSettings_h__Script_TrafficRuntime_Statics 
-static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficCityBLDAdapterSettings_h__Script_TrafficRuntime_2889127703{
+static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficCityBLDAdapterSettings_h__Script_TrafficRuntime_4288571821{
 	TEXT("/Script/TrafficRuntime"),
 	Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficCityBLDAdapterSettings_h__Script_TrafficRuntime_Statics::ClassInfo, UE_ARRAY_COUNT(Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficCityBLDAdapterSettings_h__Script_TrafficRuntime_Statics::ClassInfo),
 	nullptr, 0,

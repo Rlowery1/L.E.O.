@@ -112,16 +112,6 @@ namespace
 			break;
 		}
 
-		if (!Controller)
-		{
-			State->bFailed = true;
-			if (Test)
-			{
-				Test->AddError(TEXT("No TrafficSystemController found in curve baseline PIE world."));
-			}
-			return true;
-		}
-
 		// Test-only: remove sidewalk modules that spam null world-context warnings in curve map.
 		if (GIsAutomationTesting)
 		{
@@ -144,6 +134,7 @@ namespace
 			for (TActorIterator<ATrafficSystemController> ItCtrl(World); ItCtrl; ++ItCtrl)
 			{
 				bHasController = true;
+				Controller = *ItCtrl;
 				break;
 			}
 			if (!bHasController)
@@ -154,10 +145,28 @@ namespace
 					World->SpawnActor<ATrafficSystemController>(ATrafficSystemController::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, SpawnParams);
 				if (SpawnedController)
 				{
+					Controller = SpawnedController;
 					SpawnedController->Runtime_BuildTrafficNetwork();
+					UE_LOG(LogTraffic, Log, TEXT("[TrafficBaselineCurveTest] Spawned controller; Runtime_BuildTrafficNetwork invoked."));
 					SpawnedController->Runtime_SpawnTraffic();
+					UE_LOG(LogTraffic, Log, TEXT("[TrafficBaselineCurveTest] Runtime_SpawnTraffic invoked on spawned controller."));
+				}
+				else
+				{
+					UE_LOG(LogTraffic, Warning, TEXT("[TrafficBaselineCurveTest] Failed to spawn TrafficSystemController in automation."));
 				}
 			}
+		}
+
+		if (!Controller)
+		{
+			State->bFailed = true;
+			if (Test)
+			{
+				Test->AddError(TEXT("No TrafficSystemController found in curve baseline PIE world."));
+			}
+			UE_LOG(LogTraffic, Warning, TEXT("[TrafficBaselineCurveTest] No TrafficSystemController available after automation setup."));
+			return true;
 		}
 
 		ATrafficVehicleManager* Manager = nullptr;

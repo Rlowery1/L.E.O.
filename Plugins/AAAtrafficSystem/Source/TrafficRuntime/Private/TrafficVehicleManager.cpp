@@ -176,6 +176,11 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 		return;
 	}
 
+	if (NetworkAsset)
+	{
+		UE_LOG(LogTraffic, Log, TEXT("[VehicleManager] Spawning test vehicles on %d lanes."), NetworkAsset->Network.Lanes.Num());
+	}
+
 	ClearVehicles();
 
 	const UTrafficVehicleProfile* Profile = ResolveDefaultVehicleProfile();

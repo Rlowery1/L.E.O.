@@ -49,4 +49,8 @@ public:
 	/** Negative keywords: exclude meshes if the name (component or mesh) contains any of these substrings. */
 	UPROPERTY(EditAnywhere, Config, Category="Filtering")
 	TArray<FString> ExcludedMeshNameKeywords;
+
+	/** Minimum bounding box aspect ratio (length/width) for a mesh to be considered part of the road. Set to 0 to disable. */
+	UPROPERTY(EditAnywhere, Config, Category="Filtering")
+	float MinMeshAspectRatio = 0.f;
 };

@@ -120,6 +120,18 @@ namespace
 			}
 		}
 
+		if (bInclude && Settings && Settings->MinMeshAspectRatio > 0.f)
+		{
+			const FVector BoxExtent = LocalBounds.BoxExtent;
+			const float Length = 2.f * FMath::Max(BoxExtent.X, BoxExtent.Y);
+			const float Width = 2.f * FMath::Min(BoxExtent.X, BoxExtent.Y);
+			const float Aspect = (Width > KINDA_SMALL_NUMBER) ? (Length / Width) : Length;
+			if (Aspect < Settings->MinMeshAspectRatio)
+			{
+				bInclude = false;
+			}
+		}
+
 		if (bInclude && Settings && Settings->MaxMeshLateralOffsetCm > 0.f)
 		{
 			const FTransform& Xform = Comp->GetComponentTransform();
@@ -131,6 +143,37 @@ namespace
 			{
 				const float LateralOffset = FMath::Abs(FVector::DotProduct(WorldCenter - RoadActor->GetActorLocation(), ApproxPerp));
 				bInclude = LateralOffset <= Settings->MaxMeshLateralOffsetCm;
+			}
+		}
+
+		if (bInclude)
+		{
+			// Filter meshes whose normals are far from the road plane.
+			const FVector ApproxTangent = RoadActor->GetActorForwardVector().GetSafeNormal();
+			const FVector ApproxRight = FVector(-ApproxTangent.Y, ApproxTangent.X, 0.f).GetSafeNormal();
+			const FVector ApproxUp = FVector::CrossProduct(ApproxTangent, ApproxRight).GetSafeNormal();
+
+			if (ApproxUp.IsNearlyZero())
+			{
+				bInclude = false;
+			}
+			else if (const FStaticMeshRenderData* RenderData = Mesh->GetRenderData())
+			{
+				if (RenderData->LODResources.Num() > 0)
+				{
+					const FStaticMeshLODResources& LOD = RenderData->LODResources[0];
+					const FStaticMeshVertexBuffer& VertexBuffer = LOD.VertexBuffers.StaticMeshVertexBuffer;
+					if (VertexBuffer.GetNumVertices() > 0)
+					{
+						const FVector Normal = FVector(VertexBuffer.VertexTangentZ(0)).GetSafeNormal();
+						const float CosAngle = FVector::DotProduct(Normal, ApproxUp);
+						// Reject if tilt exceeds ~60 degrees.
+						if (CosAngle < 0.5f)
+						{
+							bInclude = false;
+						}
+					}
+				}
 			}
 		}
 
