@@ -17,6 +17,7 @@
 #include "TrafficVehicleSettings.h"
 #include "TrafficVehicleProfile.h"
 #include "TrafficVehicleManager.h"
+#include "GameFramework/Pawn.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/Paths.h"
 #include "Engine/AssetManager.h"
@@ -347,6 +348,29 @@ bool FTrafficBaselineCurveRuntimeTest::RunTest(const FString& Parameters)
 				TEXT("[BaselineCurveChaos] Using dev profile asset %s with VehicleClass %s"),
 				DevProfilePath,
 				*DevProfile->VehicleClass.ToString());
+		}
+	}
+
+	if (!DefaultProfile || !DefaultProfile->VehicleClass.IsValid())
+	{
+		static const TCHAR* ChaosClassPaths[] = {
+			TEXT("/Game/CitySample/Blueprints/Vehicles/BP_Sedan.BP_Sedan_C"),
+			TEXT("/Game/CitySampleVehicles/vehicle07_Car/BP_vehicle07_Car.BP_vehicle07_Car_C")
+		};
+
+		for (const TCHAR* ChaosClassPath : ChaosClassPaths)
+		{
+			if (UClass* ChaosClass = LoadClass<APawn>(nullptr, ChaosClassPath))
+			{
+				UTrafficVehicleProfile* TempProfile = NewObject<UTrafficVehicleProfile>(GetTransientPackage());
+				TempProfile->VehicleClass = ChaosClass;
+				DefaultProfile = TempProfile;
+
+				UE_LOG(LogTraffic, Warning,
+					TEXT("[BaselineCurveChaos] Using Chaos class fallback at %s"),
+					ChaosClassPath);
+				break;
+			}
 		}
 	}
 

@@ -155,16 +155,10 @@ const UTrafficVehicleProfile* ATrafficVehicleManager::ResolveDefaultVehicleProfi
 		return nullptr;
 	}
 
-	if (Settings->DefaultVehicleProfile.IsNull())
-	{
-		return nullptr;
-	}
-
-	UObject* Loaded = Settings->DefaultVehicleProfile.TryLoad();
-	const UTrafficVehicleProfile* Profile = Cast<UTrafficVehicleProfile>(Loaded);
+	const UTrafficVehicleProfile* Profile = Settings->GetDefaultVehicleProfile();
 	if (!Profile)
 	{
-		UE_LOG(LogTraffic, Warning, TEXT("[VehicleManager] DefaultVehicleProfile could not be loaded: %s"), *Settings->DefaultVehicleProfile.ToString());
+		UE_LOG(LogTraffic, Warning, TEXT("[VehicleManager] DefaultVehicleProfile could not be resolved."));
 	}
 	return Profile;
 }
@@ -237,6 +231,13 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 				TEXT("[VehicleManager] Automation: Failed to load dev Chaos class at %s"),
 				DevChaosClassPath);
 		}
+	}
+
+	if (!bForceLogicOnlyForTests && !VisualClass && !GIsAutomationTesting)
+	{
+		UE_LOG(LogTraffic, Error,
+			TEXT("[VehicleManager] No Chaos vehicle configured. Set a DefaultVehicleProfile with a valid VehicleClass in Project Settings -> AAA Traffic Vehicle Settings."));
+		return;
 	}
 
 	const TArray<FTrafficLane>& Lanes = NetworkAsset->Network.Lanes;

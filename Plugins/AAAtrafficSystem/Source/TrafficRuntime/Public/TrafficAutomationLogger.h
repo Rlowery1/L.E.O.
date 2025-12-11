@@ -58,6 +58,9 @@ public:
 	static void LogMetricFloat(const FString& Key, float Value, int32 Precision = 3);
 
 	UFUNCTION()
+	static void LogMetricInt(const FString& Key, int32 Value);
+
+	UFUNCTION()
 	static void EndTestLog();
 
 	static void LogRunMetrics(const FString& TestName, const FTrafficRunMetrics& Metrics);
@@ -69,4 +72,3 @@ private:
 	static void EnsureDirectoryExists();
 	static void AppendToFile(const FString& Text);
 };
-

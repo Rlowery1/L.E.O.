@@ -2,6 +2,7 @@
 #include "TrafficCityBLDAdapterSettings.h"
 #include "TrafficRoadFamilySettings.h"
 #include "TrafficRoadMetadataComponent.h"
+#include "TrafficRoadMeshTagComponent.h"
 #include "TrafficRuntimeModule.h"
 #include "Components/SplineComponent.h"
 #include "Engine/World.h"
@@ -12,10 +13,98 @@
 #include "DrawDebugHelpers.h"
 #include "Math/BoxSphereBounds.h"
 #include "UObject/SoftObjectPath.h"
-#include "DrawDebugHelpers.h"
+#include "Materials/MaterialInterface.h"
 
 namespace
 {
+	static bool ShouldIncludeMeshForTraffic(
+		UStaticMeshComponent* Comp,
+		AActor* RoadActor,
+		const UTrafficCityBLDAdapterSettings* Settings)
+	{
+		if (!Comp || !RoadActor)
+		{
+			return false;
+		}
+
+		// Heuristic: skip invisible or non-colliding components to limit noise.
+		if (!Comp->IsVisible())
+		{
+			return false;
+		}
+
+		bool bInclude = true;
+
+		bool bHasTagComponent = false;
+		TArray<UTrafficRoadMeshTagComponent*> TagComponents;
+		RoadActor->GetComponents(TagComponents);
+		for (UTrafficRoadMeshTagComponent* TagComp : TagComponents)
+		{
+			if (TagComp->TargetMesh && TagComp->TargetMesh != Comp)
+			{
+				continue;
+			}
+			bHasTagComponent = true;
+			bInclude = TagComp->bUseForTraffic;
+			break;
+		}
+
+		if (bHasTagComponent && !bInclude)
+		{
+			return false;
+		}
+
+		if (bInclude && Settings && Settings->DrivableMaterialKeywords.Num() > 0)
+		{
+			bool bMaterialMatch = false;
+			if (UStaticMesh* Mesh = Comp->GetStaticMesh())
+			{
+				for (const FStaticMaterial& StaticMat : Mesh->GetStaticMaterials())
+				{
+					UMaterialInterface* Mat = StaticMat.MaterialInterface;
+					if (!Mat)
+					{
+						continue;
+					}
+
+					const FString MatName = Mat->GetName();
+					for (const FString& Keyword : Settings->DrivableMaterialKeywords)
+					{
+						if (!Keyword.IsEmpty() && MatName.Contains(Keyword))
+						{
+							bMaterialMatch = true;
+							break;
+						}
+					}
+
+					if (bMaterialMatch)
+					{
+						break;
+					}
+				}
+			}
+
+			bInclude = bMaterialMatch;
+		}
+
+		if (bInclude && Settings && Settings->MaxMeshLateralOffsetCm > 0.f)
+		{
+			const FTransform& Xform = Comp->GetComponentTransform();
+			const FBoxSphereBounds LocalBounds = Comp->CalcBounds(FTransform::Identity);
+			const FVector WorldCenter = Xform.TransformPosition(LocalBounds.Origin);
+			const FVector Forward = RoadActor->GetActorForwardVector();
+			const FVector ApproxPerp = FVector(-Forward.Y, Forward.X, 0.f).GetSafeNormal();
+
+			if (!ApproxPerp.IsNearlyZero())
+			{
+				const float LateralOffset = FMath::Abs(FVector::DotProduct(WorldCenter - RoadActor->GetActorLocation(), ApproxPerp));
+				bInclude = LateralOffset <= Settings->MaxMeshLateralOffsetCm;
+			}
+		}
+
+		return bInclude;
+	}
+
 	// Sample the spline at uniform distance intervals in world space.
 	static void SampleSplineUniformDistance(
 		const USplineComponent* Spline,
@@ -91,6 +180,8 @@ namespace
 	{
 		OutVertices.Reset();
 
+		const UTrafficCityBLDAdapterSettings* AdaptSettings = GetDefault<UTrafficCityBLDAdapterSettings>();
+
 		if (!RoadActor)
 		{
 			return;
@@ -106,8 +197,7 @@ namespace
 				continue;
 			}
 
-			// Heuristic: skip invisible or non-colliding components to limit noise.
-			if (!Comp->IsVisible())
+			if (!ShouldIncludeMeshForTraffic(Comp, RoadActor, AdaptSettings))
 			{
 				continue;
 			}
@@ -595,6 +685,28 @@ void UCityBLDRoadGeometryProvider::CollectRoads(UWorld* World, TArray<FTrafficRo
 		}
 
 		OutRoads.Add(Road);
+
+		int32 IncludedMeshes = 0;
+		int32 ExcludedMeshes = 0;
+		TArray<UStaticMeshComponent*> MeshComps;
+		Actor->GetComponents(MeshComps);
+		for (UStaticMeshComponent* MeshComp : MeshComps)
+		{
+			if (ShouldIncludeMeshForTraffic(MeshComp, Actor, Settings))
+			{
+				++IncludedMeshes;
+			}
+			else
+			{
+				++ExcludedMeshes;
+			}
+		}
+
+		UE_LOG(LogTraffic, Log,
+			TEXT("[UCityBLDRoadGeometryProvider] Actor %s: IncludedMeshes=%d ExcludedMeshes=%d."),
+			*Actor->GetName(),
+			IncludedMeshes,
+			ExcludedMeshes);
 	}
 
 	UE_LOG(LogTraffic, Log,

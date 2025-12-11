@@ -135,6 +135,15 @@ void UTrafficAutomationLogger::LogMetricFloat(const FString& Key, float Value, i
 	LogMetric(Key, ValueStr);
 }
 
+void UTrafficAutomationLogger::LogMetricInt(const FString& Key, int32 Value)
+{
+	if (!bLogOpen)
+	{
+		return;
+	}
+	LogMetric(Key, FString::FromInt(Value));
+}
+
 void UTrafficAutomationLogger::EndTestLog()
 {
 	if (!bLogOpen)
@@ -166,4 +175,3 @@ void UTrafficAutomationLogger::LogRunMetrics(const FString& TestName, const FTra
 		M.NumEmergencyBrakes, M.NumHardCollisions,
 		M.GridlockSeconds, M.SimulatedSeconds);
 }
-

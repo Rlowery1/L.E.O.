@@ -33,5 +33,12 @@ public:
 
 	UPROPERTY(EditAnywhere, Config, Category="Families")
 	FName DefaultFamilyName;
-};
 
+	/** List of substrings to match drivable materials (e.g. "Asphalt", "Road"). If empty, material names are ignored. */
+	UPROPERTY(EditAnywhere, Config, Category="Filtering")
+	TArray<FString> DrivableMaterialKeywords;
+
+	/** Maximum lateral offset (cm) from actor forward/right for a mesh to be considered part of the road. Set to 0 to disable. */
+	UPROPERTY(EditAnywhere, Config, Category="Filtering")
+	float MaxMeshLateralOffsetCm = 0.f;
+};

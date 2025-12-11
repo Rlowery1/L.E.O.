@@ -19,6 +19,7 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
 // ********** Begin Class UTrafficAutomationLogger *************************************************
 #define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h_45_RPC_WRAPPERS_NO_PURE_DECLS \
 	DECLARE_FUNCTION(execEndTestLog); \
+	DECLARE_FUNCTION(execLogMetricInt); \
 	DECLARE_FUNCTION(execLogMetricFloat); \
 	DECLARE_FUNCTION(execLogMetric); \
 	DECLARE_FUNCTION(execLogLine); \

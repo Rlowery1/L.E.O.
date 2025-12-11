@@ -287,6 +287,65 @@ DEFINE_FUNCTION(UTrafficAutomationLogger::execLogMetricFloat)
 }
 // ********** End Class UTrafficAutomationLogger Function LogMetricFloat ***************************
 
+// ********** Begin Class UTrafficAutomationLogger Function LogMetricInt ***************************
+struct Z_Construct_UFunction_UTrafficAutomationLogger_LogMetricInt_Statics
+{
+	struct TrafficAutomationLogger_eventLogMetricInt_Parms
+	{
+		FString Key;
+		int32 Value;
+	};
+#if WITH_METADATA
+	static constexpr UECodeGen_Private::FMetaDataPairParam Function_MetaDataParams[] = {
+		{ "ModuleRelativePath", "Public/TrafficAutomationLogger.h" },
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_Key_MetaData[] = {
+		{ "NativeConst", "" },
+	};
+#endif // WITH_METADATA
+
+// ********** Begin Function LogMetricInt constinit property declarations **************************
+	static const UECodeGen_Private::FStrPropertyParams NewProp_Key;
+	static const UECodeGen_Private::FIntPropertyParams NewProp_Value;
+	static const UECodeGen_Private::FPropertyParamsBase* const PropPointers[];
+// ********** End Function LogMetricInt constinit property declarations ****************************
+	static const UECodeGen_Private::FFunctionParams FuncParams;
+};
+
+// ********** Begin Function LogMetricInt Property Definitions *************************************
+const UECodeGen_Private::FStrPropertyParams Z_Construct_UFunction_UTrafficAutomationLogger_LogMetricInt_Statics::NewProp_Key = { "Key", nullptr, (EPropertyFlags)0x0010000000000080, UECodeGen_Private::EPropertyGenFlags::Str, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(TrafficAutomationLogger_eventLogMetricInt_Parms, Key), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_Key_MetaData), NewProp_Key_MetaData) };
+const UECodeGen_Private::FIntPropertyParams Z_Construct_UFunction_UTrafficAutomationLogger_LogMetricInt_Statics::NewProp_Value = { "Value", nullptr, (EPropertyFlags)0x0010000000000080, UECodeGen_Private::EPropertyGenFlags::Int, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(TrafficAutomationLogger_eventLogMetricInt_Parms, Value), METADATA_PARAMS(0, nullptr) };
+const UECodeGen_Private::FPropertyParamsBase* const Z_Construct_UFunction_UTrafficAutomationLogger_LogMetricInt_Statics::PropPointers[] = {
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UFunction_UTrafficAutomationLogger_LogMetricInt_Statics::NewProp_Key,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UFunction_UTrafficAutomationLogger_LogMetricInt_Statics::NewProp_Value,
+};
+static_assert(UE_ARRAY_COUNT(Z_Construct_UFunction_UTrafficAutomationLogger_LogMetricInt_Statics::PropPointers) < 2048);
+// ********** End Function LogMetricInt Property Definitions ***************************************
+const UECodeGen_Private::FFunctionParams Z_Construct_UFunction_UTrafficAutomationLogger_LogMetricInt_Statics::FuncParams = { { (UObject*(*)())Z_Construct_UClass_UTrafficAutomationLogger, nullptr, "LogMetricInt", 	Z_Construct_UFunction_UTrafficAutomationLogger_LogMetricInt_Statics::PropPointers, 
+	UE_ARRAY_COUNT(Z_Construct_UFunction_UTrafficAutomationLogger_LogMetricInt_Statics::PropPointers), 
+sizeof(Z_Construct_UFunction_UTrafficAutomationLogger_LogMetricInt_Statics::TrafficAutomationLogger_eventLogMetricInt_Parms),
+RF_Public|RF_Transient|RF_MarkAsNative, (EFunctionFlags)0x00022401, 0, 0, METADATA_PARAMS(UE_ARRAY_COUNT(Z_Construct_UFunction_UTrafficAutomationLogger_LogMetricInt_Statics::Function_MetaDataParams), Z_Construct_UFunction_UTrafficAutomationLogger_LogMetricInt_Statics::Function_MetaDataParams)},  };
+static_assert(sizeof(Z_Construct_UFunction_UTrafficAutomationLogger_LogMetricInt_Statics::TrafficAutomationLogger_eventLogMetricInt_Parms) < MAX_uint16);
+UFunction* Z_Construct_UFunction_UTrafficAutomationLogger_LogMetricInt()
+{
+	static UFunction* ReturnFunction = nullptr;
+	if (!ReturnFunction)
+	{
+		UECodeGen_Private::ConstructUFunction(&ReturnFunction, Z_Construct_UFunction_UTrafficAutomationLogger_LogMetricInt_Statics::FuncParams);
+	}
+	return ReturnFunction;
+}
+DEFINE_FUNCTION(UTrafficAutomationLogger::execLogMetricInt)
+{
+	P_GET_PROPERTY(FStrProperty,Z_Param_Key);
+	P_GET_PROPERTY(FIntProperty,Z_Param_Value);
+	P_FINISH;
+	P_NATIVE_BEGIN;
+	UTrafficAutomationLogger::LogMetricInt(Z_Param_Key,Z_Param_Value);
+	P_NATIVE_END;
+}
+// ********** End Class UTrafficAutomationLogger Function LogMetricInt *****************************
+
 // ********** Begin Class UTrafficAutomationLogger *************************************************
 FClassRegistrationInfo Z_Registration_Info_UClass_UTrafficAutomationLogger;
 UClass* UTrafficAutomationLogger::GetPrivateStaticClass()
@@ -334,6 +393,7 @@ struct Z_Construct_UClass_UTrafficAutomationLogger_Statics
 		{ .NameUTF8 = UTF8TEXT("LogLine"), .Pointer = &UTrafficAutomationLogger::execLogLine },
 		{ .NameUTF8 = UTF8TEXT("LogMetric"), .Pointer = &UTrafficAutomationLogger::execLogMetric },
 		{ .NameUTF8 = UTF8TEXT("LogMetricFloat"), .Pointer = &UTrafficAutomationLogger::execLogMetricFloat },
+		{ .NameUTF8 = UTF8TEXT("LogMetricInt"), .Pointer = &UTrafficAutomationLogger::execLogMetricInt },
 	};
 	static UObject* (*const DependentSingletons[])();
 	static constexpr FClassFunctionLinkInfo FuncInfo[] = {
@@ -342,6 +402,7 @@ struct Z_Construct_UClass_UTrafficAutomationLogger_Statics
 		{ &Z_Construct_UFunction_UTrafficAutomationLogger_LogLine, "LogLine" }, // 1442477498
 		{ &Z_Construct_UFunction_UTrafficAutomationLogger_LogMetric, "LogMetric" }, // 888515116
 		{ &Z_Construct_UFunction_UTrafficAutomationLogger_LogMetricFloat, "LogMetricFloat" }, // 1310947185
+		{ &Z_Construct_UFunction_UTrafficAutomationLogger_LogMetricInt, "LogMetricInt" }, // 2054581900
 	};
 	static_assert(UE_ARRAY_COUNT(FuncInfo) < 2048);
 	static constexpr FCppClassTypeInfoStatic StaticCppClassTypeInfo = {
@@ -391,10 +452,10 @@ UTrafficAutomationLogger::~UTrafficAutomationLogger() {}
 struct Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h__Script_TrafficRuntime_Statics
 {
 	static constexpr FClassRegisterCompiledInInfo ClassInfo[] = {
-		{ Z_Construct_UClass_UTrafficAutomationLogger, UTrafficAutomationLogger::StaticClass, TEXT("UTrafficAutomationLogger"), &Z_Registration_Info_UClass_UTrafficAutomationLogger, CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(UTrafficAutomationLogger), 3712362870U) },
+		{ Z_Construct_UClass_UTrafficAutomationLogger, UTrafficAutomationLogger::StaticClass, TEXT("UTrafficAutomationLogger"), &Z_Registration_Info_UClass_UTrafficAutomationLogger, CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(UTrafficAutomationLogger), 406823165U) },
 	};
 }; // Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h__Script_TrafficRuntime_Statics 
-static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h__Script_TrafficRuntime_2190268990{
+static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h__Script_TrafficRuntime_1448756982{
 	TEXT("/Script/TrafficRuntime"),
 	Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h__Script_TrafficRuntime_Statics::ClassInfo, UE_ARRAY_COUNT(Z_CompiledInDeferFile_FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficRuntime_Public_TrafficAutomationLogger_h__Script_TrafficRuntime_Statics::ClassInfo),
 	nullptr, 0,
