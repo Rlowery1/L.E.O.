@@ -3,6 +3,7 @@
 	{
 		"Module.TrafficTests.cpp.obj": [
 			"PerModuleInline.gen.cpp.obj",
+			"TrafficBaselineRuntimeTest.cpp.obj",
 			"TrafficCityBLDProviderTest.cpp.obj",
 			"TrafficFamilyAssignmentTest.cpp.obj",
 			"TrafficLaneCalibrationTest.cpp.obj",

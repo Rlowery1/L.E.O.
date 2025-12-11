@@ -4,23 +4,13 @@
 #include "Editor.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
-#include "Components/SplineComponent.h"
-#include "UObject/Package.h"
-#include "UObject/UnrealType.h"
-#include "Misc/PackageName.h"
-#include "Misc/Paths.h"
-#include "HAL/FileManager.h"
-#include "EditorLoadingAndSavingUtils.h"
 #include "TrafficAutomationLogger.h"
 #include "TrafficSystemController.h"
-#include "TrafficVehicleManager.h"
 #include "TrafficVehicleAdapter.h"
 #include "TrafficVehicleBase.h"
-#include "TrafficVehicleSettings.h"
 #include "TrafficNetworkAsset.h"
 #include "TrafficLaneGeometry.h"
 #include "TrafficRoadTypes.h"
-#include "RoadFamilyRegistry.h"
 #include "HAL/IConsoleManager.h"
 #include "TrafficRuntimeModule.h"
 
@@ -29,135 +19,10 @@
 namespace
 {
 	static const TCHAR* BaselineMapPackage = TEXT("/AAAtrafficSystem/Maps/Traffic_BaselineStraight");
-	static const float BaselineRoadLengthCm = 10000.f;
 	static const float BaselineSimSeconds = 5.0f;
 	static const float BaselineTickSeconds = 0.1f;
 	static const float MaxLateralToleranceCm = 30.0f;
 	static const TCHAR* BaselineTestName = TEXT("Traffic.Runtime.BaselineStraightChaos");
-
-	static FString GetBaselineMapFilename()
-	{
-		return FPackageName::LongPackageNameToFilename(
-			BaselineMapPackage,
-			FPackageName::GetMapPackageExtension());
-	}
-
-	static TSubclassOf<AActor> LoadMeshRoadClass()
-	{
-		TSubclassOf<AActor> RoadClass = LoadClass<AActor>(nullptr, TEXT("/CityBLD/CityBLD/Blueprints/Roads/BP_MeshRoad.BP_MeshRoad_C"));
-		if (!RoadClass)
-		{
-			RoadClass = LoadClass<AActor>(nullptr, TEXT("/CityBLD/Blueprints/Roads/BP_MeshRoad.BP_MeshRoad_C"));
-		}
-		return RoadClass;
-	}
-
-	static void ConfigureSplineIfPresent(AActor* RoadActor)
-	{
-		if (!RoadActor)
-		{
-			return;
-		}
-
-		if (USplineComponent* Spline = RoadActor->FindComponentByClass<USplineComponent>())
-		{
-			Spline->ClearSplinePoints(false);
-			Spline->AddSplinePoint(FVector::ZeroVector, ESplineCoordinateSpace::World, false);
-			Spline->AddSplinePoint(FVector(BaselineRoadLengthCm, 0.f, 0.f), ESplineCoordinateSpace::World, false);
-			Spline->SetClosedLoop(false, false);
-			Spline->UpdateSpline();
-		}
-	}
-
-	static void SetControllerRuntimeFlags(ATrafficSystemController* Controller)
-	{
-		if (!Controller)
-		{
-			return;
-		}
-
-		if (FBoolProperty* AutoBuildProp = FindFProperty<FBoolProperty>(ATrafficSystemController::StaticClass(), TEXT("bAutoBuildOnBeginPlay")))
-		{
-			AutoBuildProp->SetPropertyValue_InContainer(Controller, true);
-		}
-		if (FBoolProperty* AutoSpawnProp = FindFProperty<FBoolProperty>(ATrafficSystemController::StaticClass(), TEXT("bAutoSpawnOnBeginPlay")))
-		{
-			AutoSpawnProp->SetPropertyValue_InContainer(Controller, true);
-		}
-		if (FIntProperty* VehiclesPerLaneProp = FindFProperty<FIntProperty>(ATrafficSystemController::StaticClass(), TEXT("VehiclesPerLaneRuntime")))
-		{
-			VehiclesPerLaneProp->SetPropertyValue_InContainer(Controller, 1);
-		}
-		if (FFloatProperty* SpeedProp = FindFProperty<FFloatProperty>(ATrafficSystemController::StaticClass(), TEXT("RuntimeSpeedCmPerSec")))
-		{
-			SpeedProp->SetPropertyValue_InContainer(Controller, 800.f);
-		}
-	}
-
-	static bool BuildBaselineMapAsset(FAutomationTestBase* Test)
-	{
-		FAutomationEditorCommonUtils::CreateNewMap();
-
-		UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
-		if (!World)
-		{
-			if (Test)
-			{
-				Test->AddError(TEXT("No editor world available while building baseline map."));
-			}
-			return false;
-		}
-
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-		TSubclassOf<AActor> RoadClass = LoadMeshRoadClass();
-		if (!RoadClass)
-		{
-			if (Test)
-			{
-				Test->AddError(TEXT("BP_MeshRoad class not found for baseline map."));
-			}
-			return false;
-		}
-
-		AActor* RoadActor = World->SpawnActor<AActor>(RoadClass, FVector::ZeroVector, FRotator::ZeroRotator, SpawnParams);
-		if (!RoadActor)
-		{
-			if (Test)
-			{
-				Test->AddError(TEXT("Failed to spawn BP_MeshRoad in baseline map."));
-			}
-			return false;
-		}
-		ConfigureSplineIfPresent(RoadActor);
-
-		ATrafficSystemController* Controller = World->SpawnActor<ATrafficSystemController>(SpawnParams);
-		if (!Controller)
-		{
-			if (Test)
-			{
-				Test->AddError(TEXT("Failed to spawn TrafficSystemController in baseline map."));
-			}
-			return false;
-		}
-		Controller->SetActorLabel(TEXT("TrafficController_Baseline"));
-		SetControllerRuntimeFlags(Controller);
-
-		const FString MapFilename = GetBaselineMapFilename();
-		IFileManager::Get().MakeDirectory(*FPaths::GetPath(MapFilename), true);
-
-		if (!UEditorLoadingAndSavingUtils::SaveMap(World, BaselineMapPackage))
-		{
-			if (Test)
-			{
-				Test->AddError(TEXT("Failed to save baseline map to plugin content."));
-			}
-			return false;
-		}
-
-		return true;
-	}
 
 	struct FTrafficBaselinePIEState
 	{
@@ -417,13 +282,12 @@ bool FTrafficBaselineRuntimeTest::RunTest(const FString& Parameters)
 	UTrafficAutomationLogger::BeginTestLog(BaselineTestName);
 	UTrafficAutomationLogger::LogLine(FString::Printf(TEXT("[AAA Traffic] Version=%s"), TEXT(AAA_TRAFFIC_PLUGIN_VERSION)));
 
-	if (!BuildBaselineMapAsset(this))
+	if (!AutomationOpenMap(BaselineMapPackage))
 	{
+		UTrafficAutomationLogger::LogLine(TEXT("[TrafficBaseline] Map /Plugins/AAAtrafficSystem/Maps/Traffic_BaselineStraight could not be loaded."));
 		UTrafficAutomationLogger::EndTestLog();
 		return false;
 	}
-
-	FAutomationEditorCommonUtils::LoadMap(BaselineMapPackage);
 
 	TSharedRef<FTrafficBaselinePIEState> State = MakeShared<FTrafficBaselinePIEState>();
 	AddExpectedError(TEXT("The Editor is currently in a play mode."), EAutomationExpectedErrorFlags::Contains, 1);

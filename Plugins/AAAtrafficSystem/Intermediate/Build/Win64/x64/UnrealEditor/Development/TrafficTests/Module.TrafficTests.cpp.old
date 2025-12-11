@@ -10,6 +10,7 @@
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficTests/Private/TrafficRoadFamiliesTest.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficTests/Private/TrafficRoadLabIntegrationTest.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficTests/Private/TrafficRoadLabPIETest.cpp"
+#include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficTests/Private/TrafficSpawnTest.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficTests/Private/TrafficTestsModule.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficTests/Private/TrafficTurnKinematicsKinematicTest.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficTests/Private/TrafficTurnKinematicsTest.cpp"
