@@ -22,7 +22,7 @@ namespace
 	static const TCHAR* BaselineCurveMapPackage = TEXT("/AAAtrafficSystem/Maps/Traffic_BaselineCurve");
 	static const float BaselineCurveSimSeconds = 5.0f;
 	static const float BaselineCurveTickSeconds = 0.1f;
-	static const float BaselineCurveMaxLateralErrorCm = 30.0f;
+	static const float BaselineCurveMaxLateralErrorCm = 20.0f;
 	static const TCHAR* BaselineCurveTestName = TEXT("Traffic.Runtime.BaselineCurveChaos");
 
 	struct FTrafficBaselineCurveState

@@ -7,6 +7,80 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 
+namespace
+{
+	// Sample the spline at uniform distance intervals in world space.
+	static void SampleSplineUniformDistance(
+		const USplineComponent* Spline,
+		float SampleStepCm,
+		TArray<FVector>& OutWorldPoints)
+	{
+		OutWorldPoints.Reset();
+
+		if (!Spline)
+		{
+			return;
+		}
+
+		const float TotalLength = Spline->GetSplineLength();
+		if (TotalLength <= KINDA_SMALL_NUMBER)
+		{
+			return;
+		}
+
+		const int32 NumSamples = FMath::Max(2, FMath::CeilToInt(TotalLength / SampleStepCm));
+
+		for (int32 Index = 0; Index <= NumSamples; ++Index)
+		{
+			const float Dist = FMath::Min(Index * SampleStepCm, TotalLength);
+			const FVector Pos = Spline->GetLocationAtDistanceAlongSpline(Dist, ESplineCoordinateSpace::World);
+			OutWorldPoints.Add(Pos);
+		}
+	}
+
+	// Simple moving-average smoothing for a polyline.
+	static void SmoothPolyline(
+		const TArray<FVector>& InPoints,
+		int32 Radius,
+		TArray<FVector>& OutPoints)
+	{
+		OutPoints.Reset();
+
+		const int32 Num = InPoints.Num();
+		if (Num == 0 || Radius <= 0)
+		{
+			OutPoints = InPoints;
+			return;
+		}
+
+		OutPoints.SetNum(Num);
+
+		for (int32 i = 0; i < Num; ++i)
+		{
+			FVector Accum(0.f, 0.f, 0.f);
+			int32 Count = 0;
+
+			const int32 Start = FMath::Max(0, i - Radius);
+			const int32 End = FMath::Min(Num - 1, i + Radius);
+
+			for (int32 j = Start; j <= End; ++j)
+			{
+				Accum += InPoints[j];
+				++Count;
+			}
+
+			if (Count > 0)
+			{
+				OutPoints[i] = Accum / static_cast<float>(Count);
+			}
+			else
+			{
+				OutPoints[i] = InPoints[i];
+			}
+		}
+	}
+} // namespace
+
 bool UCityBLDRoadGeometryProvider::IsRoadActor(
 	AActor* Actor,
 	const UTrafficCityBLDAdapterSettings* Settings) const
@@ -136,21 +210,32 @@ bool UCityBLDRoadGeometryProvider::GetDisplayCenterlineForActor(AActor* RoadActo
 	// Use the same sampling as CollectRoads for now. If CityBLD exposes richer data, it can be swapped here without touching callers.
 	if (USplineComponent* RoadSpline = FindRoadSpline(RoadActor, Settings))
 	{
-		const int32 NumPoints = RoadSpline->GetNumberOfSplinePoints();
-		if (NumPoints < 2)
+		TArray<FVector> RawSamples;
+		TArray<FVector> SmoothedSamples;
+
+		static const float SampleStepCm = 100.f; // 1m resolution for smoother driving path.
+		static const int32 SmoothRadius = 3;     // Moving-average radius.
+
+		SampleSplineUniformDistance(RoadSpline, SampleStepCm, RawSamples);
+		SmoothPolyline(RawSamples, SmoothRadius, SmoothedSamples);
+
+		// Preserve endpoints from raw data to avoid shortening the road.
+		if (SmoothedSamples.Num() >= 2 && RawSamples.Num() >= 2)
+		{
+			SmoothedSamples[0] = RawSamples[0];
+			SmoothedSamples.Last() = RawSamples.Last();
+		}
+
+		OutPoints = SmoothedSamples;
+		if (OutPoints.Num() < 2)
 		{
 			return false;
 		}
 
-		const float Length = RoadSpline->GetSplineLength();
-		const float Step = 100.f;
-		for (float Dist = 0.f; Dist <= Length; Dist += Step)
-		{
-			OutPoints.Add(RoadSpline->GetLocationAtDistanceAlongSpline(Dist, ESplineCoordinateSpace::World));
-		}
-		OutPoints.Add(RoadSpline->GetLocationAtDistanceAlongSpline(Length, ESplineCoordinateSpace::World));
-
-		return OutPoints.Num() >= 2;
+		UE_LOG(LogTraffic, Verbose,
+			TEXT("[CityBLD] Smoothed centerline with %d samples for road %s"),
+			OutPoints.Num(), *GetNameSafe(RoadActor));
+		return true;
 	}
 
 	return false;
@@ -218,12 +303,26 @@ void UCityBLDRoadGeometryProvider::CollectRoads(UWorld* World, TArray<FTrafficRo
 			? FMath::Clamp(ResolveFamilyIdForActor(Actor), 0, FamilyCount - 1)
 			: 0;
 
-		Road.CenterlinePoints.Reserve(NumPoints);
-		for (int32 i = 0; i < NumPoints; ++i)
+		static const float SampleStepCm = 100.f; // Match display sampling.
+		static const int32 SmoothRadius = 3;
+
+		TArray<FVector> RawSamples;
+		TArray<FVector> SmoothedSamples;
+		SampleSplineUniformDistance(RoadSpline, SampleStepCm, RawSamples);
+		SmoothPolyline(RawSamples, SmoothRadius, SmoothedSamples);
+
+		if (SmoothedSamples.Num() >= 2 && RawSamples.Num() >= 2)
 		{
-			const FVector Pos = RoadSpline->GetLocationAtSplinePoint(i, ESplineCoordinateSpace::World);
-			Road.CenterlinePoints.Add(Pos);
+			SmoothedSamples[0] = RawSamples[0];
+			SmoothedSamples.Last() = RawSamples.Last();
 		}
+
+		if (SmoothedSamples.Num() < 2)
+		{
+			continue;
+		}
+
+		Road.CenterlinePoints = SmoothedSamples;
 
 		OutRoads.Add(Road);
 	}
@@ -232,4 +331,3 @@ void UCityBLDRoadGeometryProvider::CollectRoads(UWorld* World, TArray<FTrafficRo
 		TEXT("[UCityBLDRoadGeometryProvider] Collected %d CityBLD roads."),
 		OutRoads.Num());
 }
-
