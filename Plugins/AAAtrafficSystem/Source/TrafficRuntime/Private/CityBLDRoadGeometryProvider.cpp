@@ -209,6 +209,27 @@ namespace
 		OutOrigin = FVector(static_cast<float>(MeanX), static_cast<float>(MeanY), static_cast<float>(MeanZ));
 	}
 
+	static TArray<float> ComputeCurvatures(const TArray<FVector>& Points)
+	{
+		TArray<float> Curvatures;
+		const int32 Num = Points.Num();
+		if (Num == 0)
+		{
+			return Curvatures;
+		}
+
+		Curvatures.Init(0.0f, Num);
+
+		for (int32 i = 1; i < Num - 1; ++i)
+		{
+			const FVector V1 = (Points[i] - Points[i - 1]).GetSafeNormal();
+			const FVector V2 = (Points[i + 1] - Points[i]).GetSafeNormal();
+			Curvatures[i] = FVector::CrossProduct(V1, V2).Size();
+		}
+
+		return Curvatures;
+	}
+
 	static bool BuildMeshDrivenCenterline(AActor* RoadActor, TArray<FVector>& OutPoints)
 	{
 		OutPoints.Reset();
@@ -225,72 +246,108 @@ namespace
 		FVector Perp;
 		ComputePCAAxis2D(Vertices, Origin, Dir, Perp);
 
-		float SMin = TNumericLimits<float>::Max();
-		float SMax = TNumericLimits<float>::Lowest();
-		TArray<float> SValues;
-		SValues.Reserve(Vertices.Num());
+		struct FProjectedVertex
+		{
+			float S = 0.f;
+			FVector WorldPos = FVector::ZeroVector;
+		};
+
+		TArray<FProjectedVertex> Projected;
+		Projected.Reserve(Vertices.Num());
 		for (const FVector& V : Vertices)
 		{
-			const FVector Delta = V - Origin;
-			const float S = FVector::DotProduct(Delta, Dir);
-			SValues.Add(S);
-			SMin = FMath::Min(SMin, S);
-			SMax = FMath::Max(SMax, S);
+			FProjectedVertex PV;
+			PV.WorldPos = V;
+			PV.S = FVector::DotProduct(V - Origin, Dir);
+			Projected.Add(PV);
 		}
 
-		const float BinStep = 50.f; // 0.5m bins along the road
-		const int32 NumBins = FMath::Max(2, FMath::CeilToInt((SMax - SMin) / BinStep));
-		struct FBinInfo
-		{
-			bool bHasData = false;
-			float MinT = TNumericLimits<float>::Max();
-			float MaxT = TNumericLimits<float>::Lowest();
-			float SCenter = 0.f;
-		};
-		TArray<FBinInfo> Bins;
-		Bins.SetNum(NumBins);
-
-		for (int32 BinIdx = 0; BinIdx < NumBins; ++BinIdx)
-		{
-			Bins[BinIdx].SCenter = SMin + (BinIdx + 0.5f) * BinStep;
-		}
-
-		for (int32 Idx = 0; Idx < Vertices.Num(); ++Idx)
-		{
-			const float S = SValues[Idx];
-			const float T = FVector::DotProduct(Vertices[Idx] - Origin, Perp);
-			const int32 BinIdx = FMath::Clamp(FMath::FloorToInt((S - SMin) / BinStep), 0, NumBins - 1);
-			FBinInfo& Bin = Bins[BinIdx];
-			Bin.bHasData = true;
-			Bin.MinT = FMath::Min(Bin.MinT, T);
-			Bin.MaxT = FMath::Max(Bin.MaxT, T);
-		}
-
-		TArray<FVector> CenterlineSamples;
-		for (const FBinInfo& Bin : Bins)
-		{
-			if (!Bin.bHasData)
+		Projected.Sort([](const FProjectedVertex& A, const FProjectedVertex& B)
 			{
-				continue;
-			}
+				return A.S < B.S;
+			});
 
-			const FVector LeftPoint = Origin + Dir * Bin.SCenter + Perp * Bin.MinT;
-			const FVector RightPoint = Origin + Dir * Bin.SCenter + Perp * Bin.MaxT;
-			CenterlineSamples.Add((LeftPoint + RightPoint) * 0.5f);
+		if (Projected.Num() < 2)
+		{
+			return false;
 		}
 
-		if (CenterlineSamples.Num() < 2)
+		TArray<FVector> SortedPoints;
+		SortedPoints.Reserve(Projected.Num());
+		for (const FProjectedVertex& PV : Projected)
+		{
+			SortedPoints.Add(PV.WorldPos);
+		}
+
+		const TArray<float> Curvatures = ComputeCurvatures(SortedPoints);
+		const float BaseStep = 50.f;
+		const float CurvatureThreshold = 0.01f;
+
+		TArray<FVector> AdaptiveSamples;
+		AdaptiveSamples.Reserve(SortedPoints.Num());
+
+		AdaptiveSamples.Add(SortedPoints[0]);
+		int32 StartIndex = 0;
+		float AccumulatedLength = 0.f;
+
+		for (int32 i = 1; i < SortedPoints.Num(); ++i)
+		{
+			const float SegmentLength = (SortedPoints[i] - SortedPoints[i - 1]).Size();
+			AccumulatedLength += SegmentLength;
+
+			const bool bHitLength = AccumulatedLength >= BaseStep;
+			const bool bHitCurvature = Curvatures.IsValidIndex(i) && Curvatures[i] > CurvatureThreshold;
+
+			if (bHitLength || bHitCurvature)
+			{
+				FVector Mean = FVector::ZeroVector;
+				int32 Count = 0;
+				for (int32 j = StartIndex; j <= i; ++j)
+				{
+					Mean += SortedPoints[j];
+					++Count;
+				}
+				if (Count > 0)
+				{
+					Mean /= static_cast<float>(Count);
+					AdaptiveSamples.Add(Mean);
+				}
+
+				StartIndex = i;
+				AccumulatedLength = 0.f;
+			}
+		}
+
+		if (StartIndex < SortedPoints.Num() - 1)
+		{
+			FVector Mean = FVector::ZeroVector;
+			int32 Count = 0;
+			for (int32 j = StartIndex; j < SortedPoints.Num(); ++j)
+			{
+				Mean += SortedPoints[j];
+				++Count;
+			}
+			if (Count > 0)
+			{
+				Mean /= static_cast<float>(Count);
+				AdaptiveSamples.Add(Mean);
+			}
+		}
+
+		AdaptiveSamples.Add(SortedPoints.Last());
+
+		if (AdaptiveSamples.Num() < 2)
 		{
 			return false;
 		}
 
 		TArray<FVector> SmoothedSamples;
-		SmoothPolyline(CenterlineSamples, 5, SmoothedSamples);
+		SmoothPolyline(AdaptiveSamples, 5, SmoothedSamples);
 
-		if (SmoothedSamples.Num() >= 2 && CenterlineSamples.Num() >= 2)
+		if (SmoothedSamples.Num() >= 2 && AdaptiveSamples.Num() >= 2)
 		{
-			SmoothedSamples[0] = CenterlineSamples[0];
-			SmoothedSamples.Last() = CenterlineSamples.Last();
+			SmoothedSamples[0] = AdaptiveSamples[0];
+			SmoothedSamples.Last() = AdaptiveSamples.Last();
 		}
 
 		OutPoints = SmoothedSamples;
