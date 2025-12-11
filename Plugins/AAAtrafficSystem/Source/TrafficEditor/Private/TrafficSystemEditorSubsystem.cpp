@@ -22,6 +22,8 @@
 #include "FileHelpers.h"
 #include "HAL/FileManager.h"
 #include "Misc/MessageDialog.h"
+#include "Misc/App.h"
+#include "Misc/AutomationTest.h"
 
 #include "Editor.h"
 #include "EditorViewportClient.h"
@@ -505,14 +507,22 @@ void UTrafficSystemEditorSubsystem::Editor_PrepareMapForTraffic()
 	{
 		UE_LOG(LogTraffic, Warning,
 			TEXT("[TrafficEditor] PrepareAllRoads: Found 0 spline roads. If this level uses World Partition or CityBLD streaming, ensure regions containing roads are loaded."));
-		FMessageDialog::Open(
-			EAppMsgType::Ok,
-			NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_Prepare_NoSplineRoads",
-				"AAA Traffic did not find any spline-based roads in this level.\n\n"
-				"This usually means:\n"
-				"  - Road actors have not been placed yet, or\n"
-				"  - Your World Partition / CityBLD regions that contain roads are not loaded.\n\n"
-				"If this map uses World Partition or CityBLD streaming, load the regions containing your roads and run PREPARE MAP again."));
+		const bool bAutomationOrCmdlet = IsRunningCommandlet() || GIsAutomationTesting;
+		if (!bAutomationOrCmdlet)
+		{
+			FMessageDialog::Open(
+				EAppMsgType::Ok,
+				NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_Prepare_NoSplineRoads",
+					"AAA Traffic did not find any spline-based roads in this level.\n\n"
+					"This usually means:\n"
+					"  - Road actors have not been placed yet, or\n"
+					"  - Your World Partition / CityBLD regions that contain roads are not loaded.\n\n"
+					"If this map uses World Partition or CityBLD streaming, load the regions containing your roads and run PREPARE MAP again."));
+		}
+		else
+		{
+			UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor][Automation] Prepare found no spline roads; dialog suppressed."));
+		}
 	}
 
 	UE_LOG(LogTraffic, Log, TEXT("[TrafficPrep] Summary: Actors=%d; FamiliesCreated=%d; MetadataAttached=%d"),
@@ -540,14 +550,22 @@ void UTrafficSystemEditorSubsystem::DoPrepare()
 		{
 			UE_LOG(LogTraffic, Warning,
 				TEXT("[TrafficEditor] PrepareAllRoads: Found 0 spline roads. If this level uses World Partition or CityBLD streaming, ensure regions containing roads are loaded."));
-			FMessageDialog::Open(
-				EAppMsgType::Ok,
-				NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_Prepare_NoSplineRoads",
-					"AAA Traffic did not find any spline-based roads in this level.\n\n"
-					"This usually means:\n"
-					"  - Road actors have not been placed yet, or\n"
-					"  - Your World Partition / CityBLD regions that contain roads are not loaded.\n\n"
-					"If this map uses World Partition or CityBLD streaming, load the regions containing your roads and run PREPARE MAP again."));
+			const bool bAutomationOrCmdlet = IsRunningCommandlet() || GIsAutomationTesting;
+			if (!bAutomationOrCmdlet)
+			{
+				FMessageDialog::Open(
+					EAppMsgType::Ok,
+					NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_Prepare_NoSplineRoads",
+						"AAA Traffic did not find any spline-based roads in this level.\n\n"
+						"This usually means:\n"
+						"  - Road actors have not been placed yet, or\n"
+						"  - Your World Partition / CityBLD regions that contain roads are not loaded.\n\n"
+						"If this map uses World Partition or CityBLD streaming, load the regions containing your roads and run PREPARE MAP again."));
+			}
+			else
+			{
+				UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor][Automation] Prepare found no spline roads; dialog suppressed."));
+			}
 		}
 	}
 	else
@@ -629,16 +647,24 @@ void UTrafficSystemEditorSubsystem::DoCars()
 	if (NumRoads <= 0 || NumLanes <= 0)
 	{
 		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] Build produced an empty traffic network (Roads=%d, Lanes=%d). No vehicles will be spawned."), NumRoads, NumLanes);
-		FMessageDialog::Open(
-			EAppMsgType::Ok,
-			NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_EmptyNetwork",
-				"AAA Traffic could not build any roads or lanes in this level.\n\n"
-				"This usually means:\n"
-				"  - PREPARE MAP was not run,\n"
-				"  - No road actors are tagged for traffic,\n"
-				"  - Your World Partition / CityBLD regions that contain roads are not loaded, or\n"
-				"  - The active geometry provider does not support your road kit.\n\n"
-				"Run PREPARE MAP and ensure at least one road family is calibrated and included in traffic."));
+		const bool bAutomationOrCmdlet = IsRunningCommandlet() || GIsAutomationTesting;
+		if (!bAutomationOrCmdlet)
+		{
+			FMessageDialog::Open(
+				EAppMsgType::Ok,
+				NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_EmptyNetwork",
+					"AAA Traffic could not build any roads or lanes in this level.\n\n"
+					"This usually means:\n"
+					"  - PREPARE MAP was not run,\n"
+					"  - No road actors are tagged for traffic,\n"
+					"  - Your World Partition / CityBLD regions that contain roads are not loaded, or\n"
+					"  - The active geometry provider does not support your road kit.\n\n"
+					"Run PREPARE MAP and ensure at least one road family is calibrated and included in traffic."));
+		}
+		else
+		{
+			UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor][Automation] Empty traffic network; dialog suppressed."));
+		}
 		return;
 	}
 
@@ -925,6 +951,8 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 		FamilyInfo->FamilyDefinition.FamilyName = FName(*FamilyInfo->DisplayName);
 	}
 
+	const bool bAutomationOrCmdlet = IsRunningCommandlet() || GIsAutomationTesting;
+
 	const int32 NumInstances = GetNumActorsForFamily(FamilyId);
 	if (NumInstances <= 0)
 	{
@@ -932,14 +960,21 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 			TEXT("[TrafficEditor] BeginCalibrationForFamily: Family %s has 0 actors in this level."),
 			*FamilyId.ToString());
 
-		FMessageDialog::Open(
-			EAppMsgType::Ok,
-			NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_NoActorsForFamily",
-				"There are no actors for this road family in this level.\n\n"
-				"This usually means:\n"
-				"  - You deleted all instances of this road class from the map, or\n"
-				"  - The World Partition / CityBLD regions that contain them are not loaded.\n\n"
-				"Place or load at least one road actor of this family before calibrating it."));
+		if (!bAutomationOrCmdlet)
+		{
+			FMessageDialog::Open(
+				EAppMsgType::Ok,
+				NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_NoActorsForFamily",
+					"There are no actors for this road family in this level.\n\n"
+					"This usually means:\n"
+					"  - You deleted all instances of this road class from the map, or\n"
+					"  - The World Partition / CityBLD regions that contain them are not loaded.\n\n"
+					"Place or load at least one road actor of this family before calibrating it."));
+		}
+		else
+		{
+			UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor][Automation] No actors for family; dialog suppressed."));
+		}
 		return;
 	}
 
@@ -973,11 +1008,18 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 				TEXT("[TrafficEditor] Road actors disappeared during calibration for family %s. Before=%d After=%d Context=%s"),
 				*FamilyId.ToString(), ActorsBefore.Num(), ActorsAfter.Num(), Context ? Context : TEXT("BeginCalibration"));
 
-			FMessageDialog::Open(
-				EAppMsgType::Ok,
-				NSLOCTEXT("TrafficEditor", "Traffic_RoadsDisappeared",
-					"One or more road actors disappeared during calibration for this family.\n"
-					"This is unexpected. Please check your road kit tools and streaming state."));
+			if (!bAutomationOrCmdlet)
+			{
+				FMessageDialog::Open(
+					EAppMsgType::Ok,
+					NSLOCTEXT("TrafficEditor", "Traffic_RoadsDisappeared",
+						"One or more road actors disappeared during calibration for this family.\n"
+						"This is unexpected. Please check your road kit tools and streaming state."));
+			}
+			else
+			{
+				UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor][Automation] Roads disappeared during calibration; dialog suppressed."));
+			}
 		}
 	};
 
@@ -1094,13 +1136,21 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 	const int32 NumArrowInstances = Overlay->GetArrowInstanceCount();
 	if (NumArrowInstances <= 0)
 	{
-		FMessageDialog::Open(
-			EAppMsgType::Ok,
-			NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_OverlayZeroInstances",
-				"Calibration overlay did not place any arrows.\n\n"
-				"This usually means the road's display centerline is degenerate (near-zero length)\n"
-				"or the calibration inputs are invalid.\n\n"
-				"Ensure the selected road piece has a non-zero length and valid lane settings, then try again."));
+		if (!bAutomationOrCmdlet)
+		{
+			FMessageDialog::Open(
+				EAppMsgType::Ok,
+				NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_OverlayZeroInstances",
+					"Calibration overlay did not place any arrows.\n\n"
+					"This usually means the road's display centerline is degenerate (near-zero length)\n"
+					"or the calibration inputs are invalid.\n\n"
+					"Ensure the selected road piece has a non-zero length and valid lane settings, then try again."));
+		}
+		else
+		{
+			UE_LOG(LogTraffic, Warning,
+				TEXT("[TrafficEditor][Automation] Overlay produced zero arrow instances; dialog suppressed."));
+		}
 	}
 
 	ActiveFamilyId = FamilyId;
@@ -1141,6 +1191,8 @@ void UTrafficSystemEditorSubsystem::Editor_BakeCalibrationForActiveFamily()
 	TArray<AActor*> ActorsBefore;
 	GetActorsForFamily(ActiveFamilyId, ActorsBefore);
 
+	const bool bAutomationOrCmdlet = IsRunningCommandlet() || GIsAutomationTesting;
+
 	auto WarnIfMissing = [&]()
 	{
 		TArray<AActor*> ActorsAfter;
@@ -1161,11 +1213,19 @@ void UTrafficSystemEditorSubsystem::Editor_BakeCalibrationForActiveFamily()
 				TEXT("[TrafficEditor] Road actors disappeared during calibration bake for family %s. Before=%d After=%d"),
 				*ActiveFamilyId.ToString(), ActorsBefore.Num(), ActorsAfter.Num());
 
-			FMessageDialog::Open(
-				EAppMsgType::Ok,
-				NSLOCTEXT("TrafficEditor", "Traffic_RoadsDisappeared",
-					"One or more road actors disappeared during calibration for this family.\n"
-					"This is unexpected. Please check your road kit tools and streaming state."));
+			if (!bAutomationOrCmdlet)
+			{
+				FMessageDialog::Open(
+					EAppMsgType::Ok,
+					NSLOCTEXT("TrafficEditor", "Traffic_RoadsDisappeared",
+						"One or more road actors disappeared during calibration for this family.\n"
+						"This is unexpected. Please check your road kit tools and streaming state."));
+			}
+			else
+			{
+				UE_LOG(LogTraffic, Warning,
+					TEXT("[TrafficEditor][Automation] Road actors disappeared during calibration bake; dialog suppressed."));
+			}
 		}
 	};
 

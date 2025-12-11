@@ -1,6 +1,8 @@
 #include "LaneCalibrationOverlayActor.h"
 #include "TrafficCalibrationVisuals.h"
 #include "TrafficRuntimeModule.h"
+#include "Misc/App.h"
+#include "Misc/AutomationTest.h"
 #include "TrafficLaneGeometry.h"
 #include "TrafficVisualSettings.h"
 #include "Components/InstancedStaticMeshComponent.h"
@@ -480,11 +482,19 @@ void ALaneCalibrationOverlayActor::Editor_RebuildFromCachedCenterline()
 
 	if (!IsCalibrationValid(CachedCalibration))
 	{
-		FMessageDialog::Open(
-			EAppMsgType::Ok,
-			NSLOCTEXT("LaneCalibrationOverlay", "InvalidCalibration",
-				"The current calibration has zero lanes or an invalid lane width.\n"
-				"Set at least one forward or backward lane and a positive lane width before previewing."));
+		const bool bIsAutomationOrCommandlet = IsRunningCommandlet() || GIsAutomationTesting;
+		if (!bIsAutomationOrCommandlet)
+		{
+			FMessageDialog::Open(
+				EAppMsgType::Ok,
+				NSLOCTEXT("LaneCalibrationOverlay", "InvalidCalibration",
+					"The current calibration has zero lanes or an invalid lane width.\n"
+					"Set at least one forward or backward lane and a positive lane width before previewing."));
+		}
+		else
+		{
+			UE_LOG(LogTraffic, Warning, TEXT("[LaneCalibrationOverlay][Automation] Invalid calibration (zero lanes or invalid width); dialog suppressed."));
+		}
 		return;
 	}
 

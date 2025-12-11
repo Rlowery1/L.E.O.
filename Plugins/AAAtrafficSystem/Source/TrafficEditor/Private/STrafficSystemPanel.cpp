@@ -16,6 +16,8 @@
 #include "Misc/MessageDialog.h"
 #include "Internationalization/Text.h"
 #include "HAL/IConsoleManager.h"
+#include "Misc/App.h"
+#include "Misc/AutomationTest.h"
 
 #define LOCTEXT_NAMESPACE "STrafficSystemPanel"
 
@@ -478,11 +480,19 @@ bool STrafficSystemPanel::CanBake() const
 
 FReply STrafficSystemPanel::OnBeginCalibrationClicked()
 {
+	const bool bAutomationOrCmdlet = IsRunningCommandlet() || GIsAutomationTesting;
 	if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
 	{
 		if (!HasDetectedFamilies())
 		{
-			FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(TEXT("No road families detected. Run Prepare Map first.")));
+			if (!bAutomationOrCmdlet)
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(TEXT("No road families detected. Run Prepare Map first.")));
+			}
+			else
+			{
+				UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor][Automation] No road families detected; dialog suppressed."));
+			}
 			return FReply::Handled();
 		}
 		if (SelectedFamily.IsValid())
@@ -517,17 +527,25 @@ FReply STrafficSystemPanel::OnResetLabClicked()
 
 FReply STrafficSystemPanel::OnResetLabIncludingTaggedClicked()
 {
+	const bool bAutomationOrCmdlet = IsRunningCommandlet() || GIsAutomationTesting;
 	if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
 	{
-		const EAppReturnType::Type Resp = FMessageDialog::Open(
-			EAppMsgType::OkCancel,
-			LOCTEXT("Traffic_ConfirmDestructiveReset",
-				"WARNING: This will DELETE road actors tagged for AAA conversion from this level.\n"
-				"This is DESTRUCTIVE and cannot be undone.\n\n"
-				"Are you sure you want to continue?"));
-		if (Resp != EAppReturnType::Ok)
+		if (!bAutomationOrCmdlet)
 		{
-			return FReply::Handled();
+			const EAppReturnType::Type Resp = FMessageDialog::Open(
+				EAppMsgType::OkCancel,
+				LOCTEXT("Traffic_ConfirmDestructiveReset",
+					"WARNING: This will DELETE road actors tagged for AAA conversion from this level.\n"
+					"This is DESTRUCTIVE and cannot be undone.\n\n"
+					"Are you sure you want to continue?"));
+			if (Resp != EAppReturnType::Ok)
+			{
+				return FReply::Handled();
+			}
+		}
+		else
+		{
+			UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor][Automation] Destructive reset dialog suppressed; proceeding."));
 		}
 
 		Subsys->Editor_ResetRoadLabHard(true);
@@ -559,16 +577,31 @@ FReply STrafficSystemPanel::OnRestoreCalibrationClicked()
 
 FReply STrafficSystemPanel::OnBuildAndCarsClicked()
 {
+	const bool bAutomationOrCmdlet = IsRunningCommandlet() || GIsAutomationTesting;
 	if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
 	{
 		if (!HasDetectedFamilies())
 		{
-			FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(TEXT("No road families detected. Run Prepare Map first.")));
+			if (!bAutomationOrCmdlet)
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(TEXT("No road families detected. Run Prepare Map first.")));
+			}
+			else
+			{
+				UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor][Automation] No road families detected; dialog suppressed."));
+			}
 			return FReply::Handled();
 		}
 		if (!Subsys->HasAnyCalibratedFamilies())
 		{
-			FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(TEXT("No calibrated road families found. Calibrate and bake at least one family first.")));
+			if (!bAutomationOrCmdlet)
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(TEXT("No calibrated road families found. Calibrate and bake at least one family first.")));
+			}
+			else
+			{
+				UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor][Automation] No calibrated families; dialog suppressed."));
+			}
 			return FReply::Handled();
 		}
 		Subsys->DoPrepare();
@@ -589,16 +622,31 @@ FReply STrafficSystemPanel::OnPrepareClicked()
 
 FReply STrafficSystemPanel::OnBuildClicked()
 {
+	const bool bAutomationOrCmdlet = IsRunningCommandlet() || GIsAutomationTesting;
 	if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
 	{
 		if (!HasDetectedFamilies())
 		{
-			FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(TEXT("No road families detected. Run Prepare Map first.")));
+			if (!bAutomationOrCmdlet)
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(TEXT("No road families detected. Run Prepare Map first.")));
+			}
+			else
+			{
+				UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor][Automation] No road families detected; dialog suppressed."));
+			}
 			return FReply::Handled();
 		}
 		if (!Subsys->HasAnyCalibratedFamilies())
 		{
-			FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(TEXT("No calibrated road families found. Calibrate and bake at least one family first.")));
+			if (!bAutomationOrCmdlet)
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(TEXT("No calibrated road families found. Calibrate and bake at least one family first.")));
+			}
+			else
+			{
+				UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor][Automation] No calibrated families; dialog suppressed."));
+			}
 			return FReply::Handled();
 		}
 		Subsys->DoBuild();
@@ -608,16 +656,31 @@ FReply STrafficSystemPanel::OnBuildClicked()
 
 FReply STrafficSystemPanel::OnCarsClicked()
 {
+	const bool bAutomationOrCmdlet = IsRunningCommandlet() || GIsAutomationTesting;
 	if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
 	{
 		if (!HasDetectedFamilies())
 		{
-			FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(TEXT("No road families detected. Run Prepare Map first.")));
+			if (!bAutomationOrCmdlet)
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(TEXT("No road families detected. Run Prepare Map first.")));
+			}
+			else
+			{
+				UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor][Automation] No road families detected; dialog suppressed."));
+			}
 			return FReply::Handled();
 		}
 		if (!Subsys->HasAnyCalibratedFamilies())
 		{
-			FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(TEXT("No calibrated road families found. Calibrate and bake at least one family first.")));
+			if (!bAutomationOrCmdlet)
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(TEXT("No calibrated road families found. Calibrate and bake at least one family first.")));
+			}
+			else
+			{
+				UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor][Automation] No calibrated families; dialog suppressed."));
+			}
 			return FReply::Handled();
 		}
 		Subsys->DoCars();
