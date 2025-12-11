@@ -138,6 +138,26 @@ namespace
 					Actor->Destroy();
 				}
 			}
+
+			// Ensure a TrafficSystemController exists to build and spawn traffic.
+			bool bHasController = false;
+			for (TActorIterator<ATrafficSystemController> ItCtrl(World); ItCtrl; ++ItCtrl)
+			{
+				bHasController = true;
+				break;
+			}
+			if (!bHasController)
+			{
+				FActorSpawnParameters SpawnParams;
+				SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+				ATrafficSystemController* SpawnedController =
+					World->SpawnActor<ATrafficSystemController>(ATrafficSystemController::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, SpawnParams);
+				if (SpawnedController)
+				{
+					SpawnedController->Runtime_BuildTrafficNetwork();
+					SpawnedController->Runtime_SpawnTraffic();
+				}
+			}
 		}
 
 		ATrafficVehicleManager* Manager = nullptr;
