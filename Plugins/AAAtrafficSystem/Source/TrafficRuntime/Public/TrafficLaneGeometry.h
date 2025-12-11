@@ -32,6 +32,12 @@ namespace TrafficLaneGeometry
 {
 	TRAFFICRUNTIME_API float ComputeLaneLengthCm(const FTrafficLane& Lane);
 
+	/** Offsets a centerline by a lateral distance (cm) to generate lane points. */
+	TRAFFICRUNTIME_API void ComputeLanePoints(
+		const TArray<FVector>& CenterlinePoints,
+		float LateralOffsetCm,
+		TArray<FVector>& OutLanePoints);
+
 	TRAFFICRUNTIME_API void BuildCumulativeDistances(
 		const FTrafficLane& Lane,
 		TArray<float>& OutCumulative);
@@ -49,4 +55,3 @@ namespace TrafficLaneGeometry
 		FVector& OutPosition,
 		FVector& OutTangent);
 }
-

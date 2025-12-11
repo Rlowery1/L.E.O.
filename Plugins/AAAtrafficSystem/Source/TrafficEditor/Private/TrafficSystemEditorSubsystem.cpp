@@ -18,6 +18,7 @@
 #include "GameFramework/PlayerStart.h"
 #include "CollisionQueryParams.h"
 #include "UObject/SoftObjectPath.h"
+#include "Templates/ScopeExit.h"
 #include "FileHelpers.h"
 #include "HAL/FileManager.h"
 #include "Misc/MessageDialog.h"
@@ -160,6 +161,43 @@ int32 UTrafficSystemEditorSubsystem::GetNumActorsForFamily(const FGuid& FamilyId
 		}
 	}
 	return Count;
+}
+
+void UTrafficSystemEditorSubsystem::GetActorsForFamily(const FGuid& FamilyId, TArray<AActor*>& OutActors) const
+{
+	OutActors.Reset();
+
+	UWorld* World = GetEditorWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get();
+	if (!Registry)
+	{
+		return;
+	}
+
+	const FRoadFamilyInfo* Info = Registry->FindFamilyById(FamilyId);
+	if (!Info)
+	{
+		return;
+	}
+
+	UClass* RoadClass = Info->RoadClassPath.TryLoadClass<AActor>();
+	if (!RoadClass)
+	{
+		return;
+	}
+
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->IsA(RoadClass))
+		{
+			OutActors.Add(*It);
+		}
+	}
 }
 
 void UTrafficSystemEditorSubsystem::TagAsRoadLab(AActor* Actor)
@@ -912,6 +950,42 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 		return;
 	}
 
+	TArray<AActor*> ActorsBefore;
+	GetActorsForFamily(FamilyId, ActorsBefore);
+
+	auto WarnIfMissing = [&](const TCHAR* Context)
+	{
+		TArray<AActor*> ActorsAfter;
+		GetActorsForFamily(FamilyId, ActorsAfter);
+
+		int32 MissingCount = 0;
+		for (AActor* Actor : ActorsBefore)
+		{
+			if (Actor && !ActorsAfter.Contains(Actor))
+			{
+				++MissingCount;
+			}
+		}
+
+		if (MissingCount > 0)
+		{
+			UE_LOG(LogTraffic, Warning,
+				TEXT("[TrafficEditor] Road actors disappeared during calibration for family %s. Before=%d After=%d Context=%s"),
+				*FamilyId.ToString(), ActorsBefore.Num(), ActorsAfter.Num(), Context ? Context : TEXT("BeginCalibration"));
+
+			FMessageDialog::Open(
+				EAppMsgType::Ok,
+				NSLOCTEXT("TrafficEditor", "Traffic_RoadsDisappeared",
+					"One or more road actors disappeared during calibration for this family.\n"
+					"This is unexpected. Please check your road kit tools and streaming state."));
+		}
+	};
+
+	ON_SCOPE_EXIT
+	{
+		WarnIfMissing(TEXT("EndBeginCalibration"));
+	};
+
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
@@ -1063,6 +1137,42 @@ void UTrafficSystemEditorSubsystem::Editor_BakeCalibrationForActiveFamily()
 		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] BakeCalibration: No active overlay actor."));
 		return;
 	}
+
+	TArray<AActor*> ActorsBefore;
+	GetActorsForFamily(ActiveFamilyId, ActorsBefore);
+
+	auto WarnIfMissing = [&]()
+	{
+		TArray<AActor*> ActorsAfter;
+		GetActorsForFamily(ActiveFamilyId, ActorsAfter);
+
+		int32 MissingCount = 0;
+		for (AActor* Actor : ActorsBefore)
+		{
+			if (Actor && !ActorsAfter.Contains(Actor))
+			{
+				++MissingCount;
+			}
+		}
+
+		if (MissingCount > 0)
+		{
+			UE_LOG(LogTraffic, Warning,
+				TEXT("[TrafficEditor] Road actors disappeared during calibration bake for family %s. Before=%d After=%d"),
+				*ActiveFamilyId.ToString(), ActorsBefore.Num(), ActorsAfter.Num());
+
+			FMessageDialog::Open(
+				EAppMsgType::Ok,
+				NSLOCTEXT("TrafficEditor", "Traffic_RoadsDisappeared",
+					"One or more road actors disappeared during calibration for this family.\n"
+					"This is unexpected. Please check your road kit tools and streaming state."));
+		}
+	};
+
+	ON_SCOPE_EXIT
+	{
+		WarnIfMissing();
+	};
 
 	FTrafficLaneFamilyCalibration NewCalib;
 	NewCalib.NumLanesPerSideForward = CalibrationOverlayActor->NumLanesPerSideForward;
@@ -1380,4 +1490,3 @@ void UTrafficSystemEditorSubsystem::CalibrateSelectedRoad()
         Family.Forward.LaneWidthCm);
 #endif
 }
-

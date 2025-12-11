@@ -1,6 +1,7 @@
 #include "LaneCalibrationOverlayActor.h"
 #include "TrafficCalibrationVisuals.h"
 #include "TrafficRuntimeModule.h"
+#include "TrafficLaneGeometry.h"
 #include "TrafficVisualSettings.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "ProceduralMeshComponent.h"
@@ -76,27 +77,7 @@ TArray<FVector> ALaneCalibrationOverlayActor::ComputeLaneCenterline(
 	float LateralOffset)
 {
 	TArray<FVector> LanePoints;
-	if (RoadCenterline.Num() < 2)
-	{
-		return LanePoints;
-	}
-
-	for (int32 i = 0; i < RoadCenterline.Num(); ++i)
-	{
-		FVector Tangent;
-		if (i < RoadCenterline.Num() - 1)
-		{
-			Tangent = (RoadCenterline[i + 1] - RoadCenterline[i]).GetSafeNormal();
-		}
-		else
-		{
-			Tangent = (RoadCenterline[i] - RoadCenterline[i - 1]).GetSafeNormal();
-		}
-
-		FVector Right = FVector::CrossProduct(FVector::UpVector, Tangent).GetSafeNormal();
-		LanePoints.Add(RoadCenterline[i] + Right * LateralOffset);
-	}
-
+	TrafficLaneGeometry::ComputeLanePoints(RoadCenterline, LateralOffset, LanePoints);
 	return LanePoints;
 }
 

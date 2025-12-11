@@ -78,6 +78,7 @@ public:
 
 	// Returns how many actors for this road family exist in the current editor world.
 	int32 GetNumActorsForFamily(const FGuid& FamilyId) const;
+	void GetActorsForFamily(const FGuid& FamilyId, TArray<AActor*>& OutActors) const;
 
 private:
 	void TagAsRoadLab(AActor* Actor);

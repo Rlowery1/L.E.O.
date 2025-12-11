@@ -43,6 +43,35 @@ float TrafficLaneGeometry::ComputeLaneLengthCm(const FTrafficLane& Lane)
 	return Length;
 }
 
+void TrafficLaneGeometry::ComputeLanePoints(
+	const TArray<FVector>& CenterlinePoints,
+	float LateralOffsetCm,
+	TArray<FVector>& OutLanePoints)
+{
+	OutLanePoints.Reset();
+
+	if (CenterlinePoints.Num() < 2)
+	{
+		return;
+	}
+
+	for (int32 i = 0; i < CenterlinePoints.Num(); ++i)
+	{
+		FVector Tangent;
+		if (i < CenterlinePoints.Num() - 1)
+		{
+			Tangent = (CenterlinePoints[i + 1] - CenterlinePoints[i]).GetSafeNormal();
+		}
+		else
+		{
+			Tangent = (CenterlinePoints[i] - CenterlinePoints[i - 1]).GetSafeNormal();
+		}
+
+		const FVector Right = FVector::CrossProduct(FVector::UpVector, Tangent).GetSafeNormal();
+		OutLanePoints.Add(CenterlinePoints[i] + Right * LateralOffsetCm);
+	}
+}
+
 void TrafficLaneGeometry::BuildCumulativeDistances(
 	const FTrafficLane& Lane,
 	TArray<float>& OutCumulative)
@@ -219,4 +248,3 @@ bool TrafficLaneGeometry::SamplePoseAtS(
 
 	return true;
 }
-
