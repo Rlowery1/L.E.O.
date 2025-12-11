@@ -49,6 +49,8 @@ public:
 
 	void ApplyCalibrationSettings(int32 InNumForward, int32 InNumBackward, float InLaneWidthCm, float InCenterOffsetCm);
 
+	int32 GetArrowInstanceCount() const;
+
 	// Rebuild overlay from cached data (used by editor property edits).
 	UFUNCTION(CallInEditor, Category="Traffic|Calibration")
 	void Editor_RebuildFromCachedCenterline();
