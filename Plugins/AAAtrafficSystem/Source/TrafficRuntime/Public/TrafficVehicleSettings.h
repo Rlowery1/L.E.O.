@@ -24,6 +24,14 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category="TrafficVehicle")
 	TArray<FSoftObjectPath> AdditionalVehicleProfiles;
 
+	/** Minimum spacing multiplier between spawned vehicles: min spacing = VehicleLengthCm * MinSpawnSpacingMultiplier. */
+	UPROPERTY(EditAnywhere, Config, Category="TrafficVehicle|Spawning", meta=(ClampMin="1.0"))
+	float MinSpawnSpacingMultiplier = 2.0f;
+
+	/** Minimum usable lane length to consider spawning vehicles (in cm). */
+	UPROPERTY(EditAnywhere, Config, Category="TrafficVehicle|Spawning", meta=(ClampMin="0.0"))
+	float MinUsableLaneLengthCm = 2000.f; // 20m default threshold
+
 	static const UTrafficVehicleSettings* Get();
 
 	virtual FName GetCategoryName() const override { return FName(TEXT("Plugins")); }

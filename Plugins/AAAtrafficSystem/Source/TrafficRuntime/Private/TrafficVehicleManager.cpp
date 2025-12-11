@@ -7,6 +7,7 @@
 #include "TrafficVehicleSettings.h"
 #include "TrafficVehicleAdapter.h"
 #include "TrafficVehicleProfile.h"
+#include "TrafficLaneGeometry.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
@@ -18,6 +19,44 @@ static TAutoConsoleVariable<int32> CVarShowLogicDebugMesh(
 	TEXT("If non-zero, show the TrafficVehicleBase debug cube even when Chaos visuals are present.\n")
 	TEXT("Default: 0 (hide cube when Chaos pawn is spawned)."),
 	ECVF_Default);
+
+// Helper to compute safe spawn positions along a lane.
+static void ComputeSpawnPositionsForLane(
+	const FTrafficLane& Lane,
+	int32 DesiredVehicles,
+	float VehicleLengthCm,
+	float MinSpawnSpacingMultiplier,
+	float MinUsableLaneLengthCm,
+	TArray<float>& OutSParams)
+{
+	OutSParams.Reset();
+
+	const float LaneLength = TrafficLaneGeometry::ComputeLaneLengthCm(Lane);
+
+	if (LaneLength <= 0.f || LaneLength < MinUsableLaneLengthCm)
+	{
+		// Lane is too short for multiple vehicles, maybe too short for even one. Let caller decide.
+		return;
+	}
+
+	const float MinSpacing = VehicleLengthCm * FMath::Max(MinSpawnSpacingMultiplier, 1.0f);
+	const int32 MaxVehiclesByLength = FMath::FloorToInt(LaneLength / MinSpacing);
+
+	const int32 NumToSpawn = FMath::Clamp(DesiredVehicles, 0, MaxVehiclesByLength);
+
+	if (NumToSpawn <= 0)
+	{
+		return;
+	}
+
+	// Evenly distribute along the lane, leaving some margin at start/end.
+	const float Segment = LaneLength / (NumToSpawn + 1);
+	for (int32 i = 0; i < NumToSpawn; ++i)
+	{
+		const float S = Segment * (i + 1); // in cm along lane
+		OutSParams.Add(S);
+	}
+}
 
 ATrafficVehicleManager::ATrafficVehicleManager()
 {
@@ -151,6 +190,17 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 			Profile->VehicleClass.IsNull() ? TEXT("<no class>") : *Profile->VehicleClass.ToString());
 	}
 
+	const UTrafficVehicleSettings* VehicleSettings = UTrafficVehicleSettings::Get();
+	const float MinSpacingMultiplier = VehicleSettings ? VehicleSettings->MinSpawnSpacingMultiplier : 2.0f;
+	const float MinUsableLaneLengthCm = VehicleSettings ? VehicleSettings->MinUsableLaneLengthCm : 2000.f;
+
+	// Use default vehicle profile to estimate length; fall back to a conservative guess if needed.
+	float ApproxVehicleLengthCm = 450.f;
+	if (Profile && Profile->LengthCm > 0.f)
+	{
+		ApproxVehicleLengthCm = Profile->LengthCm;
+	}
+
 	TSubclassOf<ATrafficVehicleBase> LogicClass = ATrafficVehicleBase::StaticClass();
 	TSubclassOf<APawn> VisualClass = nullptr;
 	if (!bForceLogicOnlyForTests && Profile && Profile->VehicleClass.IsValid())
@@ -160,6 +210,11 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 
 	const TArray<FTrafficLane>& Lanes = NetworkAsset->Network.Lanes;
 	LastLaneSpawnTimes.Empty();
+	TMap<int32, int32> SpawnedPerLane;
+
+	FActorSpawnParameters VehicleSpawnParams;
+	VehicleSpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	VehicleSpawnParams.Owner = this;
 
 	for (int32 LaneIndex = 0; LaneIndex < Lanes.Num(); ++LaneIndex)
 	{
@@ -167,15 +222,38 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 
 		if (Lane.CenterlinePoints.Num() < 2)
 		{
+			UE_LOG(LogTraffic, Verbose, TEXT("[VehicleManager] Lane %d has insufficient points; skipping spawn."), LaneIndex);
 			continue;
 		}
 
-		for (int32 i = 0; i < VehiclesPerLane; ++i)
-		{
-			const float SpacingCm = 5000.f;
-			const float InitialS = i * SpacingCm;
+		const float LaneLength = TrafficLaneGeometry::ComputeLaneLengthCm(Lane);
 
-			ATrafficVehicleBase* Vehicle = World->SpawnActor<ATrafficVehicleBase>(LogicClass);
+		TArray<float> SpawnS;
+		ComputeSpawnPositionsForLane(Lane, VehiclesPerLane, ApproxVehicleLengthCm, MinSpacingMultiplier, MinUsableLaneLengthCm, SpawnS);
+
+		if (SpawnS.Num() == 0)
+		{
+			UE_LOG(LogTraffic, Verbose,
+				TEXT("[VehicleManager] Lane %d (length=%.1fcm) too short for %d vehicles; skipping spawn."),
+				LaneIndex,
+				LaneLength,
+				VehiclesPerLane);
+			continue;
+		}
+
+		for (float S : SpawnS)
+		{
+			FVector SpawnPos = FVector::ZeroVector;
+			FVector SpawnTangent = FVector::ForwardVector;
+			if (!TrafficLaneGeometry::SamplePoseAtS(Lane, S, SpawnPos, SpawnTangent))
+			{
+				UE_LOG(LogTraffic, Warning, TEXT("[VehicleManager] Failed to sample lane %d at S=%.1f; skipping vehicle."), LaneIndex, S);
+				continue;
+			}
+
+			const FTransform SpawnXform(SpawnTangent.Rotation(), SpawnPos);
+
+			ATrafficVehicleBase* Vehicle = World->SpawnActor<ATrafficVehicleBase>(LogicClass, SpawnXform, VehicleSpawnParams);
 			if (!Vehicle)
 			{
 				UE_LOG(LogTraffic, Warning, TEXT("[VehicleManager] Failed to spawn vehicle for lane %d (class %s)."), LaneIndex, *LogicClass->GetName());
@@ -193,8 +271,9 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 			}
 			LastLaneSpawnTimes.Add(LaneKey, Now);
 
-			Vehicle->InitializeOnLane(&Lane, InitialS, SpeedCmPerSec);
+			Vehicle->InitializeOnLane(&Lane, S, SpeedCmPerSec);
 			Vehicles.Add(Vehicle);
+			SpawnedPerLane.FindOrAdd(LaneKey) += 1;
 			if (ActiveMetrics)
 			{
 				ActiveMetrics->VehiclesSpawned++;
@@ -205,7 +284,7 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 				FActorSpawnParameters Params;
 				Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 				Params.Owner = this;
-				APawn* VisualPawn = World->SpawnActor<APawn>(VisualClass, Vehicle->GetActorTransform(), Params);
+				APawn* VisualPawn = World->SpawnActor<APawn>(VisualClass, SpawnXform, Params);
 				if (VisualPawn)
 				{
 					VisualPawn->SetActorEnableCollision(false);
@@ -234,6 +313,11 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 			TEXT("[VehicleManager] No valid Chaos vehicle class configured. "
 				 "Spawning logic-only TrafficVehicleBase pawns (debug cubes) without visual Chaos vehicles.\n"
 				 "Configure a DefaultVehicleProfile and VehicleClass in Project Settings -> AAA Traffic Vehicle Settings for full Chaos visuals."));
+	}
+
+	for (const TPair<int32, int32>& Pair : SpawnedPerLane)
+	{
+		UE_LOG(LogTraffic, Log, TEXT("[VehicleManager] Lane %d spawned %d vehicles."), Pair.Key, Pair.Value);
 	}
 
 	UE_LOG(LogTraffic, Log, TEXT("[VehicleManager] Spawned %d vehicles."), Vehicles.Num());
