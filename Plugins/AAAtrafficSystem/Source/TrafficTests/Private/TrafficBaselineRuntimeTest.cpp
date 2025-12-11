@@ -18,11 +18,11 @@
 
 namespace
 {
-	static const TCHAR* BaselineMapPackage = TEXT("/AAAtrafficSystem/Maps/Traffic_BaselineStraight");
-	static const float BaselineSimSeconds = 5.0f;
-	static const float BaselineTickSeconds = 0.1f;
-	static const float MaxLateralToleranceCm = 30.0f;
-	static const TCHAR* BaselineTestName = TEXT("Traffic.Runtime.BaselineStraightChaos");
+static const TCHAR* BaselineMapPackage = TEXT("/AAAtrafficSystem/Maps/Traffic_BaselineStraight");
+static const float BaselineSimSeconds = 5.0f;
+static const float BaselineTickSeconds = 0.1f;
+static const float BaselineMaxLateralErrorCm = 30.0f;
+static const TCHAR* BaselineTestName = TEXT("Traffic.Runtime.BaselineStraightChaos");
 
 	struct FTrafficBaselinePIEState
 	{
@@ -213,7 +213,7 @@ namespace
 		const bool bHasVehicle = (State->LogicCount == 1);
 		const bool bHasChaos = (State->ChaosCount == 1);
 		const bool bMovedForward = (State->MaxS > State->MinS) && (State->MaxS > 0.f);
-		const bool bLateralOk = (State->MaxLateralError <= MaxLateralToleranceCm);
+		const bool bLateralOk = (State->MaxLateralError <= BaselineMaxLateralErrorCm);
 		const bool bDebugMeshOk = State->bLogicMeshHidden;
 		const bool bSpeedPositive = (State->FinalSpeed > 0.f);
 		const bool bMonotonic = State->bMonotonicS;
