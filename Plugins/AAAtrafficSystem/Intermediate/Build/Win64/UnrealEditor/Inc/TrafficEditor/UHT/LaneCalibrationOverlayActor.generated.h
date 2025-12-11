@@ -17,6 +17,10 @@
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
 
 // ********** Begin Class ALaneCalibrationOverlayActor *********************************************
+#define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficEditor_Public_LaneCalibrationOverlayActor_h_19_RPC_WRAPPERS_NO_PURE_DECLS \
+	DECLARE_FUNCTION(execEditor_RebuildFromCachedCenterline);
+
+
 struct Z_Construct_UClass_ALaneCalibrationOverlayActor_Statics;
 TRAFFICEDITOR_API UClass* Z_Construct_UClass_ALaneCalibrationOverlayActor_NoRegister();
 
@@ -45,6 +49,7 @@ public: \
 #define FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficEditor_Public_LaneCalibrationOverlayActor_h_19_GENERATED_BODY \
 PRAGMA_DISABLE_DEPRECATION_WARNINGS \
 public: \
+	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficEditor_Public_LaneCalibrationOverlayActor_h_19_RPC_WRAPPERS_NO_PURE_DECLS \
 	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficEditor_Public_LaneCalibrationOverlayActor_h_19_INCLASS_NO_PURE_DECLS \
 	FID_Users_rllax_L_E_O_Plugins_AAAtrafficSystem_Source_TrafficEditor_Public_LaneCalibrationOverlayActor_h_19_ENHANCED_CONSTRUCTORS \
 private: \

@@ -26,6 +26,7 @@
 			"TrafficVisualSettings.gen.cpp.obj",
 			"PerModuleInline.gen.cpp.obj",
 			"CityBLDRoadGeometryProvider.cpp.obj",
+			"RoadFamilyRegistry.cpp.obj",
 			"TrafficAutomationLogger.cpp.obj",
 			"TrafficCalibrationVisuals.cpp.obj",
 			"TrafficCityBLDAdapterSettings.cpp.obj",
@@ -46,8 +47,7 @@
 			"TrafficVehicleManager.cpp.obj",
 			"TrafficVehicleProfile.cpp.obj",
 			"TrafficVehicleSettings.cpp.obj",
-			"TrafficVisualSettings.cpp.obj",
-			"RoadFamilyRegistry.cpp.obj"
+			"TrafficVisualSettings.cpp.obj"
 		]
 	}
 }

@@ -139,7 +139,15 @@ void STrafficSystemPanel::Construct(const FArguments& InArgs)
 					{
 						if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
 						{
-							return SelectedFamily.IsValid() && Subsys->HasAnyPreparedRoads();
+							if (!SelectedFamily.IsValid())
+							{
+								return false;
+							}
+							if (!Subsys->HasAnyPreparedRoads())
+							{
+								return false;
+							}
+							return Subsys->GetNumActorsForFamily(SelectedFamily->FamilyId) > 0;
 						}
 						return false;
 					})
@@ -151,8 +159,18 @@ void STrafficSystemPanel::Construct(const FArguments& InArgs)
 							{
 								return LOCTEXT("Tooltip_NoPreparedRoads", "No prepared roads found. Run PREPARE MAP first.");
 							}
+							if (SelectedFamily.IsValid())
+							{
+								const int32 NumInstances = Subsys->GetNumActorsForFamily(SelectedFamily->FamilyId);
+								if (NumInstances <= 0)
+								{
+									return LOCTEXT("Tooltip_NoActorsForFamily",
+										"This road family has no actors in this level.\n"
+										"Place or load at least one road actor for this family before calibrating.");
+								}
+							}
 						}
-						return FText::GetEmpty();
+						return LOCTEXT("Tooltip_BeginCalibration", "Spawn and adjust the calibration overlay for this road family.");
 					})
 					[
 						SNew(SVerticalBox)
@@ -634,7 +652,12 @@ void STrafficSystemPanel::RefreshFamilyList()
 		{
 			TSharedPtr<FFamilyListItem> Item = MakeShared<FFamilyListItem>();
 			Item->FamilyId = Info.FamilyId;
-			Item->DisplayName = Info.DisplayName;
+			int32 NumInstances = 0;
+			if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
+			{
+				NumInstances = Subsys->GetNumActorsForFamily(Info.FamilyId);
+			}
+			Item->DisplayName = NumInstances > 0 ? Info.DisplayName : FString::Printf(TEXT("%s (0 actors)"), *Info.DisplayName);
 			Item->ClassDisplay = Info.RoadClassPath.GetAssetName();
 			Item->bIsCalibrated = Info.bIsCalibrated;
 			FamilyItems.Add(Item);
