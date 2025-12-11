@@ -33,6 +33,14 @@ namespace
 			return false;
 		}
 
+		UStaticMesh* Mesh = Comp->GetStaticMesh();
+		if (!Mesh)
+		{
+			return false;
+		}
+
+		FBoxSphereBounds LocalBounds = Comp->CalcBounds(FTransform::Identity);
+
 		bool bInclude = true;
 
 		bool bHasTagComponent = false;
@@ -57,7 +65,7 @@ namespace
 		if (bInclude && Settings && Settings->DrivableMaterialKeywords.Num() > 0)
 		{
 			bool bMaterialMatch = false;
-			if (UStaticMesh* Mesh = Comp->GetStaticMesh())
+			if (Mesh)
 			{
 				for (const FStaticMaterial& StaticMat : Mesh->GetStaticMaterials())
 				{
@@ -87,10 +95,34 @@ namespace
 			bInclude = bMaterialMatch;
 		}
 
+		if (bInclude && Settings && Settings->MaxMeshHeightCm > 0.f)
+		{
+			const float HeightCm = LocalBounds.BoxExtent.Z * 2.f;
+			if (HeightCm > Settings->MaxMeshHeightCm)
+			{
+				bInclude = false;
+			}
+		}
+
+		if (bInclude && Settings && Settings->ExcludedMeshNameKeywords.Num() > 0)
+		{
+			const FString CompName = Comp->GetName();
+			const FString MeshName = Mesh->GetName();
+			for (const FString& ExKey : Settings->ExcludedMeshNameKeywords)
+			{
+				if (!ExKey.IsEmpty() &&
+					(CompName.Contains(ExKey, ESearchCase::IgnoreCase) ||
+						MeshName.Contains(ExKey, ESearchCase::IgnoreCase)))
+				{
+					bInclude = false;
+					break;
+				}
+			}
+		}
+
 		if (bInclude && Settings && Settings->MaxMeshLateralOffsetCm > 0.f)
 		{
 			const FTransform& Xform = Comp->GetComponentTransform();
-			const FBoxSphereBounds LocalBounds = Comp->CalcBounds(FTransform::Identity);
 			const FVector WorldCenter = Xform.TransformPosition(LocalBounds.Origin);
 			const FVector Forward = RoadActor->GetActorForwardVector();
 			const FVector ApproxPerp = FVector(-Forward.Y, Forward.X, 0.f).GetSafeNormal();

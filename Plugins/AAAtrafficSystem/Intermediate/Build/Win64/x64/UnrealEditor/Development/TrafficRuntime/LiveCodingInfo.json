@@ -29,7 +29,6 @@
 			"RoadFamilyRegistry.cpp.obj",
 			"TrafficAutomationLogger.cpp.obj",
 			"TrafficCalibrationVisuals.cpp.obj",
-			"TrafficCityBLDAdapterSettings.cpp.obj",
 			"TrafficGeometryProvider.cpp.obj",
 			"TrafficGeometryProviderFactory.cpp.obj",
 			"TrafficKinematicFollower.cpp.obj",
@@ -49,7 +48,8 @@
 			"TrafficVehicleProfile.cpp.obj",
 			"TrafficVehicleSettings.cpp.obj",
 			"TrafficVisualSettings.cpp.obj",
-			"CityBLDRoadGeometryProvider.cpp.obj"
+			"CityBLDRoadGeometryProvider.cpp.obj",
+			"TrafficCityBLDAdapterSettings.cpp.obj"
 		]
 	}
 }

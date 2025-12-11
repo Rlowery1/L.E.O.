@@ -41,4 +41,12 @@ public:
 	/** Maximum lateral offset (cm) from actor forward/right for a mesh to be considered part of the road. Set to 0 to disable. */
 	UPROPERTY(EditAnywhere, Config, Category="Filtering")
 	float MaxMeshLateralOffsetCm = 0.f;
+
+	/** Maximum mesh height (in cm) to consider it part of the drivable surface. Set to 0 to disable. */
+	UPROPERTY(EditAnywhere, Config, Category="Filtering")
+	float MaxMeshHeightCm = 200.f;
+
+	/** Negative keywords: exclude meshes if the name (component or mesh) contains any of these substrings. */
+	UPROPERTY(EditAnywhere, Config, Category="Filtering")
+	TArray<FString> ExcludedMeshNameKeywords;
 };

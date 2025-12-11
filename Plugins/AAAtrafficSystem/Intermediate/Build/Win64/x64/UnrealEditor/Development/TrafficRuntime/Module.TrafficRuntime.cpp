@@ -26,7 +26,6 @@
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficRuntime/Private/RoadFamilyRegistry.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficRuntime/Private/TrafficAutomationLogger.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficRuntime/Private/TrafficCalibrationVisuals.cpp"
-#include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficRuntime/Private/TrafficCityBLDAdapterSettings.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficRuntime/Private/TrafficGeometryProvider.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficRuntime/Private/TrafficGeometryProviderFactory.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficRuntime/Private/TrafficKinematicFollower.cpp"
