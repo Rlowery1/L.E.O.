@@ -361,14 +361,14 @@ void STrafficSystemPanel::Construct(const FArguments& InArgs)
 						}
 						return false;
 					})
-					.ToolTipText(LOCTEXT("Tooltip_BuildCars", "Requires at least one prepared and calibrated road family. Run PREPARE MAP, then CALIBRATE and BAKE a family."))
+					.ToolTipText(LOCTEXT("Tooltip_BuildCars", "Prepare roads, build the transient traffic network, and spawn test vehicles in the EDITOR world.\nThis is an editor-only test harness for calibration and behavior tuning. Runtime/PIE integration will spawn traffic according to your game setup.\nRequires at least one prepared and calibrated road family."))
 					[
 						SNew(SVerticalBox)
 						+ SVerticalBox::Slot()
 						.AutoHeight()
 						[
 							SNew(STextBlock)
-							.Text(FText::FromString(TEXT("BUILD + CARS")))
+							.Text(FText::FromString(TEXT("BUILD + CARS (Editor Test)")))
 							.Font(TitleFont)
 							.ColorAndOpacity(FLinearColor::White)
 						]
@@ -377,7 +377,7 @@ void STrafficSystemPanel::Construct(const FArguments& InArgs)
 						.Padding(0.0f, 2.0f, 0.0f, 0.0f)
 						[
 							SNew(STextBlock)
-							.Text(FText::FromString(TEXT("Prepare, build network, and spawn vehicles in one click.")))
+							.Text(FText::FromString(TEXT("Prepare, build, and spawn vehicles in the editor world for quick testing.")))
 							.Font(SubtitleFont)
 							.ColorAndOpacity(FLinearColor(0.8f, 0.8f, 0.8f))
 							.WrapTextAt(420.0f)

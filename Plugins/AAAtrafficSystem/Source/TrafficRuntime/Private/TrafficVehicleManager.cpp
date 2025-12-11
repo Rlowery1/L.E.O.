@@ -213,11 +213,13 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 		}
 	}
 
-	if (!VisualClass && !Profile && !bForceLogicOnlyForTests)
+	if (!bForceLogicOnlyForTests && (!Profile || !VisualClass))
 	{
-		UE_LOG(LogTraffic, Warning, TEXT("[VehicleManager] No default vehicle profile configured. Using TrafficVehicleBase only."));
+		UE_LOG(LogTraffic, Warning,
+			TEXT("[VehicleManager] No valid Chaos vehicle class configured. "
+				 "Spawning logic-only TrafficVehicleBase pawns (debug cubes) without visual Chaos vehicles.\n"
+				 "Configure a DefaultVehicleProfile and VehicleClass in Project Settings -> AAA Traffic Vehicle Settings for full Chaos visuals."));
 	}
 
 	UE_LOG(LogTraffic, Log, TEXT("[VehicleManager] Spawned %d vehicles."), Vehicles.Num());
 }
-
