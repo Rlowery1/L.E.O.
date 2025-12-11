@@ -14,6 +14,7 @@
 			"TrafficMovementGeometry.gen.cpp.obj",
 			"TrafficNetworkAsset.gen.cpp.obj",
 			"TrafficRoadFamilySettings.gen.cpp.obj",
+			"TrafficRoadMeshTagComponent.gen.cpp.obj",
 			"TrafficRoadMetadataComponent.gen.cpp.obj",
 			"TrafficRoadTypes.gen.cpp.obj",
 			"TrafficRuntime.init.gen.cpp.obj",
@@ -26,9 +27,7 @@
 			"TrafficVisualSettings.gen.cpp.obj",
 			"PerModuleInline.gen.cpp.obj",
 			"RoadFamilyRegistry.cpp.obj",
-			"TrafficAutomationLogger.cpp.obj",
 			"TrafficCalibrationVisuals.cpp.obj",
-			"TrafficCityBLDAdapterSettings.cpp.obj",
 			"TrafficGeometryProvider.cpp.obj",
 			"TrafficGeometryProviderFactory.cpp.obj",
 			"TrafficKinematicFollower.cpp.obj",
@@ -43,11 +42,14 @@
 			"TrafficSystemController.cpp.obj",
 			"TrafficVehicleAdapter.cpp.obj",
 			"TrafficVehicleBase.cpp.obj",
-			"TrafficVehicleManager.cpp.obj",
 			"TrafficVehicleProfile.cpp.obj",
-			"TrafficVehicleSettings.cpp.obj",
 			"TrafficVisualSettings.cpp.obj",
-			"CityBLDRoadGeometryProvider.cpp.obj"
+			"CityBLDRoadGeometryProvider.cpp.obj",
+			"TrafficAutomationLogger.cpp.obj",
+			"TrafficCityBLDAdapterSettings.cpp.obj",
+			"TrafficRoadMeshTagComponent.cpp.obj",
+			"TrafficVehicleManager.cpp.obj",
+			"TrafficVehicleSettings.cpp.obj"
 		]
 	}
 }

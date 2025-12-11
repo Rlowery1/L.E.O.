@@ -122,6 +122,24 @@ namespace
 			return true;
 		}
 
+		// Test-only: remove sidewalk modules that spam null world-context warnings in curve map.
+		if (GIsAutomationTesting)
+		{
+			for (TActorIterator<AActor> It(World); It; ++It)
+			{
+				AActor* Actor = *It;
+				if (!Actor)
+				{
+					continue;
+				}
+				const FString Name = Actor->GetName();
+				if (Name.Contains(TEXT("Sidewalk")) || Name.Contains(TEXT("RoadModuleBP_AdvancedSidewalk")))
+				{
+					Actor->Destroy();
+				}
+			}
+		}
+
 		ATrafficVehicleManager* Manager = nullptr;
 		for (TActorIterator<ATrafficVehicleManager> It(World); It; ++It)
 		{

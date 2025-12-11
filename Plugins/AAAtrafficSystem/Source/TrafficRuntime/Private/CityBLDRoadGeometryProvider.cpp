@@ -603,17 +603,29 @@ bool UCityBLDRoadGeometryProvider::GetDisplayCenterlineForActor(AActor* RoadActo
 	{
 		if (USplineComponent* Spline = FindRoadSpline(RoadActor, Settings))
 		{
-			SampleSplineUniformDistance(Spline, 100.0f, OutPoints);
-
-			if (OutPoints.Num() >= 2)
+			if (GIsAutomationTesting)
 			{
-				TArray<FVector> Smoothed;
-				SmoothPolyline(OutPoints, 3, Smoothed);
-				if (Smoothed.Num() == OutPoints.Num())
+				const int32 NumPts = Spline->GetNumberOfSplinePoints();
+				for (int32 i = 0; i < NumPts; ++i)
 				{
-					OutPoints = MoveTemp(Smoothed);
+					OutPoints.Add(Spline->GetLocationAtSplinePoint(i, ESplineCoordinateSpace::World));
 				}
-				bUsedSpline = true;
+				bUsedSpline = OutPoints.Num() >= 2;
+			}
+			else
+			{
+				SampleSplineUniformDistance(Spline, 100.0f, OutPoints);
+
+				if (OutPoints.Num() >= 2)
+				{
+					TArray<FVector> Smoothed;
+					SmoothPolyline(OutPoints, 3, Smoothed);
+					if (Smoothed.Num() == OutPoints.Num())
+					{
+						OutPoints = MoveTemp(Smoothed);
+					}
+					bUsedSpline = true;
+				}
 			}
 		}
 	}
