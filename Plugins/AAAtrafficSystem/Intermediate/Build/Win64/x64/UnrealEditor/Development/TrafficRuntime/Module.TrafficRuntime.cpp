@@ -43,5 +43,4 @@
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficRuntime/Private/TrafficVehicleBase.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficRuntime/Private/TrafficVehicleManager.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficRuntime/Private/TrafficVehicleProfile.cpp"
-#include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficRuntime/Private/TrafficVehicleSettings.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficRuntime/Private/TrafficVisualSettings.cpp"

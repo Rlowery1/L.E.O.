@@ -17,6 +17,8 @@
 #include "TrafficVehicleSettings.h"
 #include "TrafficVehicleProfile.h"
 #include "TrafficVehicleManager.h"
+#include "Misc/ConfigCacheIni.h"
+#include "Misc/Paths.h"
 
 #if WITH_EDITOR
 
@@ -297,13 +299,44 @@ bool FTrafficBaselineCurveRuntimeTest::RunTest(const FString& Parameters)
 	UTrafficAutomationLogger::BeginTestLog(BaselineCurveTestName);
 	UTrafficAutomationLogger::LogLine(FString::Printf(TEXT("[AAA Traffic] Version=%s"), TEXT(AAA_TRAFFIC_PLUGIN_VERSION)));
 
-	const UTrafficVehicleSettings* VehicleSettings = UTrafficVehicleSettings::Get();
-	const UTrafficVehicleProfile* DefaultProfile = VehicleSettings ? Cast<UTrafficVehicleProfile>(VehicleSettings->DefaultVehicleProfile.TryLoad()) : nullptr;
+	if (GConfig)
+	{
+		GConfig->LoadGlobalIniFile(GGameIni, TEXT("Game"), nullptr, true);
+		GConfig->LoadGlobalIniFile(GEngineIni, TEXT("Engine"), nullptr, true);
+	}
+
+	if (UTrafficVehicleSettings* MutableSettings = GetMutableDefault<UTrafficVehicleSettings>())
+	{
+		MutableSettings->LoadConfig();
+		MutableSettings->ReloadConfig();
+		const FString ProjectConfig = FPaths::Combine(FPaths::ProjectConfigDir(), TEXT("DefaultGame.ini"));
+		if (GConfig && !ProjectConfig.IsEmpty())
+		{
+			GConfig->LoadFile(ProjectConfig);
+			MutableSettings->LoadConfig(UTrafficVehicleSettings::StaticClass(), *ProjectConfig);
+		}
+	}
+
+	const UTrafficVehicleSettings* VehicleSettings = GetDefault<UTrafficVehicleSettings>();
+	FSoftObjectPath ProfilePath;
+	if (GConfig)
+	{
+		FString PathString;
+		if (GConfig->GetString(TEXT("/Script/TrafficRuntime.TrafficVehicleSettings"), TEXT("DefaultVehicleProfile"), PathString, GGameIni))
+		{
+			ProfilePath.SetPath(PathString);
+		}
+	}
+	if (ProfilePath.IsNull() && VehicleSettings)
+	{
+		ProfilePath = VehicleSettings->DefaultVehicleProfile;
+	}
+
+	const UTrafficVehicleProfile* DefaultProfile = VehicleSettings ? Cast<UTrafficVehicleProfile>(ProfilePath.TryLoad()) : nullptr;
 	if (!DefaultProfile || !DefaultProfile->VehicleClass.IsValid())
 	{
-		AddError(TEXT("DefaultVehicleProfile is not set or VehicleClass is invalid. "
-			"BaselineCurveChaos requires a valid Chaos vehicle. "
-			"Install City Sample Cars and set DefaultVehicleProfile in Project Settings -> AAA Traffic Vehicle Settings."));
+		AddError(TEXT("BaselineCurveChaos: DefaultVehicleProfile is not set or VehicleClass is invalid. "
+			"Install a Chaos vehicle (e.g., City Sample Cars) and set DefaultVehicleProfile in Project Settings -> AAA Traffic Vehicle Settings."));
 		UTrafficAutomationLogger::LogLine(TEXT("[TrafficBaselineCurve] DefaultVehicleProfile invalid or missing VehicleClass."));
 		UTrafficAutomationLogger::EndTestLog();
 		return false;

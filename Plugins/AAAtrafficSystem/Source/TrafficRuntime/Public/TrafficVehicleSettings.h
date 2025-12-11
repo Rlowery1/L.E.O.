@@ -34,6 +34,9 @@ public:
 
 	static const UTrafficVehicleSettings* Get();
 
+	/** Resolve the configured default vehicle profile (may load the asset). */
+	const class UTrafficVehicleProfile* GetDefaultVehicleProfile() const;
+
 	virtual FName GetCategoryName() const override { return FName(TEXT("Plugins")); }
 	virtual FName GetSectionName() const override { return FName(TEXT("AAA Traffic Vehicle Settings")); }
 

@@ -4,6 +4,7 @@
 		"Module.TrafficTests.cpp.obj": [
 			"PerModuleInline.gen.cpp.obj",
 			"TrafficCalibrationSafetyTest.cpp.obj",
+			"TrafficCityBLDProviderTest.cpp.obj",
 			"TrafficFamilyAssignmentTest.cpp.obj",
 			"TrafficLaneCalibrationTest.cpp.obj",
 			"TrafficLaneFollowingKinematicTest.cpp.obj",
@@ -18,8 +19,7 @@
 			"TrafficTurnKinematicsKinematicTest.cpp.obj",
 			"TrafficTurnKinematicsTest.cpp.obj",
 			"TrafficBaselineCurveRuntimeTest.cpp.obj",
-			"TrafficBaselineRuntimeTest.cpp.obj",
-			"TrafficCityBLDProviderTest.cpp.obj"
+			"TrafficBaselineRuntimeTest.cpp.obj"
 		]
 	}
 }

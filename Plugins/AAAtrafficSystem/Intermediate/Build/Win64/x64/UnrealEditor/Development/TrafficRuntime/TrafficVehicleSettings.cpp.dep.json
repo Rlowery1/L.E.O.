@@ -7,7 +7,9 @@
         "Includes": [
             "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\x64\\unrealeditor\\development\\trafficruntime\\definitions.trafficruntime.h",
             "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\public\\trafficvehiclesettings.h",
-            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficruntime\\uht\\trafficvehiclesettings.generated.h"
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficruntime\\uht\\trafficvehiclesettings.generated.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\source\\trafficruntime\\public\\trafficvehicleprofile.h",
+            "c:\\users\\rllax\\l_e_o\\plugins\\aaatrafficsystem\\intermediate\\build\\win64\\unrealeditor\\inc\\trafficruntime\\uht\\trafficvehicleprofile.generated.h"
         ],
         "ImportedModules": [],
         "ImportedHeaderUnits": []
