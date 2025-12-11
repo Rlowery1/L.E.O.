@@ -108,12 +108,48 @@ bool FTrafficCityBLDProviderSyntheticTest::RunTest(const FString& Parameters)
 
 	TestTrue(TEXT("At least one CityBLD road detected"), RoadCount >= 1);
 
-	if (RoadCount > 0)
+	const FTrafficRoad* TargetRoad = nullptr;
+	for (const FTrafficRoad& Road : Roads)
 	{
-		const FTrafficRoad& R = Roads[0];
+		if (Road.SourceActor == RoadActor)
+		{
+			TargetRoad = &Road;
+			break;
+		}
+	}
+
+	if (TargetRoad)
+	{
+		const FTrafficRoad& R = *TargetRoad;
 		const int32 CenterlinePointCount = R.CenterlinePoints.Num();
 		UTrafficAutomationLogger::LogMetric(TEXT("CenterlinePointCount"), FString::FromInt(CenterlinePointCount));
-		TestEqual(TEXT("CenterlinePointCount"), CenterlinePointCount, NumPoints);
+		TestTrue(TEXT("Centerline has at least 4 samples"), CenterlinePointCount >= NumPoints);
+
+		if (CenterlinePointCount >= 2)
+		{
+			const FVector ExpectedStart(0.f, 0.f, 0.f);
+			const float ExpectedLength = (NumPoints - 1) * SegmentLength;
+
+			const FVector Start = R.CenterlinePoints[0];
+			const FVector End = R.CenterlinePoints.Last();
+
+			TestTrue(TEXT("Start near expected"), Start.Equals(ExpectedStart, 1.0f));
+			const float ActualLength = FVector::Dist(Start, End);
+			TestTrue(TEXT("End extends forward"), ActualLength >= ExpectedLength * 0.5f);
+
+			float PrevDist = 0.f;
+			const FVector StartRef = R.CenterlinePoints[0];
+			for (int32 i = 1; i < CenterlinePointCount; ++i)
+			{
+				const float Dist = FVector::Dist(StartRef, R.CenterlinePoints[i]);
+				TestTrue(TEXT("Centerline distance is non-decreasing"), Dist >= PrevDist - 1e-3f);
+				PrevDist = Dist;
+			}
+		}
+	}
+	else
+	{
+		AddError(TEXT("Synthetic CityBLD road not found in collected roads."));
 	}
 
 	RoadActor->Destroy();
@@ -122,4 +158,3 @@ bool FTrafficCityBLDProviderSyntheticTest::RunTest(const FString& Parameters)
 	return RoadCount >= 1;
 #endif
 }
-

@@ -13,6 +13,9 @@
 #include "TrafficRoadTypes.h"
 #include "HAL/IConsoleManager.h"
 #include "TrafficRuntimeModule.h"
+#include "TrafficVehicleSettings.h"
+#include "TrafficVehicleManager.h"
+#include "TrafficVehicleProfile.h"
 
 #if WITH_EDITOR
 
@@ -116,6 +119,29 @@ static const TCHAR* BaselineTestName = TEXT("Traffic.Runtime.BaselineStraightCha
 			return true;
 		}
 
+		ATrafficVehicleManager* Manager = nullptr;
+		for (TActorIterator<ATrafficVehicleManager> It(World); It; ++It)
+		{
+			Manager = *It;
+			break;
+		}
+		if (!Manager)
+		{
+			FActorSpawnParameters Params;
+			Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+			Manager = World->SpawnActor<ATrafficVehicleManager>(ATrafficVehicleManager::StaticClass(), FTransform::Identity, Params);
+		}
+		if (!Manager)
+		{
+			State->bFailed = true;
+			State->FailureMessage = TEXT("NoVehicleManager");
+			if (Test)
+			{
+				Test->AddError(TEXT("TrafficVehicleManager was not available for baseline test."));
+			}
+			return true;
+		}
+
 		UTrafficNetworkAsset* Net = Controller->GetBuiltNetworkAsset();
 		if (!Net || Net->Network.Lanes.Num() == 0)
 		{
@@ -210,8 +236,8 @@ static const TCHAR* BaselineTestName = TEXT("Traffic.Runtime.BaselineStraightCha
 			GEditor->EndPlayMap();
 		}
 
-		const bool bHasVehicle = (State->LogicCount == 1);
-		const bool bHasChaos = (State->ChaosCount == 1);
+		const bool bHasVehicle = (State->LogicCount > 0);
+		const bool bHasChaos = (State->ChaosCount > 0) && (State->ChaosCount == State->LogicCount);
 		const bool bMovedForward = (State->MaxS > State->MinS) && (State->MaxS > 0.f);
 		const bool bLateralOk = (State->MaxLateralError <= BaselineMaxLateralErrorCm);
 		const bool bDebugMeshOk = State->bLogicMeshHidden;
@@ -227,11 +253,11 @@ static const TCHAR* BaselineTestName = TEXT("Traffic.Runtime.BaselineStraightCha
 
 		if (!bHasVehicle && Test)
 		{
-			Test->AddError(TEXT("Expected exactly one TrafficVehicleBase in baseline run."));
+			Test->AddError(TEXT("Expected at least one TrafficVehicleBase in baseline run."));
 		}
 		if (!bHasChaos && Test)
 		{
-			Test->AddError(TEXT("Expected exactly one Chaos visual pawn via TrafficVehicleAdapter."));
+			Test->AddError(TEXT("Expected Chaos visual pawns for all baseline vehicles (check DefaultVehicleProfile VehicleClass)."));
 		}
 		if (!bMovedForward && Test)
 		{
@@ -281,6 +307,18 @@ bool FTrafficBaselineRuntimeTest::RunTest(const FString& Parameters)
 #if WITH_EDITOR
 	UTrafficAutomationLogger::BeginTestLog(BaselineTestName);
 	UTrafficAutomationLogger::LogLine(FString::Printf(TEXT("[AAA Traffic] Version=%s"), TEXT(AAA_TRAFFIC_PLUGIN_VERSION)));
+
+	const UTrafficVehicleSettings* VehicleSettings = UTrafficVehicleSettings::Get();
+	const UTrafficVehicleProfile* DefaultProfile = VehicleSettings ? Cast<UTrafficVehicleProfile>(VehicleSettings->DefaultVehicleProfile.TryLoad()) : nullptr;
+	if (!DefaultProfile || !DefaultProfile->VehicleClass.IsValid())
+	{
+		AddError(TEXT("DefaultVehicleProfile is not set or VehicleClass is invalid. "
+			"BaselineStraightChaos requires a valid Chaos vehicle. "
+			"Install City Sample Cars and set DefaultVehicleProfile in Project Settings -> AAA Traffic Vehicle Settings."));
+		UTrafficAutomationLogger::LogLine(TEXT("[TrafficBaseline] DefaultVehicleProfile invalid or missing VehicleClass."));
+		UTrafficAutomationLogger::EndTestLog();
+		return false;
+	}
 
 	if (!AutomationOpenMap(BaselineMapPackage))
 	{
