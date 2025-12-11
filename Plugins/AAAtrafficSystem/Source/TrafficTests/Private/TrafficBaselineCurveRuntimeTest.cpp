@@ -342,14 +342,16 @@ bool FTrafficBaselineCurveRuntimeTest::RunTest(const FString& Parameters)
 			TEXT("[BaselineCurveChaos] DefaultVehicleProfile invalid from settings. Attempting to load dev profile asset at %s"),
 			DevProfilePath);
 
-		TSoftObjectPtr<UTrafficVehicleProfile> DevProfileSoft(DevProfilePath);
-		UTrafficVehicleProfile* DevProfile = DevProfileSoft.LoadSynchronous();
+		FSoftObjectPath Path(DevProfilePath);
+		UObject* LoadedObj = Path.TryLoad();
+		UTrafficVehicleProfile* DevProfile = Cast<UTrafficVehicleProfile>(LoadedObj);
 		if (DevProfile && DevProfile->VehicleClass.IsValid())
 		{
 			DefaultProfile = DevProfile;
 			UE_LOG(LogTraffic, Warning,
-				TEXT("[BaselineCurveChaos] Using dev profile asset %s"),
-				*DevProfileSoft.ToString());
+				TEXT("[BaselineCurveChaos] Using dev profile asset %s with VehicleClass %s"),
+				DevProfilePath,
+				*DevProfile->VehicleClass.ToString());
 		}
 	}
 
