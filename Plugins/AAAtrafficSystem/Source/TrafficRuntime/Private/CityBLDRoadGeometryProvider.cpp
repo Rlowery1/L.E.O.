@@ -375,38 +375,52 @@ bool UCityBLDRoadGeometryProvider::IsRoadActor(
 		return false;
 	}
 
+	const bool bHasSpline = Actor->FindComponentByClass<USplineComponent>() != nullptr;
+	bool bIsRoad = false;
+
 	// Metadata is authoritative when present.
 	if (UTrafficRoadMetadataComponent* Meta = Actor->FindComponentByClass<UTrafficRoadMetadataComponent>())
 	{
 		if (!Meta->bIncludeInTraffic)
 		{
-			return false;
+			bIsRoad = false;
 		}
-		return true;
+		else
+		{
+			bIsRoad = true;
+		}
 	}
-
-	if (!Settings->RoadActorTag.IsNone())
+	else if (!Settings->RoadActorTag.IsNone())
 	{
 		if (Actor->ActorHasTag(Settings->RoadActorTag))
 		{
-			return true;
+			bIsRoad = true;
 		}
 	}
-
-	if (Settings->RoadClassNameContains.Num() > 0)
+	else if (Settings->RoadClassNameContains.Num() > 0)
 	{
 		const FString ClassPath = Actor->GetClass()->GetPathName();
 		for (const FString& Substring : Settings->RoadClassNameContains)
 		{
 			if (!Substring.IsEmpty() && ClassPath.Contains(Substring))
 			{
-				return true;
+				bIsRoad = true;
+				break;
 			}
 		}
-		return false;
+	}
+	else
+	{
+		bIsRoad = bHasSpline;
 	}
 
-	return Actor->FindComponentByClass<USplineComponent>() != nullptr;
+	UE_LOG(LogTraffic, Log,
+		TEXT("[UCityBLDRoadGeometryProvider] IsRoadActor? Actor=%s HasSpline=%s Result=%s"),
+		*Actor->GetName(),
+		bHasSpline ? TEXT("Yes") : TEXT("No"),
+		bIsRoad ? TEXT("Yes") : TEXT("No"));
+
+	return bIsRoad;
 }
 
 USplineComponent* UCityBLDRoadGeometryProvider::FindRoadSpline(
@@ -492,7 +506,37 @@ bool UCityBLDRoadGeometryProvider::GetDisplayCenterlineForActor(AActor* RoadActo
 		return false;
 	}
 
-	return BuildMeshDrivenCenterline(RoadActor, OutPoints);
+	const bool bUsedMesh = BuildMeshDrivenCenterline(RoadActor, OutPoints);
+	bool bUsedSpline = false;
+
+	if (!bUsedMesh)
+	{
+		if (USplineComponent* Spline = FindRoadSpline(RoadActor, Settings))
+		{
+			SampleSplineUniformDistance(Spline, 100.0f, OutPoints);
+
+			if (OutPoints.Num() >= 2)
+			{
+				TArray<FVector> Smoothed;
+				SmoothPolyline(OutPoints, 3, Smoothed);
+				if (Smoothed.Num() == OutPoints.Num())
+				{
+					OutPoints = MoveTemp(Smoothed);
+				}
+				bUsedSpline = true;
+			}
+		}
+	}
+
+	const bool bSuccess = bUsedMesh || bUsedSpline;
+
+	UE_LOG(LogTraffic, Log,
+		TEXT("[UCityBLDRoadGeometryProvider] DisplayCenterline: Actor=%s Path=%s NumPoints=%d"),
+		RoadActor ? *RoadActor->GetName() : TEXT("None"),
+		bUsedMesh ? TEXT("mesh") : (bUsedSpline ? TEXT("spline") : TEXT("none")),
+		OutPoints.Num());
+
+	return bSuccess;
 }
 
 void UCityBLDRoadGeometryProvider::CollectRoads(UWorld* World, TArray<FTrafficRoad>& OutRoads)
@@ -542,10 +586,10 @@ void UCityBLDRoadGeometryProvider::CollectRoads(UWorld* World, TArray<FTrafficRo
 			? FMath::Clamp(ResolveFamilyIdForActor(Actor), 0, FamilyCount - 1)
 			: 0;
 
-		if (!BuildMeshDrivenCenterline(Actor, Road.CenterlinePoints))
+		if (!GetDisplayCenterlineForActor(Actor, Road.CenterlinePoints))
 		{
 			UE_LOG(LogTraffic, Warning,
-				TEXT("[UCityBLDRoadGeometryProvider] Actor %s: failed to build mesh-driven centerline."),
+				TEXT("[UCityBLDRoadGeometryProvider] Actor %s: failed to build centerline (mesh or spline)."),
 				*Actor->GetName());
 			continue;
 		}
