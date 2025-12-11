@@ -348,7 +348,7 @@ bool FTrafficBaselineRuntimeTest::RunTest(const FString& Parameters)
 	const UTrafficVehicleProfile* DefaultProfile = VehicleSettings ? Cast<UTrafficVehicleProfile>(ProfilePath.TryLoad()) : nullptr;
 	if (!DefaultProfile || !DefaultProfile->VehicleClass.IsValid())
 	{
-		static const TCHAR* DevProfilePath = TEXT("/Game/Traffic/Profiles/DA_VehicleProfile_CitySampleSedan.DA_VehicleProfile_CitySampleSedan");
+		static const TCHAR* DevProfilePath = TEXT("/Script/TrafficRuntime.TrafficVehicleProfile'/Game/Traffic/Profiles/DA_VehicleProfile_CitySampleSedan.DA_VehicleProfile_CitySampleSedan'");
 		UE_LOG(LogTraffic, Warning,
 			TEXT("[BaselineStraightChaos] DefaultVehicleProfile invalid from settings. Attempting to load dev profile asset at %s"),
 			DevProfilePath);
