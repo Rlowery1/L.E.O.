@@ -40,7 +40,7 @@ namespace
 		bool bMonotonicS = true;
 	};
 
-	static bool FindBestLaneProjection(
+	static bool FindBestLaneProjection_Curve(
 		const TArray<FTrafficLane>& Lanes,
 		const FVector& Location,
 		const FVector& Forward,
@@ -147,7 +147,7 @@ namespace
 				++State->LogicCount;
 
 				FLaneProjectionResult Proj;
-				if (FindBestLaneProjection(Lanes, Vehicle->GetActorLocation(), Vehicle->GetActorForwardVector(), Proj))
+				if (FindBestLaneProjection_Curve(Lanes, Vehicle->GetActorLocation(), Vehicle->GetActorForwardVector(), Proj))
 				{
 					State->MaxLateralError = FMath::Max(State->MaxLateralError, FMath::Abs(Proj.LateralOffsetCm));
 					State->MinS = FMath::Min(State->MinS, Proj.S);

@@ -18,7 +18,7 @@
 #include "GameFramework/PlayerStart.h"
 #include "CollisionQueryParams.h"
 #include "UObject/SoftObjectPath.h"
-#include "Templates/ScopeExit.h"
+#include "Misc/ScopeExit.h"
 #include "FileHelpers.h"
 #include "HAL/FileManager.h"
 #include "Misc/MessageDialog.h"
