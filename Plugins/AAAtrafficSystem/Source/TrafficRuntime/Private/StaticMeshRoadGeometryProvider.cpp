@@ -332,6 +332,7 @@ void UStaticMeshRoadGeometryProvider::ExtractCentreline(const TArray<FVector>& V
 		return;
 	}
 
+	// Compute PCA as before to obtain the principal axis direction.
 	FVector Mean = FVector::ZeroVector;
 	for (const FVector& V : Vertices)
 	{
@@ -360,6 +361,7 @@ void UStaticMeshRoadGeometryProvider::ExtractCentreline(const TArray<FVector>& V
 	const double Angle = 0.5 * FMath::Atan2(2.0 * CovXY, CovXX - CovYY);
 	const FVector2D Dir(static_cast<float>(FMath::Cos(Angle)), static_cast<float>(FMath::Sin(Angle)));
 
+	// Project all vertices onto the principal axis and sort indices.
 	TArray<float> Projections;
 	Projections.Reserve(NumVerts);
 	for (const FVector& V : Vertices)
@@ -374,19 +376,25 @@ void UStaticMeshRoadGeometryProvider::ExtractCentreline(const TArray<FVector>& V
 	{
 		Indices.Add(i);
 	}
+	Indices.Sort([&](int32 A, int32 B) { return Projections[A] < Projections[B]; });
 
-	Indices.Sort([&](int32 A, int32 B)
+	// Divide the sorted vertices into equal-sized sections and average each section.
+	const int32 NumSections = 20;
+	const int32 SectionSize = FMath::Max(1, NumVerts / NumSections);
+	for (int32 SectionStart = 0; SectionStart < Indices.Num(); SectionStart += SectionSize)
 	{
-		return Projections[A] < Projections[B];
-	});
-
-	const int32 SampleStep = FMath::Clamp(NumVerts / 20, 1, 50);
-	for (int32 i = 0; i < Indices.Num(); i += SampleStep)
-	{
-		OutPoints.Add(Vertices[Indices[i]]);
+		const int32 SectionEnd = FMath::Min(SectionStart + SectionSize, Indices.Num());
+		FVector Sum(0.f, 0.f, 0.f);
+		const int32 SectionCount = SectionEnd - SectionStart;
+		for (int32 i = SectionStart; i < SectionEnd; ++i)
+		{
+			Sum += Vertices[Indices[i]];
+		}
+		OutPoints.Add(Sum / static_cast<float>(SectionCount));
 	}
 
-	if (Indices.Num() > 0 && (OutPoints.Num() == 0 || !OutPoints.Last().Equals(Vertices[Indices.Last()])))
+	// Ensure the last point is included exactly.
+	if (Indices.Num() > 0)
 	{
 		OutPoints.Add(Vertices[Indices.Last()]);
 	}
