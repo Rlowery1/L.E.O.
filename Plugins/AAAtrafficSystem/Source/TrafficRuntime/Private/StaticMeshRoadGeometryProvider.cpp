@@ -202,6 +202,15 @@ bool UStaticMeshRoadGeometryProvider::IsComponentDrivable(const UStaticMeshCompo
 		return true;
 	}
 
+	// Early CityBLD detection: treat baked CityBLD roads as drivable before other filters.
+	if (const UStaticMesh* CompMesh = Comp->GetStaticMesh())
+	{
+		if (IsGeneratedCityBLDRoad(CompMesh))
+		{
+			return true;
+		}
+	}
+
 	if (const AActor* Owner = Comp->GetOwner())
 	{
 		if (Owner->GetComponentByClass(UTrafficDrivableSurfaceComponent::StaticClass()))
