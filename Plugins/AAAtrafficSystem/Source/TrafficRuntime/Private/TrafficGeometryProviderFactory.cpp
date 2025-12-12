@@ -61,16 +61,34 @@ void UTrafficGeometryProviderFactory::CreateProviderChainForEditorWorld(
 	OutProviders.Empty();
 	OutInterfaces.Empty();
 
-	const TSharedPtr<IPlugin> CityBLDPlugin = IPluginManager::Get().FindPlugin(TEXT("CityBLD"));
-	const bool bUseCityBLD = CityBLDPlugin.IsValid() && CityBLDPlugin->IsEnabled();
-
-	if (bUseCityBLD)
+	// Reuse the same logic as CreateProvider() for editor worlds
+	const bool bEnableAdapter = GetDefault<UTrafficRuntimeSettings>()->bEnableCityBLDAdapter;
+	bool bFoundCityBLDRoad = false;
+	if (bEnableAdapter)
 	{
+		for (TObjectIterator<UClass> It; It; ++It)
+		{
+			if (It->GetName().Contains(TEXT("BP_MeshRoad")))
+			{
+				bFoundCityBLDRoad = true;
+				break;
+			}
+		}
+	}
+	UE_LOG(LogTraffic, Warning,
+		TEXT("[FactoryEditor] bEnableCityBLDAdapter=%s, bFoundCityBLDRoad=%s"),
+		bEnableAdapter ? TEXT("true") : TEXT("false"),
+		bFoundCityBLDRoad ? TEXT("true") : TEXT("false"));
+	if (bEnableAdapter && bFoundCityBLDRoad)
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[FactoryEditor] Adding CityBLD provider to chain."));
 		UCityBLDRoadGeometryProvider* CityProvider = NewObject<UCityBLDRoadGeometryProvider>(GetTransientPackage());
 		OutInterfaces.Add(static_cast<ITrafficRoadGeometryProvider*>(CityProvider));
 		OutProviders.Add(CityProvider);
 	}
 
+	// Always add the default static mesh provider as a fallback
+	UE_LOG(LogTraffic, Warning, TEXT("[FactoryEditor] Adding StaticMeshRoadGeometryProvider to chain."));
 	UStaticMeshRoadGeometryProvider* MeshProvider = NewObject<UStaticMeshRoadGeometryProvider>(GetTransientPackage());
 	OutInterfaces.Add(static_cast<ITrafficRoadGeometryProvider*>(MeshProvider));
 	OutProviders.Add(MeshProvider);
