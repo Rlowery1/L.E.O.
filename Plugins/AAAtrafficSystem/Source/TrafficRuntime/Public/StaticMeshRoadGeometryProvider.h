@@ -2,6 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "TrafficGeometryProvider.h"
+#include "Components/SplineComponent.h"
+#include "Components/SplineMeshComponent.h"
 #include "StaticMeshRoadGeometryProvider.generated.h"
 
 class URoadKitProfile;

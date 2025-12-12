@@ -3,6 +3,8 @@
 #include "RoadKitProfile.h"
 #include "TrafficGeometryProvider.h"
 #include "TrafficDrivableSurfaceComponent.h"
+#include "Components/SplineComponent.h"
+#include "Components/SplineMeshComponent.h"
 #include "TrafficRuntimeModule.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Components/StaticMeshComponent.h"
@@ -188,6 +190,13 @@ bool UStaticMeshRoadGeometryProvider::IsComponentDrivable(const UStaticMeshCompo
 		return false;
 	}
 
+	// Treat spline mesh components as drivable so their underlying static mesh can be sampled.
+	if (const USplineMeshComponent* SplineMesh = Cast<USplineMeshComponent>(Comp))
+	{
+		// Optional: apply lateral/height filters here if needed.
+		return true;
+	}
+
 	if (const AActor* Owner = Comp->GetOwner())
 	{
 		if (Owner->GetComponentByClass(UTrafficDrivableSurfaceComponent::StaticClass()))
@@ -292,6 +301,20 @@ bool UStaticMeshRoadGeometryProvider::BuildCenterlineFromActor(const AActor* Act
 
 	if (CollectedVerts.Num() < 2)
 	{
+		// Fallback: sample the actor's spline component if present
+		const USplineComponent* SplineComp = Actor ? Actor->FindComponentByClass<USplineComponent>() : nullptr;
+		if (SplineComp)
+		{
+			const float Length = SplineComp->GetSplineLength();
+			const int32 SampleCount = FMath::Clamp(static_cast<int32>(Length / 200.f), 10, 1000);
+			OutPoints.Reserve(SampleCount + 1);
+			for (int32 i = 0; i <= SampleCount; ++i)
+			{
+				const float Distance = Length * static_cast<float>(i) / static_cast<float>(SampleCount);
+				OutPoints.Add(SplineComp->GetLocationAtDistanceAlongSpline(Distance, ESplineCoordinateSpace::World));
+			}
+			return OutPoints.Num() >= 2;
+		}
 		return false;
 	}
 
