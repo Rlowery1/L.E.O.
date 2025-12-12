@@ -332,70 +332,102 @@ void UStaticMeshRoadGeometryProvider::ExtractCentreline(const TArray<FVector>& V
 		return;
 	}
 
-	// Compute PCA as before to obtain the principal axis direction.
-	FVector Mean = FVector::ZeroVector;
+	// Compute initial global mean and projections to sort vertices along approximate length.
+	FVector GlobalMean = FVector::ZeroVector;
 	for (const FVector& V : Vertices)
 	{
-		Mean += V;
+		GlobalMean += V;
 	}
-	Mean /= static_cast<float>(NumVerts);
+	GlobalMean /= static_cast<float>(NumVerts);
 
-	double CovXX = 0.0;
-	double CovXY = 0.0;
-	double CovYY = 0.0;
-
+	// Estimate a rough global axis via PCA for sorting.
+	double CovXX = 0.0, CovXY = 0.0, CovYY = 0.0;
 	for (const FVector& V : Vertices)
 	{
-		const double DX = static_cast<double>(V.X - Mean.X);
-		const double DY = static_cast<double>(V.Y - Mean.Y);
+		const double DX = static_cast<double>(V.X - GlobalMean.X);
+		const double DY = static_cast<double>(V.Y - GlobalMean.Y);
 		CovXX += DX * DX;
 		CovXY += DX * DY;
 		CovYY += DY * DY;
 	}
-
 	const double InvN = 1.0 / FMath::Max(1, NumVerts);
 	CovXX *= InvN;
 	CovXY *= InvN;
 	CovYY *= InvN;
-
 	const double Angle = 0.5 * FMath::Atan2(2.0 * CovXY, CovXX - CovYY);
-	const FVector2D Dir(static_cast<float>(FMath::Cos(Angle)), static_cast<float>(FMath::Sin(Angle)));
+	const FVector2D GlobalDir(static_cast<float>(FMath::Cos(Angle)), static_cast<float>(FMath::Sin(Angle)));
 
-	// Project all vertices onto the principal axis and sort indices.
+	// Project vertices onto the rough axis and sort.
 	TArray<float> Projections;
-	Projections.Reserve(NumVerts);
-	for (const FVector& V : Vertices)
-	{
-		const FVector2D Delta(V.X - Mean.X, V.Y - Mean.Y);
-		Projections.Add(FVector2D::DotProduct(Delta, Dir));
-	}
-
-	TArray<int32> Indices;
-	Indices.Reserve(NumVerts);
+	Projections.SetNumUninitialized(NumVerts);
 	for (int32 i = 0; i < NumVerts; ++i)
 	{
-		Indices.Add(i);
+		const FVector& V = Vertices[i];
+		const FVector2D Delta(V.X - GlobalMean.X, V.Y - GlobalMean.Y);
+		Projections[i] = FVector2D::DotProduct(Delta, GlobalDir);
 	}
-	Indices.Sort([&](int32 A, int32 B) { return Projections[A] < Projections[B]; });
-
-	// Divide the sorted vertices into equal-sized sections and average each section.
-	const int32 NumSections = 20;
-	const int32 SectionSize = FMath::Max(1, NumVerts / NumSections);
-	for (int32 SectionStart = 0; SectionStart < Indices.Num(); SectionStart += SectionSize)
+	TArray<int32> SortedIndices;
+	SortedIndices.SetNumUninitialized(NumVerts);
+	for (int32 i = 0; i < NumVerts; ++i)
 	{
-		const int32 SectionEnd = FMath::Min(SectionStart + SectionSize, Indices.Num());
-		FVector Sum(0.f, 0.f, 0.f);
-		const int32 SectionCount = SectionEnd - SectionStart;
+		SortedIndices[i] = i;
+	}
+	SortedIndices.Sort([&](int32 A, int32 B) { return Projections[A] < Projections[B]; });
+
+	// Define the number of sections (use more sections for longer roads).
+	const int32 NumSections = 30;
+	const int32 SectionSize = FMath::Max(1, NumVerts / NumSections);
+
+	const FVector UpVector(0.f, 0.f, 1.f);
+	for (int32 SectionStart = 0; SectionStart < SortedIndices.Num(); SectionStart += SectionSize)
+	{
+		const int32 SectionEnd = FMath::Min(SectionStart + SectionSize, SortedIndices.Num());
+		if (SectionEnd - SectionStart < 2)
+		{
+			continue;
+		}
+
+		// Compute local mean of this section.
+		FVector LocalMean(0.f, 0.f, 0.f);
 		for (int32 i = SectionStart; i < SectionEnd; ++i)
 		{
-			Sum += Vertices[Indices[i]];
+			LocalMean += Vertices[SortedIndices[i]];
 		}
-		OutPoints.Add(Sum / static_cast<float>(SectionCount));
+		LocalMean /= static_cast<float>(SectionEnd - SectionStart);
+
+		// Estimate local forward direction using endpoints of this section.
+		const FVector& StartV = Vertices[SortedIndices[SectionStart]];
+		const FVector& EndV = Vertices[SortedIndices[SectionEnd - 1]];
+		FVector LocalForward = (EndV - StartV);
+		LocalForward.Z = 0.f;
+		if (!LocalForward.Normalize())
+		{
+			LocalForward = FVector(GlobalDir.X, GlobalDir.Y, 0.f);
+		}
+
+		// Compute local right vector (perpendicular in XY plane).
+		FVector LocalRight = FVector::CrossProduct(LocalForward, UpVector);
+		LocalRight.Normalize();
+
+		// Find extreme distances along LocalRight.
+		float MinDist = FLT_MAX;
+		float MaxDist = -FLT_MAX;
+		for (int32 i = SectionStart; i < SectionEnd; ++i)
+		{
+			const FVector& V = Vertices[SortedIndices[i]];
+			const float Dist = FVector::DotProduct(V - LocalMean, LocalRight);
+			MinDist = FMath::Min(MinDist, Dist);
+			MaxDist = FMath::Max(MaxDist, Dist);
+		}
+		// Midpoint between extremes projected back to world space.
+		const float MidDist = 0.5f * (MinDist + MaxDist);
+		const FVector CenterPoint = LocalMean + LocalRight * MidDist;
+		OutPoints.Add(CenterPoint);
 	}
 
-	// Ensure the last point is included exactly.
-	if (Indices.Num() > 0)
+	// Ensure the last sorted vertex contributes a final point.
+	if (SortedIndices.Num() > 0)
 	{
-		OutPoints.Add(Vertices[Indices.Last()]);
+		OutPoints.Add(Vertices[SortedIndices.Last()]);
 	}
 }
