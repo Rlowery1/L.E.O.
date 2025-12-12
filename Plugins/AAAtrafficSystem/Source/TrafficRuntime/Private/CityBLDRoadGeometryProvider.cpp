@@ -1,9 +1,10 @@
 #include "CityBLDRoadGeometryProvider.h"
 
 #include "Components/SplineComponent.h"
+#include "Components/DynamicMeshComponent.h"
+#include "VectorTypes.h"
 #include "DynamicMesh/DynamicMesh3.h"
 #include "DynamicMesh/DynamicMeshAttributeSet.h"
-#include "DynamicMeshComponent.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "TrafficRuntimeModule.h"
@@ -157,14 +158,19 @@ bool UCityBLDRoadGeometryProvider::BuildCenterlineFromCityBLDRoad(const AActor* 
 		}
 
 		const FTransform Xform = Comp->GetComponentTransform();
-		const FDynamicMesh3* Mesh = Comp->GetDynamicMesh();
+		const UDynamicMesh* DynMesh = Comp->GetDynamicMesh();
+		const UE::Geometry::FDynamicMesh3* Mesh = DynMesh ? DynMesh->GetMeshPtr() : nullptr;
+		if (!Mesh)
+		{
+			continue;
+		}
+
 		const int32 VertexCount = Mesh->VertexCount();
 		for (int32 Vid = 0; Vid < VertexCount; ++Vid)
 		{
 			if (Mesh->IsVertex(Vid))
 			{
-				FVector3d PosD;
-				Mesh->GetVertex(Vid, PosD);
+				const FVector3d PosD = Mesh->GetVertex(Vid);
 				CollectedVerts.Add(Xform.TransformPosition(static_cast<FVector>(PosD)));
 			}
 		}
