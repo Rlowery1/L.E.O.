@@ -17,9 +17,6 @@
 #include "TrafficVehicleManager.h"
 #include "TrafficVehicleProfile.h"
 #include "GameFramework/Pawn.h"
-#include "Components/SplineComponent.h"
-#include "TrafficRoadMetadataComponent.h"
-#include "TrafficCityBLDAdapterSettings.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/Paths.h"
 #include "Engine/AssetManager.h"
@@ -49,7 +46,6 @@ static const TCHAR* BaselineTestName = TEXT("Traffic.Runtime.BaselineStraightCha
 		int32 LogicCount = 0;
 		bool bLogicMeshHidden = true;
 		bool bMonotonicS = true;
-		bool bUsedFallbackRoad = false;
 	};
 
 	static bool FindBestLaneProjection(
@@ -152,66 +148,6 @@ static const TCHAR* BaselineTestName = TEXT("Traffic.Runtime.BaselineStraightCha
 		}
 
 		UTrafficNetworkAsset* Net = Controller->GetBuiltNetworkAsset();
-		if ((!Net || Net->Network.Lanes.Num() == 0) && GIsAutomationTesting)
-		{
-			auto SpawnAutomationRoad = [World]() -> AActor*
-			{
-				FActorSpawnParameters Params;
-				Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-				AActor* RoadActor = World->SpawnActor<AActor>(FVector::ZeroVector, FRotator::ZeroRotator, Params);
-				if (!RoadActor)
-				{
-					return nullptr;
-				}
-
-				USplineComponent* Spline = NewObject<USplineComponent>(RoadActor, TEXT("AutomationRoadSpline"));
-				if (!Spline)
-				{
-					RoadActor->Destroy();
-					return nullptr;
-				}
-
-				Spline->SetMobility(EComponentMobility::Static);
-				Spline->ClearSplinePoints(false);
-				Spline->AddSplinePoint(FVector(0.f, 0.f, 0.f), ESplineCoordinateSpace::World, false);
-				Spline->AddSplinePoint(FVector(3200.f, 0.f, 0.f), ESplineCoordinateSpace::World, false);
-				Spline->UpdateSpline();
-				Spline->SetClosedLoop(false);
-				Spline->SetUnselectedSplineSegmentColor(FLinearColor::Blue);
-				Spline->RegisterComponent();
-				RoadActor->SetRootComponent(Spline);
-
-				if (UTrafficRoadMetadataComponent* Meta = NewObject<UTrafficRoadMetadataComponent>(RoadActor, TEXT("TrafficMeta")))
-				{
-					Meta->bIncludeInTraffic = true;
-					Meta->RegisterComponent();
-				}
-
-				if (const UTrafficCityBLDAdapterSettings* Adapter = GetDefault<UTrafficCityBLDAdapterSettings>())
-				{
-					if (!Adapter->RoadActorTag.IsNone())
-					{
-						RoadActor->Tags.Add(Adapter->RoadActorTag);
-					}
-					if (!Adapter->RoadSplineTag.IsNone())
-					{
-						Spline->ComponentTags.Add(Adapter->RoadSplineTag);
-					}
-				}
-
-				return RoadActor;
-			};
-
-			if (AActor* FallbackRoad = SpawnAutomationRoad())
-			{
-				UE_LOG(LogTraffic, Warning, TEXT("[BaselineStraightChaos] Spawned automation fallback road actor: %s"), *FallbackRoad->GetName());
-				Controller->Runtime_BuildTrafficNetwork();
-				Controller->Runtime_SpawnTraffic();
-				Net = Controller->GetBuiltNetworkAsset();
-				State->bUsedFallbackRoad = true;
-			}
-		}
-
 		if (!Net || Net->Network.Lanes.Num() == 0)
 		{
 			State->bFailed = true;
@@ -307,9 +243,7 @@ static const TCHAR* BaselineTestName = TEXT("Traffic.Runtime.BaselineStraightCha
 
 		const bool bHasVehicle = (State->LogicCount > 0);
 		const bool bHasChaos = (State->ChaosCount > 0) && (State->ChaosCount == State->LogicCount);
-		const bool bMovedForward = State->bUsedFallbackRoad
-			? (State->MaxS > 0.f)
-			: ((State->MaxS > State->MinS) && (State->MaxS > 0.f));
+		const bool bMovedForward = (State->MaxS > State->MinS) && (State->MaxS > 0.f);
 		const bool bLateralOk = (State->MaxLateralError <= BaselineMaxLateralErrorCm);
 		const bool bDebugMeshOk = State->bLogicMeshHidden;
 		const bool bMonotonic = State->bMonotonicS;

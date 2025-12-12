@@ -22,9 +22,6 @@
 #include "Misc/Paths.h"
 #include "Engine/AssetManager.h"
 #include "UObject/SoftObjectPtr.h"
-#include "Components/SplineComponent.h"
-#include "TrafficRoadMetadataComponent.h"
-#include "TrafficCityBLDAdapterSettings.h"
 
 #if WITH_EDITOR
 
@@ -49,7 +46,6 @@ namespace
 		int32 LogicCount = 0;
 		bool bLogicMeshHidden = true;
 		bool bMonotonicS = true;
-		bool bUsedFallbackRoad = false;
 	};
 
 	static bool FindBestLaneProjection_Curve(
@@ -196,68 +192,6 @@ namespace
 		}
 
 		UTrafficNetworkAsset* Net = Controller->GetBuiltNetworkAsset();
-		if ((!Net || Net->Network.Lanes.Num() == 0) && GIsAutomationTesting)
-		{
-			auto SpawnAutomationCurve = [World]() -> AActor*
-			{
-				FActorSpawnParameters Params;
-				Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-				AActor* RoadActor = World->SpawnActor<AActor>(FVector::ZeroVector, FRotator::ZeroRotator, Params);
-				if (!RoadActor)
-				{
-					return nullptr;
-				}
-
-				USplineComponent* Spline = NewObject<USplineComponent>(RoadActor, TEXT("AutomationCurveSpline"));
-				if (!Spline)
-				{
-					RoadActor->Destroy();
-					return nullptr;
-				}
-
-				Spline->SetMobility(EComponentMobility::Static);
-				Spline->ClearSplinePoints(false);
-				Spline->AddSplinePoint(FVector(0.f, 0.f, 0.f), ESplineCoordinateSpace::World, false);
-				Spline->AddSplinePoint(FVector(1000.f, 600.f, 0.f), ESplineCoordinateSpace::World, false);
-				Spline->AddSplinePoint(FVector(2000.f, 1200.f, 0.f), ESplineCoordinateSpace::World, false);
-				Spline->AddSplinePoint(FVector(3000.f, 1800.f, 0.f), ESplineCoordinateSpace::World, false);
-				Spline->UpdateSpline();
-				Spline->SetClosedLoop(false);
-				Spline->SetUnselectedSplineSegmentColor(FLinearColor::Green);
-				Spline->RegisterComponent();
-				RoadActor->SetRootComponent(Spline);
-
-				if (UTrafficRoadMetadataComponent* Meta = NewObject<UTrafficRoadMetadataComponent>(RoadActor, TEXT("TrafficMeta")))
-				{
-					Meta->bIncludeInTraffic = true;
-					Meta->RegisterComponent();
-				}
-
-				if (const UTrafficCityBLDAdapterSettings* Adapter = GetDefault<UTrafficCityBLDAdapterSettings>())
-				{
-					if (!Adapter->RoadActorTag.IsNone())
-					{
-						RoadActor->Tags.Add(Adapter->RoadActorTag);
-					}
-					if (!Adapter->RoadSplineTag.IsNone())
-					{
-						Spline->ComponentTags.Add(Adapter->RoadSplineTag);
-					}
-				}
-
-				return RoadActor;
-			};
-
-			if (AActor* FallbackRoad = SpawnAutomationCurve())
-			{
-				UE_LOG(LogTraffic, Warning, TEXT("[TrafficBaselineCurveChaos] Spawned automation fallback curve road: %s"), *FallbackRoad->GetName());
-				Controller->Runtime_BuildTrafficNetwork();
-				Controller->Runtime_SpawnTraffic();
-				Net = Controller->GetBuiltNetworkAsset();
-				State->bUsedFallbackRoad = true;
-			}
-		}
-
 		if (!Net || Net->Network.Lanes.Num() == 0)
 		{
 			State->bFailed = true;
@@ -348,9 +282,7 @@ namespace
 
 		const bool bHasVehicle = (State->LogicCount > 0);
 		const bool bHasChaos = (State->ChaosCount > 0) && (State->ChaosCount == State->LogicCount);
-		const bool bMovedForward = State->bUsedFallbackRoad
-			? (State->MaxS > 0.f)
-			: ((State->MaxS > State->MinS) && (State->MaxS > 0.f));
+		const bool bMovedForward = (State->MaxS > State->MinS) && (State->MaxS > 0.f);
 		const bool bLateralOk = (State->MaxLateralError <= BaselineCurveMaxLateralErrorCm);
 		const bool bDebugMeshOk = State->bLogicMeshHidden;
 		const bool bMonotonic = State->bMonotonicS;
