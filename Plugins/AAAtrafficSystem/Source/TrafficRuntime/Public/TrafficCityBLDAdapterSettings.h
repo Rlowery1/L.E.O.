@@ -50,7 +50,5 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category="Filtering")
 	TArray<FString> ExcludedMeshNameKeywords;
 
-	/** Minimum bounding box aspect ratio (length/width) for a mesh to be considered part of the road. Set to 0 to disable. */
-	UPROPERTY(EditAnywhere, Config, Category="Filtering")
-	float MinMeshAspectRatio = 0.f;
+	// NOTE: MinMeshAspectRatio filter has been removed to avoid excluding valid road meshes.
 };
