@@ -18,8 +18,8 @@ public class TrafficRuntime : ModuleRules
 		{
 			"Projects",
 			"MeshDescription",
-			"StaticMeshDescription"
+			"StaticMeshDescription",
+			"AssetRegistry"
 		});
 	}
 }
-

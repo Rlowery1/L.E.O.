@@ -13,6 +13,6 @@ class TRAFFICRUNTIME_API UTrafficGeometryProviderFactory : public UObject
 
 public:
 	static TObjectPtr<UObject> CreateProvider(UWorld* World, ITrafficRoadGeometryProvider*& OutInterface);
-	// Creates an editor-provider chain (CityBLD first, then generic spline) and returns provider objects to keep them alive.
+	// Creates an editor-provider chain (static mesh provider by default) and returns provider objects to keep them alive.
 	static void CreateProviderChainForEditorWorld(UWorld* World, TArray<TObjectPtr<UObject>>& OutProviders, TArray<ITrafficRoadGeometryProvider*>& OutInterfaces);
 };
