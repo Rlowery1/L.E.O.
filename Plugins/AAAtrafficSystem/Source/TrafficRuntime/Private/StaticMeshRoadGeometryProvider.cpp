@@ -100,13 +100,8 @@ static void CollectVerticesFromDynamicMeshComponent(
 	const int32 VertexCount = Mesh->VertexCount();
 	OutVerts.Reserve(OutVerts.Num() + VertexCount);
 
-	for (int32 Vid = 0; Vid < VertexCount; ++Vid)
+	for (int32 Vid : Mesh->VertexIndicesItr())
 	{
-		if (!Mesh->IsVertex(Vid))
-		{
-			continue;
-		}
-
 		const FVector3d PosD = Mesh->GetVertex(Vid);
 		OutVerts.Add(Xf.TransformPosition(static_cast<FVector>(PosD)));
 	}
