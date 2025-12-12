@@ -2,10 +2,12 @@
 	"RemapUnityFiles": 
 	{
 		"Module.TrafficRuntime.cpp.obj": [
-			"CityBLDRoadGeometryProvider.gen.cpp.obj",
 			"RoadFamilyRegistry.gen.cpp.obj",
+			"RoadKitProfile.gen.cpp.obj",
+			"StaticMeshRoadGeometryProvider.gen.cpp.obj",
 			"TrafficAutomationLogger.gen.cpp.obj",
 			"TrafficCityBLDAdapterSettings.gen.cpp.obj",
+			"TrafficDrivableSurfaceComponent.gen.cpp.obj",
 			"TrafficGeometryProvider.gen.cpp.obj",
 			"TrafficGeometryProviderFactory.gen.cpp.obj",
 			"TrafficKinematicFollower.gen.cpp.obj",
@@ -26,8 +28,8 @@
 			"TrafficVehicleSettings.gen.cpp.obj",
 			"TrafficVisualSettings.gen.cpp.obj",
 			"PerModuleInline.gen.cpp.obj",
-			"CityBLDRoadGeometryProvider.cpp.obj",
 			"RoadFamilyRegistry.cpp.obj",
+			"StaticMeshRoadGeometryProvider.cpp.obj",
 			"TrafficAutomationLogger.cpp.obj",
 			"TrafficCalibrationVisuals.cpp.obj",
 			"TrafficCityBLDAdapterSettings.cpp.obj",

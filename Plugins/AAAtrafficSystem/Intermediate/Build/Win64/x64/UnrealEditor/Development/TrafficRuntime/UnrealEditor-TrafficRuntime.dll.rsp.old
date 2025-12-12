@@ -42,6 +42,7 @@
 "../Intermediate/Build/Win64/x64/UnrealEditor/Development/Projects/UnrealEditor-Projects.lib"
 "../Intermediate/Build/Win64/x64/UnrealEditor/Development/MeshDescription/UnrealEditor-MeshDescription.lib"
 "../Intermediate/Build/Win64/x64/UnrealEditor/Development/StaticMeshDescription/UnrealEditor-StaticMeshDescription.lib"
+"../Intermediate/Build/Win64/x64/UnrealEditor/Development/AssetRegistry/UnrealEditor-AssetRegistry.lib"
 "../Intermediate/Build/Win64/x64/UnrealEditor/Development/Core/UnrealEditor-Core.lib"
 "../Intermediate/Build/Win64/x64/UnrealEditor/Development/CoreUObject/UnrealEditor-CoreUObject.lib"
 "../Intermediate/Build/Win64/x64/UnrealEditor/Development/Engine/UnrealEditor-Engine.lib"

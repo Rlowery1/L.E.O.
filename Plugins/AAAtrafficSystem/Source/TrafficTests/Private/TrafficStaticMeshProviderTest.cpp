@@ -4,6 +4,8 @@
 #include "Editor.h"
 #include "Engine/World.h"
 #include "TrafficGeometryProviderFactory.h"
+#include "TrafficGeometryProvider.h"
+#include "TrafficRoadTypes.h"
 #include "TrafficRuntimeModule.h"
 #include "UObject/StrongObjectPtr.h"
 
@@ -60,8 +62,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 bool FTrafficStaticMeshProviderBaselineTest::RunTest(const FString& Parameters)
 {
-	// Adjust these paths to match the actual location of your maps.
-	StaticMeshProvider_RunOnMap(this, TEXT("/Game/Maps/Traffic_BaselineStraight"));
-	StaticMeshProvider_RunOnMap(this, TEXT("/Game/Maps/Traffic_BaselineCurve"));
+	AddExpectedError(TEXT("The Editor is currently in a play mode."), EAutomationExpectedErrorFlags::Contains, 5);
+
+	StaticMeshProvider_RunOnMap(this, TEXT("/AAAtrafficSystem/Maps/Traffic_BaselineStraight"));
+	StaticMeshProvider_RunOnMap(this, TEXT("/AAAtrafficSystem/Maps/Traffic_BaselineCurve"));
 	return true;
 }

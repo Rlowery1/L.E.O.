@@ -1,6 +1,7 @@
 #include "StaticMeshRoadGeometryProvider.h"
 
 #include "RoadKitProfile.h"
+#include "TrafficGeometryProvider.h"
 #include "TrafficDrivableSurfaceComponent.h"
 #include "TrafficRuntimeModule.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -97,9 +98,10 @@ UStaticMeshRoadGeometryProvider::UStaticMeshRoadGeometryProvider()
 		ActiveProfile = DefaultProfile.Object;
 	}
 
-	if (!ActiveProfile)
+	const FString PackagePath = TEXT("/AAAtrafficSystem/DefaultRoadKitProfile");
+
+	if (!ActiveProfile && GIsEditor && !IsRunningCommandlet())
 	{
-		const FString PackagePath = TEXT("/AAAtrafficSystem/DefaultRoadKitProfile");
 #if WITH_EDITOR
 		ActiveProfile = CreateProfileAsset(PackagePath);
 #endif
@@ -168,6 +170,15 @@ void UStaticMeshRoadGeometryProvider::CollectRoads(UWorld* World, TArray<FTraffi
 	UE_LOG(LogTraffic, Log,
 		TEXT("[StaticMeshRoadGeometryProvider] Collected %d roads from static meshes."),
 		OutRoads.Num());
+
+	// If no roads were found via static meshes, fall back to the generic spline provider for compatibility.
+	if (OutRoads.Num() == 0)
+	{
+		if (UGenericSplineRoadGeometryProvider* SplineProvider = NewObject<UGenericSplineRoadGeometryProvider>(GetTransientPackage()))
+		{
+			SplineProvider->CollectRoads(World, OutRoads);
+		}
+	}
 }
 
 bool UStaticMeshRoadGeometryProvider::IsComponentDrivable(const UStaticMeshComponent* Comp) const
@@ -275,7 +286,7 @@ bool UStaticMeshRoadGeometryProvider::BuildCenterlineFromActor(const AActor* Act
 
 		for (uint32 i = 0; i < VB.GetNumVertices(); ++i)
 		{
-			CollectedVerts.Add(CompToWorld.TransformPosition(VB.VertexPosition(i)));
+			CollectedVerts.Add(CompToWorld.TransformPosition(FVector(VB.VertexPosition(i))));
 		}
 	}
 
