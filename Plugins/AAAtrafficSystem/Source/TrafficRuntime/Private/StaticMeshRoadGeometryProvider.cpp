@@ -22,12 +22,17 @@
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
 
-static void HarvestStaticMeshVertices_EditorSafe(
+// Helper to harvest vertices from a static mesh. Uses render data if available,
+// otherwise falls back to the mesh's MeshDescription so CPU access is never needed (editor only).
+static void CollectVerticesFromStaticMesh(
 	const UStaticMesh* Mesh,
-	const FTransform& ComponentXf,
+	const FTransform& Xf,
 	TArray<FVector>& OutVerts)
 {
-	if (!Mesh) return;
+	if (!Mesh)
+	{
+		return;
+	}
 
 	// ---- Fast path: RenderData (if available) ----
 	if (const FStaticMeshRenderData* RenderData = Mesh->GetRenderData())
@@ -42,7 +47,7 @@ static void HarvestStaticMeshVertices_EditorSafe(
 				for (uint32 i = 0; i < Num; ++i)
 				{
 					const FVector3f P3 = LOD0.VertexBuffers.PositionVertexBuffer.VertexPosition(i);
-					OutVerts.Add(ComponentXf.TransformPosition((FVector)P3));
+					OutVerts.Add(Xf.TransformPosition((FVector)P3));
 				}
 				return; // success
 			}
@@ -50,6 +55,7 @@ static void HarvestStaticMeshVertices_EditorSafe(
 	}
 
 	// ---- Reliable path: MeshDescription (Editor geometry, does NOT need Allow CPU Access) ----
+#if WITH_EDITORONLY_DATA
 	const FMeshDescription* MD = Mesh->GetMeshDescription(0);
 	if (!MD)
 	{
@@ -65,8 +71,9 @@ static void HarvestStaticMeshVertices_EditorSafe(
 	for (const FVertexID Vid : MD->Vertices().GetElementIDs())
 	{
 		const FVector3f P3 = Positions[Vid];
-		OutVerts.Add(ComponentXf.TransformPosition((FVector)P3));
+		OutVerts.Add(Xf.TransformPosition((FVector)P3));
 	}
+#endif // WITH_EDITORONLY_DATA
 }
 
 namespace
@@ -244,20 +251,18 @@ bool UStaticMeshRoadGeometryProvider::IsComponentDrivable(const UStaticMeshCompo
 		return false;
 	}
 
+	// CityBLD baked road detection must run first so later heuristics don't filter it out.
+	const UStaticMesh* Mesh = Comp->GetStaticMesh();
+	if (Mesh && IsGeneratedCityBLDRoad(Mesh))
+	{
+		return true;
+	}
+
 	// Treat spline mesh components as drivable so their underlying static mesh can be sampled.
 	if (const USplineMeshComponent* SplineMesh = Cast<USplineMeshComponent>(Comp))
 	{
 		// Optional: apply lateral/height filters here if needed.
 		return true;
-	}
-
-	// Early CityBLD detection: treat baked CityBLD roads as drivable before other filters.
-	if (const UStaticMesh* CompMesh = Comp->GetStaticMesh())
-	{
-		if (IsGeneratedCityBLDRoad(CompMesh))
-		{
-			return true;
-		}
 	}
 
 	if (const AActor* Owner = Comp->GetOwner())
@@ -281,7 +286,6 @@ bool UStaticMeshRoadGeometryProvider::IsComponentDrivable(const UStaticMeshCompo
 		return false;
 	}
 
-	const UStaticMesh* Mesh = Comp->GetStaticMesh();
 	const FString MeshName = Mesh ? Mesh->GetName() : FString();
 	for (const FString& Exclude : Profile->ExcludedMeshNameKeywords)
 	{
@@ -314,12 +318,6 @@ bool UStaticMeshRoadGeometryProvider::IsComponentDrivable(const UStaticMeshCompo
 		}
 	}
 
-	// CityBLD auto-detection: if this component's mesh is a baked CityBLD road, treat it as drivable.
-	if (Mesh && IsGeneratedCityBLDRoad(Mesh))
-	{
-		return true;
-	}
-
 	return false;
 }
 
@@ -345,7 +343,7 @@ bool UStaticMeshRoadGeometryProvider::BuildCenterlineFromActor(const AActor* Act
 		}
 
 		const UStaticMesh* Mesh = Comp->GetStaticMesh();
-		HarvestStaticMeshVertices_EditorSafe(Mesh, Comp->GetComponentTransform(), CollectedVerts);
+		CollectVerticesFromStaticMesh(Mesh, Comp->GetComponentTransform(), CollectedVerts);
 
 		UE_LOG(LogTraffic, Warning,
 			TEXT("[Verts] Actor=%s Comp=%s Mesh=%s CollectedSoFar=%d RenderData=%s AllowCPU=%s"),
