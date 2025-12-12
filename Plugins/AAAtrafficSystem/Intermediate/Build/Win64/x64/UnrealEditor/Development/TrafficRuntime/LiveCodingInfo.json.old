@@ -30,7 +30,6 @@
 			"TrafficVehicleSettings.gen.cpp.obj",
 			"TrafficVisualSettings.gen.cpp.obj",
 			"PerModuleInline.gen.cpp.obj",
-			"CityBLDRoadGeometryProvider.cpp.obj",
 			"RoadFamilyRegistry.cpp.obj",
 			"StaticMeshRoadGeometryProvider.cpp.obj",
 			"TrafficAutomationLogger.cpp.obj",
@@ -54,6 +53,7 @@
 			"TrafficVehicleProfile.cpp.obj",
 			"TrafficVehicleSettings.cpp.obj",
 			"TrafficVisualSettings.cpp.obj",
+			"CityBLDRoadGeometryProvider.cpp.obj",
 			"TrafficGeometryProviderFactory.cpp.obj"
 		]
 	}
