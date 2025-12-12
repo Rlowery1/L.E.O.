@@ -127,6 +127,8 @@ bool UCityBLDRoadGeometryProvider::BuildCenterlineFromCityBLDRoad(const AActor* 
 		return false;
 	}
 
+	UE_LOG(LogTraffic, Warning, TEXT("[CityBLD] Processing actor %s"), *Actor->GetName());
+
 	const USplineComponent* ControlSpline = nullptr;
 	TArray<USplineComponent*> Splines;
 	Actor->GetComponents<USplineComponent>(Splines);
@@ -144,6 +146,7 @@ bool UCityBLDRoadGeometryProvider::BuildCenterlineFromCityBLDRoad(const AActor* 
 	}
 	if (!ControlSpline)
 	{
+		UE_LOG(LogTraffic, Warning, TEXT("[CityBLD] No SplineComponent found on %s"), *Actor->GetName());
 		return false;
 	}
 
@@ -175,7 +178,10 @@ bool UCityBLDRoadGeometryProvider::BuildCenterlineFromCityBLDRoad(const AActor* 
 			}
 		}
 	}
+	UE_LOG(LogTraffic, Warning, TEXT("[CityBLD] %s collected %d dynamic mesh vertices"),
+		*Actor->GetName(), CollectedVerts.Num());
 
 	SampleControlSpline(ControlSpline, CollectedVerts, OutPoints);
+	UE_LOG(LogTraffic, Warning, TEXT("[CityBLD] %s produced %d centreline points"), *Actor->GetName(), OutPoints.Num());
 	return OutPoints.Num() >= 2;
 }

@@ -14,23 +14,37 @@ TObjectPtr<UObject> UTrafficGeometryProviderFactory::CreateProvider(
 	OutInterface = nullptr;
 	UObject* ProviderObject = nullptr;
 
-	if (GetDefault<UTrafficRuntimeSettings>()->bEnableCityBLDAdapter)
+	// Check for CityBLD adapter.
+	const bool bEnableAdapter = GetDefault<UTrafficRuntimeSettings>()->bEnableCityBLDAdapter;
+	bool bFoundCityBLDRoad = false;
+	if (bEnableAdapter)
 	{
 		for (TObjectIterator<UClass> It; It; ++It)
 		{
 			if (It->GetName().Contains(TEXT("BP_MeshRoad")))
 			{
-				UE_LOG(LogTraffic, Log, TEXT("[GeometryProviderFactory] Found BP_MeshRoad class; using CityBLD provider."));
-				UCityBLDRoadGeometryProvider* CityProvider =
-					NewObject<UCityBLDRoadGeometryProvider>(GetTransientPackage());
-				OutInterface = static_cast<ITrafficRoadGeometryProvider*>(CityProvider);
-				ProviderObject = CityProvider;
-				return ProviderObject;
+				bFoundCityBLDRoad = true;
+				break;
 			}
 		}
 	}
 
-	UE_LOG(LogTraffic, Log, TEXT("[GeometryProviderFactory] Using static mesh provider."));
+	UE_LOG(LogTraffic, Warning,
+		TEXT("[Factory] bEnableCityBLDAdapter=%s, bFoundCityBLDRoad=%s"),
+		bEnableAdapter ? TEXT("true") : TEXT("false"),
+		bFoundCityBLDRoad ? TEXT("true") : TEXT("false"));
+
+	if (bEnableAdapter && bFoundCityBLDRoad)
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[Factory] Instantiating CityBLD provider."));
+		UCityBLDRoadGeometryProvider* CityProvider =
+			NewObject<UCityBLDRoadGeometryProvider>(GetTransientPackage());
+		OutInterface = static_cast<ITrafficRoadGeometryProvider*>(CityProvider);
+		ProviderObject = CityProvider;
+		return ProviderObject;
+	}
+
+	UE_LOG(LogTraffic, Warning, TEXT("[Factory] Instantiating StaticMeshRoadGeometryProvider."));
 	UStaticMeshRoadGeometryProvider* MeshProvider =
 		NewObject<UStaticMeshRoadGeometryProvider>(GetTransientPackage());
 	OutInterface = static_cast<ITrafficRoadGeometryProvider*>(MeshProvider);
