@@ -1,9 +1,0 @@
-{
-	"BuildId": "47537391",
-	"Modules": 
-	{
-		"TrafficEditor": "UnrealEditor-TrafficEditor.dll",
-		"TrafficRuntime": "UnrealEditor-TrafficRuntime.dll",
-		"TrafficTests": "UnrealEditor-TrafficTests.dll"
-	}
-}
