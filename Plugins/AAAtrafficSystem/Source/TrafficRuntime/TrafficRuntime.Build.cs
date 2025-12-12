@@ -19,7 +19,8 @@ public class TrafficRuntime : ModuleRules
 			"Projects",
 			"MeshDescription",
 			"StaticMeshDescription",
-			"AssetRegistry"
+			"AssetRegistry",
+			"GeometryFramework"
 		});
 	}
 }

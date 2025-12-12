@@ -26,6 +26,7 @@
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Intermediate/Build/Win64/UnrealEditor/Inc/TrafficRuntime/UHT/TrafficVisualSettings.gen.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Intermediate/Build/Win64/x64/UnrealEditor/Development/TrafficRuntime/PerModuleInline.gen.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficRuntime/Private/RoadFamilyRegistry.cpp"
+#include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficRuntime/Private/StaticMeshRoadGeometryProvider.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficRuntime/Private/TrafficAutomationLogger.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficRuntime/Private/TrafficCalibrationVisuals.cpp"
 #include "C:/Users/rllax/L_E_O/Plugins/AAAtrafficSystem/Source/TrafficRuntime/Private/TrafficCityBLDAdapterSettings.cpp"
