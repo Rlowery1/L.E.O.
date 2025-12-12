@@ -6,6 +6,7 @@
 #include "Components/SplineComponent.h"
 #include "Components/SplineMeshComponent.h"
 #include "TrafficRuntimeModule.h"
+#include "MeshDescription.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -16,9 +17,57 @@
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "StaticMeshResources.h"
+#include "StaticMeshAttributes.h"
 #include "UObject/ConstructorHelpers.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
+
+static void HarvestStaticMeshVertices_EditorSafe(
+	const UStaticMesh* Mesh,
+	const FTransform& ComponentXf,
+	TArray<FVector>& OutVerts)
+{
+	if (!Mesh) return;
+
+	// ---- Fast path: RenderData (if available) ----
+	if (const FStaticMeshRenderData* RenderData = Mesh->GetRenderData())
+	{
+		if (RenderData->LODResources.Num() > 0)
+		{
+			const FStaticMeshLODResources& LOD0 = RenderData->LODResources[0];
+			const uint32 Num = LOD0.VertexBuffers.PositionVertexBuffer.GetNumVertices();
+			if (Num > 0)
+			{
+				OutVerts.Reserve(OutVerts.Num() + (int32)Num);
+				for (uint32 i = 0; i < Num; ++i)
+				{
+					const FVector3f P3 = LOD0.VertexBuffers.PositionVertexBuffer.VertexPosition(i);
+					OutVerts.Add(ComponentXf.TransformPosition((FVector)P3));
+				}
+				return; // success
+			}
+		}
+	}
+
+	// ---- Reliable path: MeshDescription (Editor geometry, does NOT need Allow CPU Access) ----
+	const FMeshDescription* MD = Mesh->GetMeshDescription(0);
+	if (!MD)
+	{
+		return;
+	}
+
+	const TVertexAttributesConstRef<FVector3f> Positions =
+		MD->VertexAttributes().GetAttributesRef<FVector3f>(MeshAttribute::Vertex::Position);
+
+	const int32 NumVerts = MD->Vertices().Num();
+	OutVerts.Reserve(OutVerts.Num() + NumVerts);
+
+	for (const FVertexID Vid : MD->Vertices().GetElementIDs())
+	{
+		const FVector3f P3 = Positions[Vid];
+		OutVerts.Add(ComponentXf.TransformPosition((FVector)P3));
+	}
+}
 
 namespace
 {
@@ -296,27 +345,16 @@ bool UStaticMeshRoadGeometryProvider::BuildCenterlineFromActor(const AActor* Act
 		}
 
 		const UStaticMesh* Mesh = Comp->GetStaticMesh();
-		if (!Mesh)
-		{
-			continue;
-		}
+		HarvestStaticMeshVertices_EditorSafe(Mesh, Comp->GetComponentTransform(), CollectedVerts);
 
-		const FStaticMeshRenderData* RenderData = Mesh->GetRenderData();
-		if (!RenderData || RenderData->LODResources.Num() == 0)
-		{
-			continue;
-		}
-
-		const FStaticMeshLODResources& LOD = RenderData->LODResources[0];
-		const FPositionVertexBuffer& VB = LOD.VertexBuffers.PositionVertexBuffer;
-		const FTransform CompToWorld = Comp->GetComponentTransform();
-
-		CollectedVerts.Reserve(CollectedVerts.Num() + VB.GetNumVertices());
-
-		for (uint32 i = 0; i < VB.GetNumVertices(); ++i)
-		{
-			CollectedVerts.Add(CompToWorld.TransformPosition(FVector(VB.VertexPosition(i))));
-		}
+		UE_LOG(LogTraffic, Warning,
+			TEXT("[Verts] Actor=%s Comp=%s Mesh=%s CollectedSoFar=%d RenderData=%s AllowCPU=%s"),
+			*Actor->GetName(),
+			*Comp->GetName(),
+			Mesh ? *Mesh->GetPathName() : TEXT("NULL"),
+			CollectedVerts.Num(),
+			(Mesh && Mesh->GetRenderData()) ? TEXT("YES") : TEXT("NO"),
+			(Mesh && Mesh->bAllowCPUAccess) ? TEXT("YES") : TEXT("NO"));
 	}
 
 	if (CollectedVerts.Num() < 2)
@@ -390,20 +428,43 @@ bool UStaticMeshRoadGeometryProvider::IsGeneratedCityBLDRoad(const UStaticMesh* 
 	}
 
 	const FString Path = Mesh->GetPathName();
+	// Must be under CityBLD/Meshes/Generated
 	if (!Path.Contains(TEXT("/CityBLD/Meshes/Generated")))
 	{
 		return false;
 	}
 
-	if (!Mesh->GetName().Contains(TEXT("Road")))
+	const FString Name = Mesh->GetName();
+	// Name must include "Road" and must NOT include "Sidewalk", "Curb", "Scatter"
+	if (!Name.Contains(TEXT("Road")) ||
+		Name.Contains(TEXT("Sidewalk")) ||
+		Name.Contains(TEXT("Curb")) ||
+		Name.Contains(TEXT("Scatter")))
 	{
 		return false;
 	}
 
+	// Check size: require road to be at least 3m wide and longer than it is wide
 	const FBoxSphereBounds Bounds = Mesh->GetBounds();
-	const float WidthCm = Bounds.BoxExtent.Y * 2.f;
-	const float MinRoadWidthCm = 300.f; // ~3m minimum
-	return WidthCm >= MinRoadWidthCm;
+	const float WidthCm  = Bounds.BoxExtent.Y * 2.f;
+	const float LengthCm = Bounds.BoxExtent.X * 2.f;
+	const float MinWidthCm = 300.f;    // 3m minimum width
+	if (WidthCm < MinWidthCm || LengthCm <= WidthCm)
+	{
+		return false;
+	}
+
+	// Check material: ensure first material contains Asphalt or Road
+	if (const UMaterialInterface* FirstMat = Mesh->GetMaterial(0))
+	{
+		const FString MatName = FirstMat->GetName();
+		if (!MatName.Contains(TEXT("Asphalt")) && !MatName.Contains(TEXT("Road")))
+		{
+			return false;
+		}
+	}
+
+	return true;
 }
 
 void UStaticMeshRoadGeometryProvider::ExtractCentreline(const TArray<FVector>& Vertices, TArray<FVector>& OutPoints) const
