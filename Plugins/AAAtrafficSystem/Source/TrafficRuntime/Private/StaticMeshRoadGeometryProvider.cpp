@@ -301,17 +301,40 @@ bool UStaticMeshRoadGeometryProvider::BuildCenterlineFromActor(const AActor* Act
 
 	if (CollectedVerts.Num() < 2)
 	{
-		// Fallback: sample the actor's spline component if present
+		// Fallback: sample the actor's spline component and use nearby vertices to compute a centreline.
 		const USplineComponent* SplineComp = Actor ? Actor->FindComponentByClass<USplineComponent>() : nullptr;
-		if (SplineComp)
+		if (SplineComp && CollectedVerts.Num() > 0)
 		{
 			const float Length = SplineComp->GetSplineLength();
-			const int32 SampleCount = FMath::Clamp(static_cast<int32>(Length / 200.f), 10, 1000);
+			// Sample roughly every 200cm along the spline, but clamp to a reasonable number of points.
+			const int32 SampleCount = FMath::Clamp(static_cast<int32>(Length / 200.f), 10, 200);
 			OutPoints.Reserve(SampleCount + 1);
+			const FVector UpVector(0.f, 0.f, 1.f);
 			for (int32 i = 0; i <= SampleCount; ++i)
 			{
 				const float Distance = Length * static_cast<float>(i) / static_cast<float>(SampleCount);
-				OutPoints.Add(SplineComp->GetLocationAtDistanceAlongSpline(Distance, ESplineCoordinateSpace::World));
+				const FVector Pos = SplineComp->GetLocationAtDistanceAlongSpline(Distance, ESplineCoordinateSpace::World);
+				// Use the spline's direction to compute a local right vector in XY plane.
+				FVector Tangent = SplineComp->GetTangentAtDistanceAlongSpline(Distance, ESplineCoordinateSpace::World);
+				Tangent.Z = 0.f;
+				if (!Tangent.Normalize())
+				{
+					continue;
+				}
+				FVector Right = FVector::CrossProduct(Tangent, UpVector);
+				Right.Normalize();
+				// Find extreme distances of collected vertices along this local right vector.
+				float MinDist = FLT_MAX;
+				float MaxDist = -FLT_MAX;
+				for (const FVector& V : CollectedVerts)
+				{
+					const float Dist = FVector::DotProduct(V - Pos, Right);
+					if (Dist < MinDist) { MinDist = Dist; }
+					if (Dist > MaxDist) { MaxDist = Dist; }
+				}
+				// Midpoint between extremes projected into world space.
+				const float MidDist = 0.5f * (MinDist + MaxDist);
+				OutPoints.Add(Pos + Right * MidDist);
 			}
 			return OutPoints.Num() >= 2;
 		}
