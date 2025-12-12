@@ -9,6 +9,8 @@
 class URoadKitProfile;
 class UStaticMeshComponent;
 class UStaticMesh;
+class UDynamicMeshComponent;
+class UInstancedStaticMeshComponent;
 
 /**
  * Generic static mesh geometry provider. Extracts a centerline from meshes using configurable heuristics.

@@ -400,6 +400,33 @@ bool UStaticMeshRoadGeometryProvider::IsComponentDrivable(const UStaticMeshCompo
 		}
 	}
 
+	// If material keywords didn't match, allow instanced static meshes that look like "Road" meshes by name/size.
+	if (Cast<UInstancedStaticMeshComponent>(Comp) && Mesh)
+	{
+		const bool bRoadLikeName =
+			MeshName.Contains(TEXT("Road"), ESearchCase::IgnoreCase) ||
+			MeshName.Contains(TEXT("Street"), ESearchCase::IgnoreCase) ||
+			MeshName.Contains(TEXT("Highway"), ESearchCase::IgnoreCase);
+
+		const bool bExcludedName =
+			MeshName.Contains(TEXT("Sidewalk"), ESearchCase::IgnoreCase) ||
+			MeshName.Contains(TEXT("Curb"), ESearchCase::IgnoreCase) ||
+			MeshName.Contains(TEXT("Scatter"), ESearchCase::IgnoreCase);
+
+		if (bRoadLikeName && !bExcludedName)
+		{
+			const FBoxSphereBounds Bounds = Mesh->GetBounds();
+			const float SizeX = Bounds.BoxExtent.X * 2.f;
+			const float SizeY = Bounds.BoxExtent.Y * 2.f;
+			const float LengthCm = FMath::Max(SizeX, SizeY);
+			const float WidthCm = FMath::Min(SizeX, SizeY);
+			if (WidthCm >= 300.f && LengthCm > WidthCm)
+			{
+				return true;
+			}
+		}
+	}
+
 	return false;
 }
 
