@@ -8,6 +8,8 @@
 #include "TrafficRuntimeModule.h"
 #include "MeshDescription.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "Components/DynamicMeshComponent.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
@@ -18,6 +20,8 @@
 #include "Misc/Paths.h"
 #include "StaticMeshResources.h"
 #include "StaticMeshAttributes.h"
+#include "DynamicMesh/DynamicMesh3.h"
+#include "VectorTypes.h"
 #include "UObject/ConstructorHelpers.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
@@ -74,6 +78,84 @@ static void CollectVerticesFromStaticMesh(
 		OutVerts.Add(Xf.TransformPosition((FVector)P3));
 	}
 #endif // WITH_EDITORONLY_DATA
+}
+
+static void CollectVerticesFromDynamicMeshComponent(
+	UDynamicMeshComponent* DynComp,
+	const FTransform& Xf,
+	TArray<FVector>& OutVerts)
+{
+	if (!DynComp)
+	{
+		return;
+	}
+
+	const UDynamicMesh* DynMesh = DynComp->GetDynamicMesh();
+	const UE::Geometry::FDynamicMesh3* Mesh = DynMesh ? DynMesh->GetMeshPtr() : nullptr;
+	if (!Mesh)
+	{
+		return;
+	}
+
+	const int32 VertexCount = Mesh->VertexCount();
+	OutVerts.Reserve(OutVerts.Num() + VertexCount);
+
+	for (int32 Vid = 0; Vid < VertexCount; ++Vid)
+	{
+		if (!Mesh->IsVertex(Vid))
+		{
+			continue;
+		}
+
+		const FVector3d PosD = Mesh->GetVertex(Vid);
+		OutVerts.Add(Xf.TransformPosition(static_cast<FVector>(PosD)));
+	}
+}
+
+static void CollectVerticesFromInstancedStaticMeshComponent(
+	const UInstancedStaticMeshComponent* ISMC,
+	TArray<FVector>& OutVerts)
+{
+	if (!ISMC)
+	{
+		return;
+	}
+
+	const UStaticMesh* Mesh = ISMC->GetStaticMesh();
+	if (!Mesh)
+	{
+		return;
+	}
+
+	TArray<FVector> BaseVerts;
+	CollectVerticesFromStaticMesh(Mesh, FTransform::Identity, BaseVerts);
+
+	const int32 NumInstances = ISMC->GetInstanceCount();
+	if (NumInstances <= 0 || BaseVerts.Num() <= 0)
+	{
+		return;
+	}
+
+	const int64 AdditionalVerts = static_cast<int64>(NumInstances) * static_cast<int64>(BaseVerts.Num());
+	const int64 DesiredCapacity = static_cast<int64>(OutVerts.Num()) + AdditionalVerts;
+	if (DesiredCapacity > OutVerts.Num() && DesiredCapacity <= MAX_int32)
+	{
+		OutVerts.Reserve(static_cast<int32>(DesiredCapacity));
+	}
+
+	for (int32 InstanceIndex = 0; InstanceIndex < NumInstances; ++InstanceIndex)
+	{
+		FTransform InstanceXf;
+		if (!ISMC->GetInstanceTransform(InstanceIndex, InstanceXf, /*bWorldSpace=*/true))
+		{
+			continue;
+		}
+
+		for (const FVector& V : BaseVerts)
+		{
+			OutVerts.Add(InstanceXf.TransformPosition(V));
+		}
+	}
 }
 
 namespace
@@ -343,7 +425,14 @@ bool UStaticMeshRoadGeometryProvider::BuildCenterlineFromActor(const AActor* Act
 		}
 
 		const UStaticMesh* Mesh = Comp->GetStaticMesh();
-		CollectVerticesFromStaticMesh(Mesh, Comp->GetComponentTransform(), CollectedVerts);
+		if (const UInstancedStaticMeshComponent* InstComp = Cast<UInstancedStaticMeshComponent>(Comp))
+		{
+			CollectVerticesFromInstancedStaticMeshComponent(InstComp, CollectedVerts);
+		}
+		else
+		{
+			CollectVerticesFromStaticMesh(Mesh, Comp->GetComponentTransform(), CollectedVerts);
+		}
 
 		UE_LOG(LogTraffic, Warning,
 			TEXT("[Verts] Actor=%s Comp=%s Mesh=%s CollectedSoFar=%d RenderData=%s AllowCPU=%s"),
@@ -353,6 +442,22 @@ bool UStaticMeshRoadGeometryProvider::BuildCenterlineFromActor(const AActor* Act
 			CollectedVerts.Num(),
 			(Mesh && Mesh->GetRenderData()) ? TEXT("YES") : TEXT("NO"),
 			(Mesh && Mesh->bAllowCPUAccess) ? TEXT("YES") : TEXT("NO"));
+	}
+
+	TArray<UDynamicMeshComponent*> DynMeshComps;
+	Actor->GetComponents<UDynamicMeshComponent>(DynMeshComps);
+	for (UDynamicMeshComponent* DynComp : DynMeshComps)
+	{
+		CollectVerticesFromDynamicMeshComponent(DynComp, DynComp->GetComponentTransform(), CollectedVerts);
+
+		UE_LOG(LogTraffic, Warning,
+			TEXT("[Verts] Actor=%s Comp=%s Mesh=%s CollectedSoFar=%d RenderData=%s AllowCPU=%s"),
+			*Actor->GetName(),
+			DynComp ? *DynComp->GetName() : TEXT("NULL"),
+			TEXT("DYNAMIC"),
+			CollectedVerts.Num(),
+			TEXT("NO"),
+			TEXT("N/A"));
 	}
 
 	if (CollectedVerts.Num() < 2)
