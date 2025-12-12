@@ -8,6 +8,7 @@
 
 class URoadKitProfile;
 class UStaticMeshComponent;
+class UStaticMesh;
 
 /**
  * Generic static mesh geometry provider. Extracts a centerline from meshes using configurable heuristics.
@@ -25,6 +26,7 @@ public:
 
 protected:
 	bool IsComponentDrivable(const UStaticMeshComponent* Comp) const;
+	bool IsGeneratedCityBLDRoad(const UStaticMesh* Mesh) const;
 	bool BuildCenterlineFromActor(const AActor* Actor, TArray<FVector>& OutPoints) const;
 	void ExtractCentreline(const TArray<FVector>& Vertices, TArray<FVector>& OutPoints) const;
 

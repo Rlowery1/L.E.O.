@@ -9,6 +9,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/StaticMeshActor.h"
 #include "EngineUtils.h"
 #include "HAL/FileManager.h"
 #include "Materials/MaterialInterface.h"
@@ -255,6 +256,12 @@ bool UStaticMeshRoadGeometryProvider::IsComponentDrivable(const UStaticMeshCompo
 		}
 	}
 
+	// CityBLD auto-detection: if this component's mesh is a baked CityBLD road, treat it as drivable.
+	if (Mesh && IsGeneratedCityBLDRoad(Mesh))
+	{
+		return true;
+	}
+
 	return false;
 }
 
@@ -364,6 +371,30 @@ bool UStaticMeshRoadGeometryProvider::BuildCenterlineFromActor(const AActor* Act
 
 	ExtractCentreline(CollectedVerts, OutPoints);
 	return OutPoints.Num() >= 2;
+}
+
+bool UStaticMeshRoadGeometryProvider::IsGeneratedCityBLDRoad(const UStaticMesh* Mesh) const
+{
+	if (!Mesh)
+	{
+		return false;
+	}
+
+	const FString Path = Mesh->GetPathName();
+	if (!Path.Contains(TEXT("/CityBLD/Meshes/Generated")))
+	{
+		return false;
+	}
+
+	if (!Mesh->GetName().Contains(TEXT("Road")))
+	{
+		return false;
+	}
+
+	const FBoxSphereBounds Bounds = Mesh->GetBounds();
+	const float WidthCm = Bounds.BoxExtent.Y * 2.f;
+	const float MinRoadWidthCm = 300.f; // ~3m minimum
+	return WidthCm >= MinRoadWidthCm;
 }
 
 void UStaticMeshRoadGeometryProvider::ExtractCentreline(const TArray<FVector>& Vertices, TArray<FVector>& OutPoints) const
