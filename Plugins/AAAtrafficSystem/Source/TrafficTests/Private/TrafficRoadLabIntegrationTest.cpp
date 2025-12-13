@@ -28,6 +28,8 @@
 #include "TrafficLaneCalibration.h"
 #include "RoadFamilyRegistry.h"
 #include "TrafficVehicleBase.h"
+#include "TrafficCalibrationTestUtils.h"
+#include "Components/PrimitiveComponent.h"
 
 namespace
 {
@@ -155,6 +157,192 @@ bool FTrafficPIELoadMapCommand::Update()
 	return true;
 }
 
+DEFINE_LATENT_AUTOMATION_COMMAND_TWO_PARAMETER(FTrafficPIEPrepareAndCalibrateCommand, TSharedRef<FTrafficPIETestState>, State, FAutomationTestBase*, Test);
+bool FTrafficPIEPrepareAndCalibrateCommand::Update()
+{
+#if WITH_EDITOR
+	if (State->bFailed)
+	{
+		return true;
+	}
+
+	if (!GEditor)
+	{
+		State->bFailed = true;
+		State->FailureMessage = TEXT("NoGEditor");
+		if (Test)
+		{
+			Test->AddError(TEXT("GEditor is null during calibration phase."));
+		}
+		return true;
+	}
+
+	UWorld* World = GEditor->GetEditorWorldContext().World();
+	if (!World)
+	{
+		State->bFailed = true;
+		State->FailureMessage = TEXT("NoEditorWorld");
+		if (Test)
+		{
+			Test->AddError(TEXT("No editor world available during calibration phase."));
+		}
+		return true;
+	}
+
+	UTrafficSystemEditorSubsystem* Subsys = GEditor->GetEditorSubsystem<UTrafficSystemEditorSubsystem>();
+	if (!Subsys)
+	{
+		State->bFailed = true;
+		State->FailureMessage = TEXT("NoEditorSubsystem");
+		if (Test)
+		{
+			Test->AddError(TEXT("TrafficSystemEditorSubsystem unavailable during calibration phase."));
+		}
+		return true;
+	}
+
+	Subsys->Editor_ResetRoadLabHard(false);
+
+	UClass* MeshRoadClass = LoadClass<AActor>(nullptr, TEXT("/CityBLD/Blueprints/Roads/BP_MeshRoad.BP_MeshRoad_C"));
+	if (!MeshRoadClass)
+	{
+		State->bFailed = true;
+		State->FailureMessage = TEXT("LoadBP_MeshRoadFailed");
+		if (Test)
+		{
+			Test->AddError(TEXT("Failed to load CityBLD BP_MeshRoad class."));
+		}
+		return true;
+	}
+
+	bool bHasMeshRoad = false;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (AActor* Actor = *It)
+		{
+			if (Actor->GetClass()->GetName().Contains(TEXT("BP_MeshRoad")))
+			{
+				bHasMeshRoad = true;
+				break;
+			}
+		}
+	}
+
+	if (!bHasMeshRoad)
+	{
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+		AActor* RoadA = World->SpawnActor<AActor>(MeshRoadClass, FTransform(FRotator::ZeroRotator, FVector::ZeroVector), Params);
+		AActor* RoadB = World->SpawnActor<AActor>(MeshRoadClass, FTransform(FRotator(0.f, 90.f, 0.f), FVector::ZeroVector), Params);
+		if (!RoadA || !RoadB)
+		{
+			State->bFailed = true;
+			State->FailureMessage = TEXT("SpawnMeshRoadFailed");
+			if (Test)
+			{
+				Test->AddError(TEXT("Failed to spawn CityBLD BP_MeshRoad actors for calibration."));
+			}
+			return true;
+		}
+
+		for (AActor* RoadActor : { RoadA, RoadB })
+		{
+			if (!RoadActor)
+			{
+				continue;
+			}
+			TArray<UPrimitiveComponent*> PrimComps;
+			RoadActor->GetComponents<UPrimitiveComponent>(PrimComps);
+			for (UPrimitiveComponent* Prim : PrimComps)
+			{
+				if (!Prim)
+				{
+					continue;
+				}
+				Prim->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+				Prim->SetCollisionObjectType(ECC_WorldStatic);
+				Prim->SetCollisionResponseToAllChannels(ECR_Block);
+			}
+		}
+	}
+
+	UTrafficAutomationLogger::LogLine(TEXT("PIE_Prepare=DoPrepare"));
+	Subsys->DoPrepare();
+	Subsys->Editor_PrepareMapForTraffic();
+
+	URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get();
+	if (!Registry || Registry->GetAllFamilies().Num() == 0)
+	{
+		State->bFailed = true;
+		State->FailureMessage = TEXT("NoFamilies");
+		if (Test)
+		{
+			Test->AddError(TEXT("No road families detected for calibration."));
+		}
+		return true;
+	}
+
+	FGuid FamilyId;
+	for (const FRoadFamilyInfo& Info : Registry->GetAllFamilies())
+	{
+		const FString ClassName = Info.RoadClassPath.GetAssetName();
+		if (ClassName.Contains(TEXT("BP_MeshRoad")) || ClassName.Contains(TEXT("MeshRoad")))
+		{
+			if (Subsys->GetNumActorsForFamily(Info.FamilyId) > 0)
+			{
+				FamilyId = Info.FamilyId;
+				break;
+			}
+		}
+	}
+
+	if (!FamilyId.IsValid())
+	{
+		State->bFailed = true;
+		State->FailureMessage = TEXT("NoCityBLDFamily");
+		if (Test)
+		{
+			Test->AddError(TEXT("Could not find a CityBLD road family id for calibration."));
+		}
+		return true;
+	}
+
+	TrafficCalibrationTestUtils::FAlignmentEvalParams EvalParams;
+	TrafficCalibrationTestUtils::FAlignmentThresholds Thresholds;
+	TrafficCalibrationTestUtils::FAlignmentMetrics AlignMetrics;
+	FTrafficLaneFamilyCalibration FinalCalib;
+
+	const bool bAlignOk = TrafficCalibrationTestUtils::RunEditorCalibrationLoop(
+		Test,
+		World,
+		Subsys,
+		TEXT("Calibration.RoadLab.PIE.PrePIE"),
+		FamilyId,
+		/*MaxIterations=*/5,
+		EvalParams,
+		Thresholds,
+		AlignMetrics,
+		FinalCalib);
+
+	if (!bAlignOk)
+	{
+		State->bFailed = true;
+		State->FailureMessage = TEXT("CalibrationThresholdsFailed");
+		if (Test)
+		{
+			Test->AddError(TEXT("Calibration alignment thresholds not met (see logged metrics)."));
+		}
+		return true;
+	}
+
+	// Remove temporary overlay/controller actors before starting PIE.
+	Subsys->ResetRoadLab();
+	UTrafficAutomationLogger::LogLine(TEXT("PIE_PreCalibration=Pass"));
+#endif
+	return true;
+}
+
 DEFINE_LATENT_AUTOMATION_COMMAND_FOUR_PARAMETER(FTrafficWaitForPIEWorldCommand, TSharedRef<FTrafficPIETestState>, State, FAutomationTestBase*, Test, double, TimeoutSeconds, double, StartTime);
 bool FTrafficWaitForPIEWorldCommand::Update()
 {
@@ -191,71 +379,32 @@ bool FTrafficPIESpawnAndRunCommand::Update()
 	}
 
 	UWorld* PIEWorld = State->PIEWorld;
-	UTrafficAutomationLogger::LogLine(TEXT("PIE_Step=SpawnRoads"));
+	UTrafficAutomationLogger::LogLine(TEXT("PIE_Step=BuildNetwork"));
 
-	const FName DefaultFamily(TEXT("Urban_2x2"));
-	const UTrafficCityBLDAdapterSettings* AdapterSettings = GetDefault<UTrafficCityBLDAdapterSettings>();
-	const FName RoadTag = AdapterSettings ? AdapterSettings->RoadActorTag : NAME_None;
-	const FName SplineTag = AdapterSettings ? AdapterSettings->RoadSplineTag : NAME_None;
-	int32 RoadsSpawned = 0;
-
-	auto SpawnRoad = [&](const TArray<FVector>& Points) -> AActor*
+	int32 MeshRoadCount = 0;
+	for (TActorIterator<AActor> It(PIEWorld); It; ++It)
 	{
-		FActorSpawnParameters Params;
-		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-		AActor* RoadActor = PIEWorld->SpawnActor<AActor>(Params);
-		if (!RoadActor)
+		if (AActor* Actor = *It)
 		{
-			return nullptr;
+			if (Actor->GetClass()->GetName().Contains(TEXT("BP_MeshRoad")))
+			{
+				++MeshRoadCount;
+			}
 		}
-
-		UTrafficRoadMetadataComponent* Meta = NewObject<UTrafficRoadMetadataComponent>(RoadActor);
-		Meta->RegisterComponent();
-		RoadActor->AddInstanceComponent(Meta);
-		Meta->FamilyName = DefaultFamily;
-
-		USplineComponent* Spline = NewObject<USplineComponent>(RoadActor);
-		Spline->RegisterComponent();
-		RoadActor->AddInstanceComponent(Spline);
-		RoadActor->SetRootComponent(Spline);
-		Spline->ClearSplinePoints(false);
-		for (const FVector& P : Points)
-		{
-			Spline->AddSplinePoint(P, ESplineCoordinateSpace::World, false);
-		}
-		Spline->SetClosedLoop(false, false);
-		Spline->UpdateSpline();
-
-		if (!RoadTag.IsNone())
-		{
-			RoadActor->Tags.AddUnique(RoadTag);
-		}
-		if (!SplineTag.IsNone())
-		{
-			Spline->ComponentTags.AddUnique(SplineTag);
-		}
-
-		++RoadsSpawned;
-		return RoadActor;
-	};
-
-	AActor* RoadA = SpawnRoad({ FVector(-2000.f, 500.f, 200.f), FVector(0.f, 500.f, 200.f), FVector(2000.f, 500.f, 200.f) });
-	AActor* RoadB = SpawnRoad({ FVector(0.f, -4000.f, 200.f), FVector(0.f, 0.f, 200.f), FVector(0.f, 4000.f, 200.f) });
-
-	if (!RoadA || !RoadB)
+	}
+	UTrafficAutomationLogger::LogMetricInt(TEXT("PIE.MeshRoadActors"), MeshRoadCount);
+	if (MeshRoadCount == 0)
 	{
 		State->bFailed = true;
-		State->FailureMessage = TEXT("SpawnRoadFailed");
-		UTrafficAutomationLogger::LogLine(TEXT("Error=SpawnRoadFailed"));
+		State->FailureMessage = TEXT("NoMeshRoadActors");
+		UTrafficAutomationLogger::LogLine(TEXT("Error=NoMeshRoadActors"));
 		if (Test)
 		{
-			Test->AddError(TEXT("Failed to spawn PIE roads."));
+			Test->AddError(TEXT("No CityBLD BP_MeshRoad actors present in PIE world."));
 		}
 		return true;
 	}
 
-	UTrafficAutomationLogger::LogLine(FString::Printf(TEXT("PIE_SpawnedRoads=%d"), RoadsSpawned));
-	UTrafficAutomationLogger::LogLine(TEXT("PIE_Step=BuildNetwork"));
 	ATrafficSystemController* Controller = PIEWorld->SpawnActor<ATrafficSystemController>();
 	if (!Controller)
 	{
@@ -277,6 +426,31 @@ bool FTrafficPIESpawnAndRunCommand::Update()
 		LaneCount = Net->Network.Lanes.Num();
 		IntersectionCount = Net->Network.Intersections.Num();
 		MovementCount = Net->Network.Movements.Num();
+
+		TrafficCalibrationTestUtils::FAlignmentEvalParams EvalParams;
+		TrafficCalibrationTestUtils::FAlignmentThresholds Thresholds;
+		TrafficCalibrationTestUtils::FAlignmentMetrics AlignMetrics;
+		if (TrafficCalibrationTestUtils::EvaluateNetworkLaneAlignment(PIEWorld, Net->Network, EvalParams, AlignMetrics))
+		{
+			UTrafficAutomationLogger::LogMetricFloat(TEXT("PIE.Align.MeanDevCm"), AlignMetrics.MeanLateralDeviationCm, 2);
+			UTrafficAutomationLogger::LogMetricFloat(TEXT("PIE.Align.MaxDevCm"), AlignMetrics.MaxLateralDeviationCm, 2);
+			UTrafficAutomationLogger::LogMetricFloat(TEXT("PIE.Align.MaxHeadingDeg"), AlignMetrics.MaxHeadingErrorDeg, 2);
+			UTrafficAutomationLogger::LogMetricFloat(TEXT("PIE.Align.CoveragePercent"), AlignMetrics.CoveragePercent, 2);
+
+			FString FailureReason;
+			if (!TrafficCalibrationTestUtils::AlignmentMeetsThresholds(AlignMetrics, Thresholds, &FailureReason))
+			{
+				State->bFailed = true;
+				State->FailureMessage = TEXT("AlignmentThresholdsFailedInPIE");
+				UTrafficAutomationLogger::LogLine(TEXT("Error=AlignmentThresholdsFailedInPIE"));
+				UTrafficAutomationLogger::LogMetric(TEXT("PIE.Align.FailReason"), FailureReason);
+				if (Test)
+				{
+					Test->AddError(TEXT("PIE alignment thresholds not met (see logged metrics)."));
+				}
+				return true;
+			}
+		}
 	}
 	if (LaneCount == 0 || RoadCount == 0)
 	{
@@ -348,7 +522,7 @@ bool FTrafficPIESpawnAndRunCommand::Update()
 	}
 	State->Metrics.SimulatedSeconds = Simulated;
 	State->Metrics.Finalize();
-	UTrafficAutomationLogger::LogRunMetrics(TEXT("Traffic.RoadLab.PIE"), State->Metrics);
+	UTrafficAutomationLogger::LogRunMetrics(TEXT("Traffic.Calibration.RoadLab.PIE"), State->Metrics);
 
 	UTrafficAutomationLogger::LogLine(TEXT("PIE_Result=Success"));
 #endif
@@ -383,7 +557,7 @@ bool FTrafficPIEEndCommand::Update()
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 FTrafficRoadLabIntegrationTest,
-"Traffic.RoadLab.Integration",
+"Traffic.Calibration.RoadLab.Integration",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter
 )
 
@@ -399,7 +573,7 @@ bool FTrafficRoadLabIntegrationTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	const FString LocalTestName = TEXT("Traffic.RoadLab.Integration");
+	const FString LocalTestName = TEXT("Traffic.Calibration.RoadLab.Integration");
 	UTrafficAutomationLogger::BeginTestLog(LocalTestName);
 	UTrafficAutomationLogger::LogLine(FString::Printf(TEXT("[AAA Traffic] Version=%s"), TEXT(AAA_TRAFFIC_PLUGIN_VERSION)));
 	UTrafficAutomationLogger::LogLine(TEXT("# RoadLab Integration Test"));
@@ -418,54 +592,47 @@ bool FTrafficRoadLabIntegrationTest::RunTest(const FString& Parameters)
 	Subsys->ResetRoadLab();
 	TickEditorWorld(World, 0.1f);
 
-	const UTrafficCityBLDAdapterSettings* AdapterSettings = GetDefault<UTrafficCityBLDAdapterSettings>();
-	const FName RoadTag = AdapterSettings ? AdapterSettings->RoadActorTag : NAME_None;
-	const FName SplineTag = AdapterSettings ? AdapterSettings->RoadSplineTag : NAME_None;
+	// Spawn a minimal cross layout using CityBLD BP_MeshRoad so the forced CityBLD provider can build a network.
+	UClass* MeshRoadClass = LoadClass<AActor>(nullptr, TEXT("/CityBLD/Blueprints/Roads/BP_MeshRoad.BP_MeshRoad_C"));
+	if (!MeshRoadClass)
+	{
+		AddError(TEXT("Failed to load CityBLD BP_MeshRoad class at /CityBLD/Blueprints/Roads/BP_MeshRoad.BP_MeshRoad_C"));
+		UTrafficAutomationLogger::LogLine(TEXT("Error=LoadBP_MeshRoadFailed"));
+		UTrafficAutomationLogger::EndTestLog();
+		return false;
+	}
 
-	// Spawn minimal cross layout for testing (dev-only synthetic roads).
-	auto SpawnTestRoad = [&](const TArray<FVector>& Points) -> AActor*
+	auto SpawnCityBLDRoad = [&](const FTransform& Xform) -> AActor*
 	{
 		FActorSpawnParameters Params;
 		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-		AActor* RoadActor = World->SpawnActor<AActor>(Params);
+		AActor* RoadActor = World->SpawnActor<AActor>(MeshRoadClass, Xform, Params);
 		if (!RoadActor)
 		{
 			return nullptr;
 		}
 
-		UTrafficRoadMetadataComponent* Meta = NewObject<UTrafficRoadMetadataComponent>(RoadActor);
-		Meta->RegisterComponent();
-		RoadActor->AddInstanceComponent(Meta);
-
-		USplineComponent* Spline = NewObject<USplineComponent>(RoadActor);
-		Spline->RegisterComponent();
-		RoadActor->AddInstanceComponent(Spline);
-		RoadActor->SetRootComponent(Spline);
-		Spline->ClearSplinePoints(false);
-		for (const FVector& P : Points)
+		TArray<UPrimitiveComponent*> PrimComps;
+		RoadActor->GetComponents<UPrimitiveComponent>(PrimComps);
+		for (UPrimitiveComponent* Prim : PrimComps)
 		{
-			Spline->AddSplinePoint(P, ESplineCoordinateSpace::World, false);
-		}
-		Spline->SetClosedLoop(false, false);
-		Spline->UpdateSpline();
-
-		if (!RoadTag.IsNone())
-		{
-			RoadActor->Tags.AddUnique(RoadTag);
-		}
-		if (!SplineTag.IsNone())
-		{
-			Spline->ComponentTags.AddUnique(SplineTag);
+			if (!Prim)
+			{
+				continue;
+			}
+			Prim->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+			Prim->SetCollisionObjectType(ECC_WorldStatic);
+			Prim->SetCollisionResponseToAllChannels(ECR_Block);
 		}
 
 		return RoadActor;
 	};
 
-	AActor* RoadA = SpawnTestRoad({ FVector(-2000.f, 500.f, 200.f), FVector(0.f, 500.f, 200.f), FVector(2000.f, 500.f, 200.f) });
-	AActor* RoadB = SpawnTestRoad({ FVector(0.f, -4000.f, 200.f), FVector(0.f, 0.f, 200.f), FVector(0.f, 4000.f, 200.f) });
+	AActor* RoadA = SpawnCityBLDRoad(FTransform(FRotator::ZeroRotator, FVector::ZeroVector));
+	AActor* RoadB = SpawnCityBLDRoad(FTransform(FRotator(0.f, 90.f, 0.f), FVector::ZeroVector));
 	if (!RoadA || !RoadB)
 	{
-		AddError(TEXT("Failed to spawn synthetic test roads for automation run."));
+		AddError(TEXT("Failed to spawn CityBLD BP_MeshRoad actors for automation run."));
 		UTrafficAutomationLogger::LogLine(TEXT("Error=NoRoadsSpawned"));
 		UTrafficAutomationLogger::EndTestLog();
 		return false;
@@ -474,19 +641,66 @@ bool FTrafficRoadLabIntegrationTest::RunTest(const FString& Parameters)
 
 	UTrafficAutomationLogger::LogLine(TEXT("Phase=Prepare"));
 	Subsys->DoPrepare();
+	Subsys->Editor_PrepareMapForTraffic();
 	TickEditorWorld(World, 0.1f);
 
 	FTrafficRunMetrics Metrics;
 
-	// Ensure at least one family is calibrated for build/test gating.
-	if (URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get())
+	UTrafficAutomationLogger::LogLine(TEXT("Phase=Calibrate"));
+	URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get();
+	if (!Registry || Registry->GetAllFamilies().Num() == 0)
 	{
-		for (const FRoadFamilyInfo& Info : Registry->GetAllFamilies())
+		AddError(TEXT("No road families detected for calibration."));
+		UTrafficAutomationLogger::LogLine(TEXT("Error=NoFamilies"));
+		UTrafficAutomationLogger::EndTestLog();
+		return false;
+	}
+
+	FGuid FamilyId;
+	for (const FRoadFamilyInfo& Info : Registry->GetAllFamilies())
+	{
+		const FString ClassName = Info.RoadClassPath.GetAssetName();
+		if (ClassName.Contains(TEXT("BP_MeshRoad")) || ClassName.Contains(TEXT("MeshRoad")))
 		{
-			FTrafficLaneFamilyCalibration Calib;
-			Registry->ApplyCalibration(Info.FamilyId, Calib);
-			break;
+			if (Subsys->GetNumActorsForFamily(Info.FamilyId) > 0)
+			{
+				FamilyId = Info.FamilyId;
+				break;
+			}
 		}
+	}
+
+	if (!FamilyId.IsValid())
+	{
+		AddError(TEXT("Could not find a CityBLD road family id for calibration."));
+		UTrafficAutomationLogger::LogLine(TEXT("Error=NoCityBLDFamily"));
+		UTrafficAutomationLogger::EndTestLog();
+		return false;
+	}
+
+	TrafficCalibrationTestUtils::FAlignmentEvalParams EvalParams;
+	TrafficCalibrationTestUtils::FAlignmentThresholds Thresholds;
+	TrafficCalibrationTestUtils::FAlignmentMetrics AlignMetrics;
+	FTrafficLaneFamilyCalibration FinalCalib;
+
+	const bool bAlignOk = TrafficCalibrationTestUtils::RunEditorCalibrationLoop(
+		this,
+		World,
+		Subsys,
+		TEXT("Calibration.RoadLab.Integration"),
+		FamilyId,
+		/*MaxIterations=*/5,
+		EvalParams,
+		Thresholds,
+		AlignMetrics,
+		FinalCalib);
+
+	if (!bAlignOk)
+	{
+		AddError(TEXT("Calibration alignment thresholds not met (see logged metrics)."));
+		UTrafficAutomationLogger::LogLine(TEXT("Error=CalibrationThresholdsFailed"));
+		UTrafficAutomationLogger::EndTestLog();
+		return false;
 	}
 
 	UTrafficAutomationLogger::LogLine(TEXT("Phase=Build"));
@@ -577,8 +791,8 @@ bool FTrafficRoadLabIntegrationTest::RunTest(const FString& Parameters)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 FTrafficRoadLabIntegrationPIETest,
-"Traffic.RoadLab.PIE",
-	EAutomationTestFlags::ClientContext | EAutomationTestFlags::EngineFilter
+"Traffic.Calibration.RoadLab.PIE",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter
 )
 
 bool FTrafficRoadLabIntegrationPIETest::RunTest(const FString& Parameters)
@@ -588,13 +802,14 @@ bool FTrafficRoadLabIntegrationPIETest::RunTest(const FString& Parameters)
 	const FString TemplateMap = FPaths::Combine(FPaths::EngineContentDir(), TEXT("Maps/Templates/OpenWorld.umap"));
 	TSharedRef<FTrafficPIETestState> State = MakeShared<FTrafficPIETestState>();
 
-	UTrafficAutomationLogger::BeginTestLog(TEXT("Traffic.RoadLab.PIE"));
+	UTrafficAutomationLogger::BeginTestLog(TEXT("Traffic.Calibration.RoadLab.PIE"));
 	UTrafficAutomationLogger::LogLine(FString::Printf(TEXT("[AAA Traffic] Version=%s"), TEXT(AAA_TRAFFIC_PLUGIN_VERSION)));
 	UTrafficAutomationLogger::LogLine(TEXT("# RoadLab Integration PIE Test"));
 	AddExpectedError(TEXT("The Editor is currently in a play mode."), EAutomationExpectedErrorFlags::Contains, 1);
 
 	UTrafficAutomationLogger::LogLine(TEXT("PIE_Begin"));
 	ADD_LATENT_AUTOMATION_COMMAND(FTrafficPIELoadMapCommand(State, MapPath, TemplateMap));
+	ADD_LATENT_AUTOMATION_COMMAND(FTrafficPIEPrepareAndCalibrateCommand(State, this));
 	ADD_LATENT_AUTOMATION_COMMAND(FStartPIECommand(false));
 	ADD_LATENT_AUTOMATION_COMMAND(FTrafficWaitForPIEWorldCommand(State, this, 10.0, FPlatformTime::Seconds()));
 	ADD_LATENT_AUTOMATION_COMMAND(FTrafficPIESpawnAndRunCommand(State, this));
@@ -604,4 +819,3 @@ bool FTrafficRoadLabIntegrationPIETest::RunTest(const FString& Parameters)
 	return false;
 #endif
 }
-

@@ -21,6 +21,10 @@
 #include "Misc/Paths.h"
 #include "Engine/AssetManager.h"
 #include "UObject/SoftObjectPath.h"
+#include "RoadFamilyRegistry.h"
+#include "TrafficLaneCalibration.h"
+#include "TrafficCalibrationTestUtils.h"
+#include "TrafficSystemEditorSubsystem.h"
 
 #if WITH_EDITOR
 
@@ -30,7 +34,7 @@ static const TCHAR* BaselineMapPackage = TEXT("/AAAtrafficSystem/Maps/Traffic_Ba
 static const float BaselineSimSeconds = 5.0f;
 static const float BaselineTickSeconds = 0.1f;
 static const float BaselineMaxLateralErrorCm = 30.0f;
-static const TCHAR* BaselineTestName = TEXT("Traffic.Runtime.BaselineStraightChaos");
+static const TCHAR* BaselineTestName = TEXT("Traffic.Calibration.BaselineStraightChaos");
 
 	struct FTrafficBaselinePIEState
 	{
@@ -299,7 +303,7 @@ static const TCHAR* BaselineTestName = TEXT("Traffic.Runtime.BaselineStraightCha
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FTrafficBaselineRuntimeTest,
-	"Traffic.Runtime.BaselineStraightChaos",
+	"Traffic.Calibration.BaselineStraightChaos",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FTrafficBaselineRuntimeTest::RunTest(const FString& Parameters)
@@ -396,6 +400,94 @@ bool FTrafficBaselineRuntimeTest::RunTest(const FString& Parameters)
 		UTrafficAutomationLogger::EndTestLog();
 		return false;
 	}
+
+	// --- Calibration + lane-on-road alignment metrics (pre-PIE) ---
+	UWorld* EditorWorld = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!EditorWorld)
+	{
+		AddError(TEXT("No editor world available after opening baseline straight map."));
+		UTrafficAutomationLogger::EndTestLog();
+		return false;
+	}
+
+	UTrafficSystemEditorSubsystem* Subsys = GEditor->GetEditorSubsystem<UTrafficSystemEditorSubsystem>();
+	if (!Subsys)
+	{
+		AddError(TEXT("TrafficSystemEditorSubsystem unavailable for calibration."));
+		UTrafficAutomationLogger::EndTestLog();
+		return false;
+	}
+
+	Subsys->DoPrepare();
+	Subsys->Editor_PrepareMapForTraffic();
+
+	URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get();
+	if (!Registry || Registry->GetAllFamilies().Num() == 0)
+	{
+		AddError(TEXT("No road families detected for calibration. Ensure CityBLD roads are loaded."));
+		UTrafficAutomationLogger::EndTestLog();
+		return false;
+	}
+
+	FGuid FamilyId;
+	for (const FRoadFamilyInfo& Info : Registry->GetAllFamilies())
+	{
+		const FString ClassName = Info.RoadClassPath.GetAssetName();
+		if (ClassName.Contains(TEXT("BP_MeshRoad")) || ClassName.Contains(TEXT("MeshRoad")))
+		{
+			if (Subsys->GetNumActorsForFamily(Info.FamilyId) > 0)
+			{
+				FamilyId = Info.FamilyId;
+				break;
+			}
+		}
+	}
+	if (!FamilyId.IsValid())
+	{
+		// Fall back to the first family that exists in the level.
+		for (const FRoadFamilyInfo& Info : Registry->GetAllFamilies())
+		{
+			if (Subsys->GetNumActorsForFamily(Info.FamilyId) > 0)
+			{
+				FamilyId = Info.FamilyId;
+				break;
+			}
+		}
+	}
+	if (!FamilyId.IsValid())
+	{
+		AddError(TEXT("No road family with instances found for calibration."));
+		UTrafficAutomationLogger::EndTestLog();
+		return false;
+	}
+
+	TrafficCalibrationTestUtils::FAlignmentEvalParams EvalParams;
+	TrafficCalibrationTestUtils::FAlignmentThresholds Thresholds;
+	TrafficCalibrationTestUtils::FAlignmentMetrics AlignMetrics;
+	FTrafficLaneFamilyCalibration FinalCalib;
+
+	const FString MetricPrefix = FString::Printf(TEXT("%s.Align"), BaselineTestName);
+	const bool bAlignOk = TrafficCalibrationTestUtils::RunEditorCalibrationLoop(
+		this,
+		EditorWorld,
+		Subsys,
+		MetricPrefix,
+		FamilyId,
+		/*MaxIterations=*/5,
+		EvalParams,
+		Thresholds,
+		AlignMetrics,
+		FinalCalib);
+
+	if (!bAlignOk)
+	{
+		AddError(TEXT("Calibration alignment thresholds not met (see logged metrics)."));
+		UTrafficAutomationLogger::EndTestLog();
+		return false;
+	}
+
+	// Clean up any temporary overlay/controller actors before starting PIE.
+	Subsys->ResetRoadLab();
 
 	TSharedRef<FTrafficBaselinePIEState> State = MakeShared<FTrafficBaselinePIEState>();
 	AddExpectedError(TEXT("The Editor is currently in a play mode."), EAutomationExpectedErrorFlags::Contains, 3);
