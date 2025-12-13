@@ -7,6 +7,7 @@
 #include "DynamicMesh/DynamicMeshAttributeSet.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "TrafficGeometrySmoothing.h"
 #include "TrafficRuntimeModule.h"
 #include "TrafficRoadTypes.h"
 
@@ -56,6 +57,46 @@ namespace
 
 			OutPoints.Add(Pos);
 		}
+	}
+
+	static void BuildSmoothCenterline(const USplineComponent* ControlSpline, const TArray<FVector>& CollectedVerts, TArray<FVector>& OutPoints)
+	{
+		OutPoints.Reset();
+		if (!ControlSpline)
+		{
+			return;
+		}
+
+		TArray<FVector> GuideSpline;
+		SampleControlSpline(ControlSpline, TArray<FVector>(), GuideSpline);
+
+		TArray<FVector> MeshSpline;
+		SampleControlSpline(ControlSpline, CollectedVerts, MeshSpline);
+
+		if (GuideSpline.Num() < 2 || MeshSpline.Num() < 2)
+		{
+			OutPoints = (MeshSpline.Num() >= 2) ? MeshSpline : GuideSpline;
+			return;
+		}
+
+		const float SpikeThreshold = FMath::DegreesToRadians(35.f);
+		TArray<FIntPoint> SpikeIntervals;
+		TrafficGeometrySmoothing::DetectCurvatureSpikes(GuideSpline, SpikeThreshold, SpikeIntervals);
+
+		TArray<FVector> GuideFixed;
+		TrafficGeometrySmoothing::ReplaceSpikeRegions(GuideSpline, SpikeIntervals, GuideFixed);
+
+		TArray<float> Weights;
+		const float DistThreshold = 200.f; // cm
+		TrafficGeometrySmoothing::ComputeBlendWeights(GuideFixed, MeshSpline, SpikeThreshold, DistThreshold, Weights);
+
+		TArray<FVector> Blended;
+		TrafficGeometrySmoothing::BlendPolylinesWeighted(GuideFixed, MeshSpline, Weights, Blended);
+
+		TArray<TrafficGeometrySmoothing::FBezierSegment> BezierSegments;
+		TrafficGeometrySmoothing::CatmullRomToBezier(Blended, BezierSegments);
+
+		TrafficGeometrySmoothing::SampleBezierSegments(BezierSegments, 5, OutPoints);
 	}
 }
 
@@ -168,20 +209,16 @@ bool UCityBLDRoadGeometryProvider::BuildCenterlineFromCityBLDRoad(const AActor* 
 			continue;
 		}
 
-		const int32 VertexCount = Mesh->VertexCount();
-		for (int32 Vid = 0; Vid < VertexCount; ++Vid)
+		for (int32 Vid : Mesh->VertexIndicesItr())
 		{
-			if (Mesh->IsVertex(Vid))
-			{
-				const FVector3d PosD = Mesh->GetVertex(Vid);
-				CollectedVerts.Add(Xform.TransformPosition(static_cast<FVector>(PosD)));
-			}
+			const FVector3d PosD = Mesh->GetVertex(Vid);
+			CollectedVerts.Add(Xform.TransformPosition(static_cast<FVector>(PosD)));
 		}
 	}
 	UE_LOG(LogTraffic, Warning, TEXT("[CityBLD] %s collected %d dynamic mesh vertices"),
 		*Actor->GetName(), CollectedVerts.Num());
 
-	SampleControlSpline(ControlSpline, CollectedVerts, OutPoints);
+	BuildSmoothCenterline(ControlSpline, CollectedVerts, OutPoints);
 	UE_LOG(LogTraffic, Warning, TEXT("[CityBLD] %s produced %d centreline points"), *Actor->GetName(), OutPoints.Num());
 	return OutPoints.Num() >= 2;
 }
