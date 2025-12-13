@@ -33,6 +33,7 @@
 #include "EngineUtils.h"
 #include "TrafficGeometryProviderFactory.h"
 #include "TrafficGeometryProvider.h"
+#include "ZoneGraphCalibrationUtils.h"
 
 const FName UTrafficSystemEditorSubsystem::RoadLabTag = FName(TEXT("AAA_RoadLab"));
 
@@ -1122,21 +1123,26 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 	}
 
 	TagAsRoadLab(Overlay);
-	const int32 ClampedForward = FMath::Clamp(FamilyInfo->FamilyDefinition.Forward.NumLanes, 1, 5);
-	const int32 ClampedBackward = FMath::Clamp(FamilyInfo->FamilyDefinition.Backward.NumLanes, 1, 5);
-	const float ClampedLaneWidth = FMath::Clamp(FamilyInfo->FamilyDefinition.Forward.LaneWidthCm, 200.f, 500.f);
+	FTrafficLaneFamilyCalibration Calib;
+	bool bUsedZoneGraph = false;
+	if (RoadActor->GetClass()->GetName().Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase))
+	{
+		bUsedZoneGraph = ComputeCalibrationFromZoneGraph(World, CenterlinePoints, Calib);
+	}
+
+	if (!bUsedZoneGraph)
+	{
+		Calib.NumLanesPerSideForward = FMath::Clamp(FamilyInfo->FamilyDefinition.Forward.NumLanes, 1, 5);
+		Calib.NumLanesPerSideBackward = FMath::Clamp(FamilyInfo->FamilyDefinition.Backward.NumLanes, 0, 5);
+		Calib.LaneWidthCm = FMath::Clamp(FamilyInfo->FamilyDefinition.Forward.LaneWidthCm, 200.f, 500.f);
+		Calib.CenterlineOffsetCm = FamilyInfo->FamilyDefinition.Forward.InnerLaneCenterOffsetCm;
+	}
 
 	Overlay->ApplyCalibrationSettings(
-		ClampedForward,
-		ClampedBackward,
-		ClampedLaneWidth,
-		FamilyInfo->FamilyDefinition.Forward.InnerLaneCenterOffsetCm);
-
-	FTrafficLaneFamilyCalibration Calib;
-	Calib.NumLanesPerSideForward = ClampedForward;
-	Calib.NumLanesPerSideBackward = ClampedBackward;
-	Calib.LaneWidthCm = ClampedLaneWidth;
-	Calib.CenterlineOffsetCm = FamilyInfo->FamilyDefinition.Forward.InnerLaneCenterOffsetCm;
+		Calib.NumLanesPerSideForward,
+		Calib.NumLanesPerSideBackward,
+		Calib.LaneWidthCm,
+		Calib.CenterlineOffsetCm);
 
 	Overlay->BuildFromCenterline(CenterlinePoints, Calib, RoadActor->GetActorTransform());
 #if WITH_EDITOR

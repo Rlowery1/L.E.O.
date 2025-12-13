@@ -25,7 +25,8 @@ public class TrafficEditor : ModuleRules
 			"EditorSubsystem",
 			"PropertyEditor",
 			"InputCore",
-			"TrafficRuntime"
+			"TrafficRuntime",
+			"ZoneGraph"
 		});
 	}
 }
