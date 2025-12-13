@@ -269,6 +269,42 @@ namespace TrafficGeometrySmoothing
 		}
 	}
 
+	// Chaikin corner-cutting smoothing for open polylines. Preserves endpoints.
+	inline void ChaikinSmooth(const TArray<FVector>& InPoints, int32 Iterations, TArray<FVector>& OutPoints)
+	{
+		OutPoints.Reset();
+		if (Iterations <= 0 || InPoints.Num() < 3)
+		{
+			OutPoints = InPoints;
+			return;
+		}
+
+		TArray<FVector> Work = InPoints;
+		TArray<FVector> Next;
+
+		for (int32 Iter = 0; Iter < Iterations; ++Iter)
+		{
+			Next.Reset();
+			Next.Reserve(Work.Num() * 2);
+
+			Next.Add(Work[0]);
+			for (int32 i = 0; i < Work.Num() - 1; ++i)
+			{
+				const FVector& P0 = Work[i];
+				const FVector& P1 = Work[i + 1];
+				const FVector Q = (0.75f * P0) + (0.25f * P1);
+				const FVector R = (0.25f * P0) + (0.75f * P1);
+				Next.Add(Q);
+				Next.Add(R);
+			}
+			Next.Add(Work.Last());
+
+			Work = Next;
+		}
+
+		OutPoints = MoveTemp(Work);
+	}
+
 	// Convert a polyline to uniform Catmull-Rom and then to cubic Bézier segments.
 	inline void CatmullRomToBezier(const TArray<FVector>& Points, TArray<FBezierSegment>& OutSegments)
 	{

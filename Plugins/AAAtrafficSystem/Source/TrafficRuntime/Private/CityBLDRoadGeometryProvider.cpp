@@ -62,42 +62,37 @@ namespace
 	static void BuildSmoothCenterline(const USplineComponent* ControlSpline, const TArray<FVector>& CollectedVerts, TArray<FVector>& OutPoints)
 	{
 		OutPoints.Reset();
+		(void)CollectedVerts;
 		if (!ControlSpline)
 		{
 			return;
 		}
 
-		TArray<FVector> GuideSpline;
-		SampleControlSpline(ControlSpline, TArray<FVector>(), GuideSpline);
-
-		TArray<FVector> MeshSpline;
-		SampleControlSpline(ControlSpline, CollectedVerts, MeshSpline);
-
-		if (GuideSpline.Num() < 2 || MeshSpline.Num() < 2)
+		// 1. Sample the control spline directly (ignore mesh midpoints).
+		TArray<FVector> GuideSamples;
+		SampleControlSpline(ControlSpline, TArray<FVector>(), GuideSamples);
+		if (GuideSamples.Num() < 2)
 		{
-			OutPoints = (MeshSpline.Num() >= 2) ? MeshSpline : GuideSpline;
+			OutPoints = GuideSamples;
 			return;
 		}
 
-		const float SpikeThreshold = FMath::DegreesToRadians(35.f);
+		// 2. Detect sharp corners and replace them with smooth Bézier segments.
+		const float SpikeThreshold = FMath::DegreesToRadians(35.f); // threshold for curvature spikes
 		TArray<FIntPoint> SpikeIntervals;
-		TrafficGeometrySmoothing::DetectCurvatureSpikes(GuideSpline, SpikeThreshold, SpikeIntervals);
+		TrafficGeometrySmoothing::DetectCurvatureSpikes(GuideSamples, SpikeThreshold, SpikeIntervals);
 
 		TArray<FVector> GuideFixed;
-		TrafficGeometrySmoothing::ReplaceSpikeRegions(GuideSpline, SpikeIntervals, GuideFixed);
+		TrafficGeometrySmoothing::ReplaceSpikeRegions(GuideSamples, SpikeIntervals, GuideFixed);
 
-		TArray<float> Weights;
-		const float DistThreshold = 200.f; // cm
-		const float AngleThreshold = FMath::DegreesToRadians(20.f); // max tangent deviation to trust mesh
-		TrafficGeometrySmoothing::ComputeBlendWeights(GuideFixed, MeshSpline, SpikeThreshold, DistThreshold, AngleThreshold, Weights);
+		// 3. Apply Chaikin smoothing to reduce jitter.
+		TArray<FVector> Smoothed;
+		TrafficGeometrySmoothing::ChaikinSmooth(GuideFixed, 1, Smoothed);
 
-		TArray<FVector> Blended;
-		TrafficGeometrySmoothing::BlendPolylinesWeighted(GuideFixed, MeshSpline, Weights, Blended);
-
-		TArray<TrafficGeometrySmoothing::FBezierSegment> BezierSegments;
-		TrafficGeometrySmoothing::CatmullRomToBezier(Blended, BezierSegments);
-
-		TrafficGeometrySmoothing::SampleBezierSegments(BezierSegments, 5, OutPoints);
+		// 4. Convert to cubic Bézier segments and resample for a smooth final centreline.
+		TArray<TrafficGeometrySmoothing::FBezierSegment> Segments;
+		TrafficGeometrySmoothing::CatmullRomToBezier(Smoothed, Segments);
+		TrafficGeometrySmoothing::SampleBezierSegments(Segments, 5, OutPoints);
 	}
 }
 
