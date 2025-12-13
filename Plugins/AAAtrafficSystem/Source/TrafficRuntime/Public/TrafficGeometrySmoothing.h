@@ -189,13 +189,16 @@ namespace TrafficGeometrySmoothing
 		}
 	}
 
-	// Compute blending weights between guide and mesh candidates based on curvature and positional differences.
-	// Higher weights favour the mesh candidate. Endpoints are always assigned zero weight.
+	// Compute blending weights between guide and mesh candidates based on curvature, positional
+	// differences, and tangent alignment. Higher weights favour the mesh candidate. Endpoints
+	// are always assigned zero weight. AngleThresholdRad controls how far mesh tangents may
+	// deviate from guide tangents before the mesh is ignored.
 	inline void ComputeBlendWeights(
 		const TArray<FVector>& Guide,
 		const TArray<FVector>& Mesh,
 		float CurvThresholdRad,
 		float DistThreshold,
+		float AngleThresholdRad,
 		TArray<float>& OutWeights)
 	{
 		const int32 Count = FMath::Min(Guide.Num(), Mesh.Num());
@@ -224,6 +227,22 @@ namespace TrafficGeometrySmoothing
 			if (Dist2D > DistThreshold)
 			{
 				Weight += 0.5f;
+			}
+
+			// Tangent alignment: if mesh tangents deviate too much from guide tangents, ignore the mesh.
+			if (AngleThresholdRad > 0.f && i > 0 && i + 1 < Count)
+			{
+				FVector2D GDir(Guide[i + 1].X - Guide[i - 1].X, Guide[i + 1].Y - Guide[i - 1].Y);
+				FVector2D MDir(Mesh[i + 1].X - Mesh[i - 1].X, Mesh[i + 1].Y - Mesh[i - 1].Y);
+				if (GDir.Normalize() && MDir.Normalize())
+				{
+					const float Dot = FMath::Clamp(FVector2D::DotProduct(GDir, MDir), -1.f, 1.f);
+					const float Ang = FMath::Acos(Dot);
+					if (Ang > AngleThresholdRad)
+					{
+						Weight = 0.f;
+					}
+				}
 			}
 
 			OutWeights[i] = FMath::Clamp(Weight, 0.f, 1.f);
@@ -306,4 +325,3 @@ namespace TrafficGeometrySmoothing
 		}
 	}
 }
-

@@ -88,7 +88,8 @@ namespace
 
 		TArray<float> Weights;
 		const float DistThreshold = 200.f; // cm
-		TrafficGeometrySmoothing::ComputeBlendWeights(GuideFixed, MeshSpline, SpikeThreshold, DistThreshold, Weights);
+		const float AngleThreshold = FMath::DegreesToRadians(20.f); // max tangent deviation to trust mesh
+		TrafficGeometrySmoothing::ComputeBlendWeights(GuideFixed, MeshSpline, SpikeThreshold, DistThreshold, AngleThreshold, Weights);
 
 		TArray<FVector> Blended;
 		TrafficGeometrySmoothing::BlendPolylinesWeighted(GuideFixed, MeshSpline, Weights, Blended);
