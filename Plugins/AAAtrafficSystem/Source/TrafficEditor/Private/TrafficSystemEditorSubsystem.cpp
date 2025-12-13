@@ -1072,11 +1072,19 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 
 	TArray<AActor*> ActorsBefore;
 	GetActorsForFamily(FamilyId, ActorsBefore);
+	ActorsBefore.RemoveAll([&](AActor* Actor)
+	{
+		return !Actor || Actor->Tags.Contains(RoadLabTag);
+	});
 
 	auto WarnIfMissing = [&](const TCHAR* Context)
 	{
 		TArray<AActor*> ActorsAfter;
 		GetActorsForFamily(FamilyId, ActorsAfter);
+		ActorsAfter.RemoveAll([&](AActor* Actor)
+		{
+			return !Actor || Actor->Tags.Contains(RoadLabTag);
+		});
 
 		int32 MissingCount = 0;
 		for (AActor* Actor : ActorsBefore)
@@ -1136,7 +1144,15 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 	// Cleanup previous preview actors.
 	if (ActiveCalibrationRoadActor.IsValid())
 	{
-		ActiveCalibrationRoadActor->Destroy();
+		if (AActor* Prev = ActiveCalibrationRoadActor.Get())
+		{
+			// Only destroy actors we spawned for the RoadLab flow. Never destroy user road actors.
+			if (Prev->Tags.Contains(RoadLabTag))
+			{
+				Prev->Destroy();
+			}
+		}
+		ActiveCalibrationRoadActor.Reset();
 	}
 	if (CalibrationOverlayActor.IsValid())
 	{
@@ -1146,13 +1162,27 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 
 	if (!RoadActor)
 	{
-		RoadActor = World->SpawnActor<AActor>(RoadClass, FTransform::Identity, SpawnParams);
+		// Prefer an existing road actor from the level (safer for procedural road kits that may rebuild on spawn).
+		for (AActor* Existing : ActorsBefore)
+		{
+			if (Existing && Existing->IsA(RoadClass))
+			{
+				RoadActor = Existing;
+				break;
+			}
+		}
+
 		if (!RoadActor)
 		{
-			UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] BeginCalibrationForFamily: Failed to spawn road actor of class %s"), *RoadClass->GetName());
-			return;
+			// Fallback: spawn a preview instance if none exists (should be rare since NumInstances > 0).
+			RoadActor = World->SpawnActor<AActor>(RoadClass, FTransform::Identity, SpawnParams);
+			if (!RoadActor)
+			{
+				UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] BeginCalibrationForFamily: Failed to spawn road actor of class %s"), *RoadClass->GetName());
+				return;
+			}
+			TagAsRoadLab(RoadActor);
 		}
-		TagAsRoadLab(RoadActor);
 	}
 
 	TArray<TObjectPtr<UObject>> ProviderObjects;
@@ -1323,6 +1353,10 @@ void UTrafficSystemEditorSubsystem::Editor_BakeCalibrationForActiveFamily()
 
 	TArray<AActor*> ActorsBefore;
 	GetActorsForFamily(ActiveFamilyId, ActorsBefore);
+	ActorsBefore.RemoveAll([&](AActor* Actor)
+	{
+		return !Actor || Actor->Tags.Contains(RoadLabTag);
+	});
 
 	const bool bAutomationOrCmdlet = IsRunningCommandlet() || GIsAutomationTesting;
 
@@ -1330,6 +1364,10 @@ void UTrafficSystemEditorSubsystem::Editor_BakeCalibrationForActiveFamily()
 	{
 		TArray<AActor*> ActorsAfter;
 		GetActorsForFamily(ActiveFamilyId, ActorsAfter);
+		ActorsAfter.RemoveAll([&](AActor* Actor)
+		{
+			return !Actor || Actor->Tags.Contains(RoadLabTag);
+		});
 
 		int32 MissingCount = 0;
 		for (AActor* Actor : ActorsBefore)
