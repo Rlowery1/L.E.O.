@@ -71,13 +71,14 @@ namespace TrafficCalibrationTestUtils
 	bool RunEditorCalibrationLoop(
 		FAutomationTestBase* Test,
 		UWorld* World,
-		UTrafficSystemEditorSubsystem* Subsys,
-		const FString& MetricPrefix,
-		const FGuid& FamilyId,
-		int32 MaxIterations,
-		const FAlignmentEvalParams& EvalParams,
-		const FAlignmentThresholds& Thresholds,
-		FAlignmentMetrics& OutFinalMetrics,
-		FTrafficLaneFamilyCalibration& OutFinalCalibration);
+        UTrafficSystemEditorSubsystem* Subsys,
+        const FString& MetricPrefix,
+        const FGuid& FamilyId,
+        int32 MaxIterations,
+        const FAlignmentEvalParams& EvalParams,
+        const FAlignmentThresholds& Thresholds,
+        FAlignmentMetrics& OutFinalMetrics,
+        FTrafficLaneFamilyCalibration& OutFinalCalibration,
+        double MaxWallSeconds = 30.0);
 }
 

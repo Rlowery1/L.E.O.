@@ -2,6 +2,7 @@
 
 #include "LaneCalibrationOverlayActor.h"
 #include "Misc/AutomationTest.h"
+#include "HAL/PlatformTime.h"
 #include "RoadFamilyRegistry.h"
 #include "TrafficAutomationLogger.h"
 #include "TrafficLaneCalibration.h"
@@ -379,17 +380,18 @@ bool TrafficCalibrationTestUtils::RunEditorCalibrationLoop(
 	UWorld* World,
 	UTrafficSystemEditorSubsystem* Subsys,
 	const FString& MetricPrefix,
-	const FGuid& FamilyId,
-	int32 MaxIterations,
-	const FAlignmentEvalParams& EvalParams,
-	const FAlignmentThresholds& Thresholds,
-	FAlignmentMetrics& OutFinalMetrics,
-	FTrafficLaneFamilyCalibration& OutFinalCalibration)
+        const FGuid& FamilyId,
+        int32 MaxIterations,
+        const FAlignmentEvalParams& EvalParams,
+        const FAlignmentThresholds& Thresholds,
+        FAlignmentMetrics& OutFinalMetrics,
+        FTrafficLaneFamilyCalibration& OutFinalCalibration,
+        double MaxWallSeconds)
 {
-	OutFinalMetrics = FAlignmentMetrics();
-	OutFinalCalibration = FTrafficLaneFamilyCalibration();
+        OutFinalMetrics = FAlignmentMetrics();
+        OutFinalCalibration = FTrafficLaneFamilyCalibration();
 
-	if (!World || !Subsys)
+        if (!World || !Subsys)
 	{
 		return false;
 	}
@@ -410,13 +412,26 @@ bool TrafficCalibrationTestUtils::RunEditorCalibrationLoop(
 	Current.LaneWidthCm = RoadSettings->Families[0].Forward.LaneWidthCm;
 	Current.CenterlineOffsetCm = RoadSettings->Families[0].Forward.InnerLaneCenterOffsetCm;
 
-	MaxIterations = FMath::Clamp(MaxIterations, 1, 10);
+        MaxIterations = FMath::Clamp(MaxIterations, 1, 10);
 
-	for (int32 Iter = 1; Iter <= MaxIterations; ++Iter)
-	{
-		UTrafficAutomationLogger::LogLine(FString::Printf(TEXT("%s.Iteration=%d"), *MetricPrefix, Iter));
+        const double StartTime = FPlatformTime::Seconds();
+        const double Deadline = StartTime + FMath::Max(1.0, MaxWallSeconds);
 
-		Subsys->Editor_BeginCalibrationForFamily(FamilyId);
+        for (int32 Iter = 1; Iter <= MaxIterations; ++Iter)
+        {
+                UTrafficAutomationLogger::LogLine(FString::Printf(TEXT("%s.Iteration=%d"), *MetricPrefix, Iter));
+
+                if (FPlatformTime::Seconds() > Deadline)
+                {
+                        if (Test)
+                        {
+                                Test->AddError(TEXT("Calibration loop exceeded allotted wall time."));
+                        }
+                        UTrafficAutomationLogger::LogLine(TEXT("Error=CalibrationTimeout"));
+                        return false;
+                }
+
+                Subsys->Editor_BeginCalibrationForFamily(FamilyId);
 
 		ALaneCalibrationOverlayActor* Overlay = nullptr;
 		for (TActorIterator<ALaneCalibrationOverlayActor> It(World); It; ++It)

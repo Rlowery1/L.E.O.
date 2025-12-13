@@ -30,6 +30,7 @@
 #include "TrafficVehicleBase.h"
 #include "TrafficCalibrationTestUtils.h"
 #include "Components/PrimitiveComponent.h"
+#include "HAL/PlatformTime.h"
 
 namespace
 {
@@ -508,21 +509,47 @@ bool FTrafficPIESpawnAndRunCommand::Update()
 		return true;
 	}
 
-	UTrafficAutomationLogger::LogLine(FString::Printf(TEXT("PIE_VehicleCount=%d"), VehicleCount));
+        UTrafficAutomationLogger::LogLine(FString::Printf(TEXT("PIE_VehicleCount=%d"), VehicleCount));
 
-	State->Metrics.VehiclesSpawned = VehicleCount;
-	const float SimDuration = 3.0f;
-	const float SimStep = 0.1f;
-	float Simulated = 0.0f;
-	while (Simulated < SimDuration)
-	{
-		PIEWorld->Tick(LEVELTICK_All, SimStep);
-		SampleVehicleMetrics(PIEWorld, State->Metrics, SimStep);
-		Simulated += SimStep;
-	}
-	State->Metrics.SimulatedSeconds = Simulated;
-	State->Metrics.Finalize();
-	UTrafficAutomationLogger::LogRunMetrics(TEXT("Traffic.Calibration.RoadLab.PIE"), State->Metrics);
+        State->Metrics.VehiclesSpawned = VehicleCount;
+        const float SimDuration = 3.0f;
+        const float SimStep = 0.1f;
+        float Simulated = 0.0f;
+        const int32 MaxSteps = 200;
+        int32 StepsTaken = 0;
+        const double SimDeadline = FPlatformTime::Seconds() + 15.0;
+        while (Simulated < SimDuration && StepsTaken < MaxSteps)
+        {
+                PIEWorld->Tick(LEVELTICK_All, SimStep);
+                SampleVehicleMetrics(PIEWorld, State->Metrics, SimStep);
+                Simulated += SimStep;
+                ++StepsTaken;
+
+                if (FPlatformTime::Seconds() > SimDeadline)
+                {
+                        State->bFailed = true;
+                        State->FailureMessage = TEXT("SimLoopTimeout");
+                        UTrafficAutomationLogger::LogLine(TEXT("Error=SimLoopTimeout"));
+                        if (Test)
+                        {
+                                Test->AddError(TEXT("PIE simulation loop exceeded wall-clock timeout."));
+                        }
+                        break;
+                }
+        }
+        if (Simulated < SimDuration && !State->bFailed)
+        {
+                State->bFailed = true;
+                State->FailureMessage = TEXT("SimLoopEarlyExit");
+                UTrafficAutomationLogger::LogLine(TEXT("Error=SimLoopEarlyExit"));
+                if (Test)
+                {
+                        Test->AddError(TEXT("PIE simulation loop stopped before expected duration."));
+                }
+        }
+        State->Metrics.SimulatedSeconds = Simulated;
+        State->Metrics.Finalize();
+        UTrafficAutomationLogger::LogRunMetrics(TEXT("Traffic.Calibration.RoadLab.PIE"), State->Metrics);
 
 	UTrafficAutomationLogger::LogLine(TEXT("PIE_Result=Success"));
 #endif
@@ -763,19 +790,35 @@ bool FTrafficRoadLabIntegrationTest::RunTest(const FString& Parameters)
 
 	Metrics.VehiclesSpawned = VehicleCount;
 
-	// Run a short simulated loop to gather motion metrics.
-	const float SimDuration = 3.0f;
-	const float SimStep = 0.1f;
-	float Simulated = 0.0f;
-	while (Simulated < SimDuration)
-	{
-		TickEditorWorld(World, SimStep);
-		SampleVehicleMetrics(World, Metrics, SimStep);
-		Simulated += SimStep;
-	}
-	Metrics.SimulatedSeconds = Simulated;
-	Metrics.Finalize();
-	UTrafficAutomationLogger::LogRunMetrics(LocalTestName, Metrics);
+        // Run a short simulated loop to gather motion metrics.
+        const float SimDuration = 3.0f;
+        const float SimStep = 0.1f;
+        float Simulated = 0.0f;
+        const int32 MaxSteps = 200;
+        int32 StepsTaken = 0;
+        const double SimDeadline = FPlatformTime::Seconds() + 15.0;
+        while (Simulated < SimDuration && StepsTaken < MaxSteps)
+        {
+                TickEditorWorld(World, SimStep);
+                SampleVehicleMetrics(World, Metrics, SimStep);
+                Simulated += SimStep;
+                ++StepsTaken;
+
+                if (FPlatformTime::Seconds() > SimDeadline)
+                {
+                        AddError(TEXT("RoadLab integration simulation exceeded wall-clock timeout."));
+                        UTrafficAutomationLogger::LogLine(TEXT("Error=SimLoopTimeout"));
+                        break;
+                }
+        }
+        if (Simulated < SimDuration)
+        {
+                UTrafficAutomationLogger::LogLine(TEXT("Error=SimLoopEarlyExit"));
+                AddError(TEXT("RoadLab integration simulation stopped before expected duration."));
+        }
+        Metrics.SimulatedSeconds = Simulated;
+        Metrics.Finalize();
+        UTrafficAutomationLogger::LogRunMetrics(LocalTestName, Metrics);
 
 	UTrafficAutomationLogger::LogLine(TEXT("Result=Success"));
 	UTrafficAutomationLogger::EndTestLog();

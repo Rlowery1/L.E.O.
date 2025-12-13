@@ -25,6 +25,7 @@
 #include "TrafficLaneCalibration.h"
 #include "TrafficCalibrationTestUtils.h"
 #include "TrafficSystemEditorSubsystem.h"
+#include "HAL/PlatformTime.h"
 
 #if WITH_EDITOR
 
@@ -170,47 +171,67 @@ static const TCHAR* BaselineTestName = TEXT("Traffic.Calibration.BaselineStraigh
 			DebugMeshCVar = CVar->GetInt();
 		}
 
-		TMap<ATrafficVehicleBase*, float> PrevS;
-		float Simulated = 0.f;
+                TMap<ATrafficVehicleBase*, float> PrevS;
+                float Simulated = 0.f;
+                const int32 MaxSteps = 200;
+                int32 StepsTaken = 0;
+                const double SimDeadline = FPlatformTime::Seconds() + 15.0;
 
-		while (Simulated < BaselineSimSeconds)
-		{
-			World->Tick(LEVELTICK_All, BaselineTickSeconds);
-			Simulated += BaselineTickSeconds;
+                while (Simulated < BaselineSimSeconds && StepsTaken < MaxSteps)
+                {
+                        World->Tick(LEVELTICK_All, BaselineTickSeconds);
+                        Simulated += BaselineTickSeconds;
+                        ++StepsTaken;
 
-			State->LogicCount = 0;
-			for (TActorIterator<ATrafficVehicleBase> It(World); It; ++It)
-			{
-				ATrafficVehicleBase* Vehicle = *It;
-				++State->LogicCount;
+                        State->LogicCount = 0;
+                        for (TActorIterator<ATrafficVehicleBase> It(World); It; ++It)
+                        {
+                                ATrafficVehicleBase* Vehicle = *It;
+                                ++State->LogicCount;
 
-				FLaneProjectionResult Proj;
-				if (FindBestLaneProjection(Lanes, Vehicle->GetActorLocation(), Vehicle->GetActorForwardVector(), Proj))
-				{
-					State->MaxLateralError = FMath::Max(State->MaxLateralError, FMath::Abs(Proj.LateralOffsetCm));
-					State->MinS = FMath::Min(State->MinS, Proj.S);
-					State->MaxS = FMath::Max(State->MaxS, Proj.S);
+                                FLaneProjectionResult Proj;
+                                if (FindBestLaneProjection(Lanes, Vehicle->GetActorLocation(), Vehicle->GetActorForwardVector(), Proj))
+                                {
+                                        State->MaxLateralError = FMath::Max(State->MaxLateralError, FMath::Abs(Proj.LateralOffsetCm));
+                                        State->MinS = FMath::Min(State->MinS, Proj.S);
+                                        State->MaxS = FMath::Max(State->MaxS, Proj.S);
 
-					const float* Prev = PrevS.Find(Vehicle);
-					if (Prev)
-					{
-						const float Speed = (BaselineTickSeconds > KINDA_SMALL_NUMBER)
-							? (Proj.S - *Prev) / BaselineTickSeconds
-							: 0.f;
-						State->FinalSpeed = Speed;
-						if (Speed < 0.f && Test)
-						{
-							Test->AddWarning(TEXT("Observed negative speed sample during baseline run."));
-						}
-						if (Proj.S + 1.0f < *Prev)
-						{
-							State->bMonotonicS = false;
-						}
-					}
-					PrevS.Add(Vehicle, Proj.S);
-				}
-			}
-		}
+                                        const float* Prev = PrevS.Find(Vehicle);
+                                        if (Prev)
+                                        {
+                                                const float Speed = (BaselineTickSeconds > KINDA_SMALL_NUMBER)
+                                                        ? (Proj.S - *Prev) / BaselineTickSeconds
+                                                        : 0.f;
+                                                State->FinalSpeed = Speed;
+                                                if (Speed < 0.f && Test)
+                                                {
+                                                        Test->AddWarning(TEXT("Observed negative speed sample during baseline run."));
+                                                }
+                                                if (Proj.S + 1.0f < *Prev)
+                                                {
+                                                        State->bMonotonicS = false;
+                                                }
+                                        }
+                                        PrevS.Add(Vehicle, Proj.S);
+                                }
+                        }
+
+                        if (FPlatformTime::Seconds() > SimDeadline)
+                        {
+                                State->bFailed = true;
+                                State->FailureMessage = TEXT("SimLoopTimeout");
+                                if (Test)
+                                {
+                                        Test->AddError(TEXT("Baseline PIE simulation exceeded wall-clock timeout."));
+                                }
+                                break;
+                        }
+                }
+                if (Simulated < BaselineSimSeconds)
+                {
+                        State->bFailed = true;
+                        State->FailureMessage = TEXT("SimLoopEarlyExit");
+                }
 
 		State->Metrics.VehiclesSpawned = State->LogicCount;
 		State->Metrics.SimulatedSeconds = Simulated;
