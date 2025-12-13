@@ -22,7 +22,8 @@ public class TrafficTests : ModuleRules
 			"Projects",
 			"FunctionalTesting",
 			"DeveloperSettings",
-			"Engine"
+			"Engine",
+			"GeometryFramework"
 		});
 	}
 }

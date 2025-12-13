@@ -25,6 +25,8 @@ namespace
 		const int32 SampleCount = FMath::Clamp(static_cast<int32>(Length / 200.f), 10, 200);
 		OutPoints.Reserve(SampleCount + 1);
 		const FVector Up(0.f, 0.f, 1.f);
+		const float ApproxStep = (SampleCount > 0) ? (Length / static_cast<float>(SampleCount)) : 200.f;
+		const float SliceHalfLength = FMath::Clamp(ApproxStep * 1.5f, 100.f, 600.f);
 
 		for (int32 i = 0; i <= SampleCount; ++i)
 		{
@@ -42,16 +44,28 @@ namespace
 
 					float MinDist = FLT_MAX;
 					float MaxDist = -FLT_MAX;
+					int32 InSlice = 0;
 					for (const FVector& V : Vertices)
 					{
-						const float D = FVector::DotProduct(V - Pos, Right);
+						const FVector Delta = V - Pos;
+						const float Along = FVector::DotProduct(Delta, Tangent);
+						if (FMath::Abs(Along) > SliceHalfLength)
+						{
+							continue;
+						}
+
+						const float D = FVector::DotProduct(Delta, Right);
 						MinDist = FMath::Min(MinDist, D);
 						MaxDist = FMath::Max(MaxDist, D);
+						++InSlice;
 					}
 
-					const float Mid = 0.5f * (MinDist + MaxDist);
-					OutPoints.Add(Pos + Right * Mid);
-					continue;
+					if (InSlice >= 16 && MinDist < MaxDist)
+					{
+						const float Mid = 0.5f * (MinDist + MaxDist);
+						OutPoints.Add(Pos + Right * Mid);
+						continue;
+					}
 				}
 			}
 
@@ -62,22 +76,21 @@ namespace
 	static void BuildSmoothCenterline(const USplineComponent* ControlSpline, const TArray<FVector>& CollectedVerts, TArray<FVector>& OutPoints)
 	{
 		OutPoints.Reset();
-		(void)CollectedVerts;
 		if (!ControlSpline)
 		{
 			return;
 		}
 
-		// 1. Sample the control spline directly (ignore mesh midpoints).
+		// 1. Sample the control spline and (when available) fit its midline to the generated road mesh.
 		TArray<FVector> GuideSamples;
-		SampleControlSpline(ControlSpline, TArray<FVector>(), GuideSamples);
+		SampleControlSpline(ControlSpline, CollectedVerts, GuideSamples);
 		if (GuideSamples.Num() < 2)
 		{
 			OutPoints = GuideSamples;
 			return;
 		}
 
-		// 2. Detect sharp corners and replace them with smooth Bézier segments.
+		// 2. Detect sharp corners and replace them with smooth Bezier segments.
 		const float SpikeThreshold = FMath::DegreesToRadians(35.f); // threshold for curvature spikes
 		TArray<FIntPoint> SpikeIntervals;
 		TrafficGeometrySmoothing::DetectCurvatureSpikes(GuideSamples, SpikeThreshold, SpikeIntervals);
@@ -89,7 +102,7 @@ namespace
 		TArray<FVector> Smoothed;
 		TrafficGeometrySmoothing::ChaikinSmooth(GuideFixed, 1, Smoothed);
 
-		// 4. Convert to cubic Bézier segments and resample for a smooth final centreline.
+		// 4. Convert to cubic Bezier segments and resample for a smooth final centreline.
 		TArray<TrafficGeometrySmoothing::FBezierSegment> Segments;
 		TrafficGeometrySmoothing::CatmullRomToBezier(Smoothed, Segments);
 		TrafficGeometrySmoothing::SampleBezierSegments(Segments, 5, OutPoints);
@@ -164,7 +177,7 @@ bool UCityBLDRoadGeometryProvider::BuildCenterlineFromCityBLDRoad(const AActor* 
 		return false;
 	}
 
-	UE_LOG(LogTraffic, Warning, TEXT("[CityBLD] Processing actor %s"), *Actor->GetName());
+	UE_LOG(LogTraffic, Verbose, TEXT("[CityBLD] Processing actor %s"), *Actor->GetName());
 
 	const USplineComponent* ControlSpline = nullptr;
 	TArray<USplineComponent*> Splines;
@@ -211,10 +224,10 @@ bool UCityBLDRoadGeometryProvider::BuildCenterlineFromCityBLDRoad(const AActor* 
 			CollectedVerts.Add(Xform.TransformPosition(static_cast<FVector>(PosD)));
 		}
 	}
-	UE_LOG(LogTraffic, Warning, TEXT("[CityBLD] %s collected %d dynamic mesh vertices"),
+	UE_LOG(LogTraffic, Verbose, TEXT("[CityBLD] %s collected %d dynamic mesh vertices"),
 		*Actor->GetName(), CollectedVerts.Num());
 
 	BuildSmoothCenterline(ControlSpline, CollectedVerts, OutPoints);
-	UE_LOG(LogTraffic, Warning, TEXT("[CityBLD] %s produced %d centreline points"), *Actor->GetName(), OutPoints.Num());
+	UE_LOG(LogTraffic, Verbose, TEXT("[CityBLD] %s produced %d centreline points"), *Actor->GetName(), OutPoints.Num());
 	return OutPoints.Num() >= 2;
 }

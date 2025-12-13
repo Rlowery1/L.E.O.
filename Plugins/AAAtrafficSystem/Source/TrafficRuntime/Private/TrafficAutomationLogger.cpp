@@ -49,7 +49,8 @@ void FTrafficRunMetrics::Finalize()
 
 void UTrafficAutomationLogger::EnsureDirectoryExists()
 {
-	const FString BaseDir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("TrafficAutomation"));
+	// Use a stable path under the project directory so logs survive runs that override -userdir (e.g., Gauntlet).
+	const FString BaseDir = FPaths::Combine(FPaths::ProjectDir(), TEXT("Saved"), TEXT("TrafficAutomation"));
 	IFileManager::Get().MakeDirectory(*BaseDir, true);
 }
 
@@ -59,7 +60,7 @@ void UTrafficAutomationLogger::BeginTestLog(const FString& TestName)
 
 	const FDateTime Now = FDateTime::Now();
 	const FString Timestamp = Now.ToString(TEXT("%Y%m%d_%H%M%S"));
-	const FString BaseDir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("TrafficAutomation"));
+	const FString BaseDir = FPaths::Combine(FPaths::ProjectDir(), TEXT("Saved"), TEXT("TrafficAutomation"));
 	const FString FileName = FString::Printf(TEXT("Traffic_%s_%s.log"), *TestName, *Timestamp);
 	CurrentLogFilePath = FPaths::Combine(BaseDir, FileName);
 

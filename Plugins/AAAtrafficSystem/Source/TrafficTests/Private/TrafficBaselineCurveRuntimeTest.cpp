@@ -41,6 +41,7 @@ namespace
 	struct FTrafficBaselineCurveState
 	{
 		bool bFailed = false;
+		FString FailureMessage;
 		UWorld* PIEWorld = nullptr;
 		FTrafficRunMetrics Metrics;
 		float MaxLateralError = 0.f;

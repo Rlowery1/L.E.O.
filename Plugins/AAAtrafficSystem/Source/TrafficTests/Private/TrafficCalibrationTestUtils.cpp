@@ -13,6 +13,9 @@
 #include "TrafficSystemEditorSubsystem.h"
 
 #include "Components/PrimitiveComponent.h"
+#include "Components/DynamicMeshComponent.h"
+#include "DynamicMesh/DynamicMesh3.h"
+#include "VectorTypes.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 
@@ -141,6 +144,79 @@ namespace
 		return false;
 	}
 
+	static bool CollectDynamicMeshVertices(AActor* RoadActor, TArray<FVector>& OutVerts)
+	{
+		OutVerts.Reset();
+		if (!RoadActor)
+		{
+			return false;
+		}
+
+		TArray<UDynamicMeshComponent*> DynMeshComps;
+		RoadActor->GetComponents<UDynamicMeshComponent>(DynMeshComps);
+		if (DynMeshComps.Num() == 0)
+		{
+			return false;
+		}
+
+		for (UDynamicMeshComponent* Comp : DynMeshComps)
+		{
+			if (!Comp || !Comp->GetDynamicMesh())
+			{
+				continue;
+			}
+
+			const FTransform Xform = Comp->GetComponentTransform();
+			const UDynamicMesh* DynMesh = Comp->GetDynamicMesh();
+			const UE::Geometry::FDynamicMesh3* Mesh = DynMesh ? DynMesh->GetMeshPtr() : nullptr;
+			if (!Mesh)
+			{
+				continue;
+			}
+
+			OutVerts.Reserve(OutVerts.Num() + Mesh->VertexCount());
+			for (int32 Vid : Mesh->VertexIndicesItr())
+			{
+				const FVector3d PosD = Mesh->GetVertex(Vid);
+				OutVerts.Add(Xform.TransformPosition(static_cast<FVector>(PosD)));
+			}
+		}
+
+		return OutVerts.Num() > 0;
+	}
+
+	static bool ComputeLateralBoundsFromVertices(
+		const TArray<FVector>& RoadVerts,
+		const FVector& RoadPos,
+		const FVector& RoadTangent,
+		const FVector& RoadRight,
+		float HalfLength,
+		int32 MinVerts,
+		float& OutMinLateral,
+		float& OutMaxLateral)
+	{
+		OutMinLateral = FLT_MAX;
+		OutMaxLateral = -FLT_MAX;
+
+		int32 InSlice = 0;
+		for (const FVector& V : RoadVerts)
+		{
+			const FVector Delta = V - RoadPos;
+			const float Along = FVector::DotProduct(Delta, RoadTangent);
+			if (FMath::Abs(Along) > HalfLength)
+			{
+				continue;
+			}
+
+			const float Lateral = FVector::DotProduct(Delta, RoadRight);
+			OutMinLateral = FMath::Min(OutMinLateral, Lateral);
+			OutMaxLateral = FMath::Max(OutMaxLateral, Lateral);
+			++InSlice;
+		}
+
+		return (InSlice >= MinVerts) && (OutMinLateral < OutMaxLateral);
+	}
+
 	static void LogIterationMetrics(
 		const FString& Prefix,
 		int32 Iteration,
@@ -199,6 +275,8 @@ bool TrafficCalibrationTestUtils::EvaluateNetworkLaneAlignment(
 		RoadById.Add(Road.RoadId, &Road);
 	}
 
+	TMap<AActor*, TArray<FVector>> DynamicVertsByActor;
+
 	double SumDev = 0.0;
 	double SumOutward = 0.0;
 	float MaxDev = 0.f;
@@ -256,34 +334,97 @@ bool TrafficCalibrationTestUtils::EvaluateNetworkLaneAlignment(
 			const float HeadingDeg = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(HeadingDot, -1.f, 1.f)));
 			MaxHeading = FMath::Max(MaxHeading, HeadingDeg);
 
-			FVector SurfacePoint = FVector::ZeroVector;
-			const bool bHasSurface = FindClosestPointOnRoadSurface(World, RoadActor, LanePos, Params, SurfacePoint);
-
 			++TotalSamples;
+
+			const FVector RoadPos = RoadClosest.ClosestPoint;
+			float MinLat = 0.f;
+			float MaxLat = 0.f;
+			bool bHasSurface = false;
+			float DevCm = 0.f;
+			float OutwardErrCm = 0.f;
+
+			if (TArray<FVector>* CachedVerts = DynamicVertsByActor.Find(RoadActor))
+			{
+				bHasSurface = ComputeLateralBoundsFromVertices(
+					*CachedVerts,
+					RoadPos,
+					RoadTan,
+					RoadRight,
+					Params.CrossSectionHalfLengthCm,
+					Params.MinVertsPerCrossSection,
+					MinLat,
+					MaxLat);
+			}
+			else
+			{
+				TArray<FVector> Verts;
+				CollectDynamicMeshVertices(RoadActor, Verts);
+				DynamicVertsByActor.Add(RoadActor, MoveTemp(Verts));
+				if (TArray<FVector>* NewVerts = DynamicVertsByActor.Find(RoadActor))
+				{
+					bHasSurface = ComputeLateralBoundsFromVertices(
+						*NewVerts,
+						RoadPos,
+						RoadTan,
+						RoadRight,
+						Params.CrossSectionHalfLengthCm,
+						Params.MinVertsPerCrossSection,
+						MinLat,
+						MaxLat);
+				}
+			}
+
+			if (bHasSurface)
+			{
+				++WithSurface;
+
+				const float LaneLat = FVector::DotProduct(LanePos - RoadPos, RoadRight);
+				const float ClampedLat = FMath::Clamp(LaneLat, MinLat, MaxLat);
+				DevCm = FMath::Abs(LaneLat - ClampedLat);
+
+				if (LaneLat > MaxLat)
+				{
+					OutwardErrCm = LaneLat - MaxLat;
+				}
+				else if (LaneLat < MinLat)
+				{
+					OutwardErrCm = MinLat - LaneLat;
+				}
+			}
+			else
+			{
+				FVector SurfacePoint = FVector::ZeroVector;
+				bHasSurface = FindClosestPointOnRoadSurface(World, RoadActor, LanePos, Params, SurfacePoint);
+				if (bHasSurface)
+				{
+					++WithSurface;
+					DevCm = FVector::Dist2D(LanePos, SurfacePoint);
+
+					const float SignedLaneOffsetFromCenter = FVector::DotProduct(LanePos - RoadPos, RoadRight);
+					const float SideSign = (SignedLaneOffsetFromCenter >= 0.f) ? 1.f : -1.f;
+					const float SignedSurfaceError = FVector::DotProduct(LanePos - SurfacePoint, RoadRight);
+					OutwardErrCm = SignedSurfaceError * SideSign;
+					if (OutwardErrCm < 0.f)
+					{
+						OutwardErrCm = 0.f;
+					}
+				}
+			}
 
 			if (!bHasSurface)
 			{
-				const float FallbackDev = Params.SweepRadiusCm;
-				SumDev += FallbackDev;
-				MaxDev = FMath::Max(MaxDev, FallbackDev);
 				continue;
 			}
 
-			++WithSurface;
-
-			const float Dev2D = FVector::Dist2D(LanePos, SurfacePoint);
-			SumDev += Dev2D;
-			MaxDev = FMath::Max(MaxDev, Dev2D);
-			if (Dev2D <= Params.LateralToleranceCm)
+			SumDev += DevCm;
+			MaxDev = FMath::Max(MaxDev, DevCm);
+			if (DevCm <= Params.LateralToleranceCm)
 			{
 				++WithinTol;
 			}
 
-			const float SignedLaneOffsetFromCenter = FVector::DotProduct(LanePos - RoadClosest.ClosestPoint, RoadRight);
-			const float SideSign = (SignedLaneOffsetFromCenter >= 0.f) ? 1.f : -1.f;
-			const float SignedSurfaceError = FVector::DotProduct(LanePos - SurfacePoint, RoadRight);
-			const float OutwardSignedError = SignedSurfaceError * SideSign;
-			SumOutward += static_cast<double>(OutwardSignedError);
+			SumOutward += static_cast<double>(OutwardErrCm);
+
 		}
 	}
 
@@ -293,11 +434,19 @@ bool TrafficCalibrationTestUtils::EvaluateNetworkLaneAlignment(
 	OutMetrics.MaxHeadingErrorDeg = MaxHeading;
 	OutMetrics.MaxLateralDeviationCm = MaxDev;
 
+	if (WithSurface > 0)
+	{
+		OutMetrics.MeanLateralDeviationCm = static_cast<float>(SumDev / static_cast<double>(WithSurface));
+	}
+
 	if (TotalSamples > 0)
 	{
-		OutMetrics.MeanLateralDeviationCm = static_cast<float>(SumDev / static_cast<double>(TotalSamples));
 		OutMetrics.CoveragePercent = 100.0f * static_cast<float>(WithinTol) / static_cast<float>(TotalSamples);
-		OutMetrics.MeanOutwardSignedErrorCm = static_cast<float>(SumOutward / static_cast<double>(TotalSamples));
+	}
+
+	if (WithSurface > 0)
+	{
+		OutMetrics.MeanOutwardSignedErrorCm = static_cast<float>(SumOutward / static_cast<double>(WithSurface));
 	}
 
 	return TotalSamples > 0;
@@ -320,6 +469,10 @@ bool TrafficCalibrationTestUtils::AlignmentMeetsThresholds(
 	if (Metrics.TotalSamples <= 0)
 	{
 		return Fail(TEXT("NoSamples"));
+	}
+	if (Metrics.SamplesWithSurface <= 0)
+	{
+		return Fail(TEXT("NoSurfaceSamples"));
 	}
 	if (Metrics.MeanLateralDeviationCm > Thresholds.MaxMeanDeviationCm)
 	{
@@ -366,8 +519,18 @@ FTrafficLaneFamilyCalibration TrafficCalibrationTestUtils::ComputeNextCalibratio
 {
 	FTrafficLaneFamilyCalibration Next = Current;
 
-	const float OffsetStep = FMath::Clamp(Metrics.MeanOutwardSignedErrorCm * 0.5f, -MaxStepOffsetCm, MaxStepOffsetCm);
-	const float WidthStep = FMath::Clamp(Metrics.MeanOutwardSignedErrorCm * 0.25f, -MaxStepWidthCm, MaxStepWidthCm);
+	const float TargetMeanDevCm = 10.0f;
+	const float TargetMaxDevCm = 20.0f;
+
+	const float ExcessMean = FMath::Max(0.f, Metrics.MeanLateralDeviationCm - TargetMeanDevCm);
+	const float ExcessMax = FMath::Max(0.f, Metrics.MaxLateralDeviationCm - TargetMaxDevCm);
+
+	// Drive updates using the worst-case deviation to avoid "good mean but bad outliers" situations.
+	const float Drive = FMath::Max3(Metrics.MeanOutwardSignedErrorCm, ExcessMean, ExcessMax);
+
+	// Shrink lane envelope more aggressively when outliers exceed tolerance.
+	const float OffsetStep = FMath::Clamp(Drive * 0.25f, -MaxStepOffsetCm, MaxStepOffsetCm);
+	const float WidthStep = FMath::Clamp(Drive * 0.10f, -MaxStepWidthCm, MaxStepWidthCm);
 
 	Next.CenterlineOffsetCm = FMath::Clamp(Current.CenterlineOffsetCm - OffsetStep, 0.f, 2000.f);
 	Next.LaneWidthCm = FMath::Clamp(Current.LaneWidthCm - WidthStep, 50.f, 1000.f);
