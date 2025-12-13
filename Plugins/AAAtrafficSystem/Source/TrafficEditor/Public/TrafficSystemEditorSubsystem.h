@@ -84,6 +84,7 @@ private:
 	void TagAsRoadLab(AActor* Actor);
 	void FocusCameraOnActor(AActor* Actor);
 	void BuildRoadRibbonForActor(AActor* RoadActor, const FRoadFamilyDefinition& Family);
+	void Editor_DrawCenterlineDebug(UWorld* World, const TArray<FVector>& CenterlinePoints, bool bColorByCurvature = true) const;
 	float TraceGroundHeight(UWorld* World, float X, float Y, float FallbackZ);
 	bool EnsureDetectedFamilies(const TCHAR* Context) const;
 

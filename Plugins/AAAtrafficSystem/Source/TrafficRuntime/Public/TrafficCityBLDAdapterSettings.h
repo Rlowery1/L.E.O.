@@ -50,5 +50,13 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category="Filtering")
 	TArray<FString> ExcludedMeshNameKeywords;
 
+	/** Draws provider-derived display centerlines during calibration (debug only). */
+	UPROPERTY(EditAnywhere, Config, Category="Debug")
+	bool bDrawCalibrationCenterlineDebug = false;
+
+	/** Uses ZoneGraph lane polylines (when available) for CityBLD calibration overlay arrow placement. */
+	UPROPERTY(EditAnywhere, Config, Category="ZoneGraph")
+	bool bUseZoneGraphLanePolylinesForCalibrationOverlay = false;
+
 	// NOTE: MinMeshAspectRatio filter has been removed to avoid excluding valid road meshes.
 };
