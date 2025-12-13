@@ -32,6 +32,9 @@ public:
 	// Build overlay lanes from a provided centerline and calibration data.
 	void BuildFromCenterline(const TArray<FVector>& CenterlinePoints, const FTrafficLaneFamilyCalibration& Calibration, const FTransform& RoadTransform = FTransform::Identity);
 
+	// Build overlay arrows directly from lane polylines (e.g. extracted from ZoneGraph).
+	void BuildFromLanePolylines(const TArray<TArray<FVector>>& LanePolylines, const FTransform& RoadTransform = FTransform::Identity);
+
 	void ClearOverlay();
 
 	// Editable preview settings exposed for calibration UI.

@@ -466,6 +466,68 @@ void ALaneCalibrationOverlayActor::BuildFromCenterline(const TArray<FVector>& Ce
 	BuildForRoad(CachedCenterlinePoints, TempFamily, CachedRoadTransform, false);
 }
 
+void ALaneCalibrationOverlayActor::BuildFromLanePolylines(const TArray<TArray<FVector>>& LanePolylines, const FTransform& RoadTransform)
+{
+	ClearOverlay();
+
+	if (LanePolylines.Num() == 0)
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[LaneCalibrationOverlay] BuildFromLanePolylines: No lane polylines provided."));
+		return;
+	}
+
+	const UTrafficVisualSettings* VisualSettings = GetDefault<UTrafficVisualSettings>();
+
+	SetActorTransform(RoadTransform);
+
+	const FTransform InverseRoadTransform = RoadTransform.Inverse();
+
+	int32 NumLanes = 0;
+
+	for (const TArray<FVector>& WorldLanePoints : LanePolylines)
+	{
+		if (WorldLanePoints.Num() < 2)
+		{
+			continue;
+		}
+
+		TArray<FVector> LocalLanePoints;
+		LocalLanePoints.Reserve(WorldLanePoints.Num());
+		for (const FVector& WorldPos : WorldLanePoints)
+		{
+			LocalLanePoints.Add(InverseRoadTransform.TransformPosition(WorldPos));
+		}
+
+		UStaticMesh* ArrowMesh = GetArrowMesh(/*bForwardDirection=*/true, VisualSettings);
+		if (!ArrowMesh)
+		{
+			continue;
+		}
+
+		UInstancedStaticMeshComponent* ISM = NewObject<UInstancedStaticMeshComponent>(this);
+		ISM->SetupAttachment(RootComponent);
+		ISM->SetStaticMesh(ArrowMesh);
+		ISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		ISM->SetCastShadow(false);
+		ISM->RegisterComponent();
+
+		CreateArrowMaterialInstance(ISM, FLinearColor(0.2f, 0.75f, 1.0f, 1.0f));
+
+		BuildChevronArrows(ISM, LocalLanePoints, /*bForwardDirection=*/true, VisualSettings);
+		ChevronArrowComponents.Add(ISM);
+		++NumLanes;
+	}
+
+	CachedCenterlinePoints.Reset();
+	CachedRoadTransform = RoadTransform;
+
+	const int32 NumArrowInstances = GetArrowInstanceCount();
+	UE_LOG(LogTraffic, Log,
+		TEXT("[LaneCalibrationOverlay] Built ZoneGraph lane overlay with %d lanes and %d arrow instances."),
+		NumLanes,
+		NumArrowInstances);
+}
+
 void ALaneCalibrationOverlayActor::Editor_RebuildFromCachedCenterline()
 {
 #if WITH_EDITOR

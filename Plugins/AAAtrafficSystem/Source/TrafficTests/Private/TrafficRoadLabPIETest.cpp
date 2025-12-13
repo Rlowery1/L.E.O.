@@ -61,13 +61,32 @@ bool FTrafficRoadLabPIETest::RunTest(const FString& Parameters)
 	Subsys->Editor_ResetRoadLabHard(false);
 
 	// Spawn a couple of CityBLD roads so the forced CityBLD provider can build a network.
-	UClass* MeshRoadClass = LoadClass<AActor>(nullptr, TEXT("/CityBLD/Blueprints/Roads/BP_MeshRoad.BP_MeshRoad_C"));
+	UClass* MeshRoadClass = nullptr;
+	FString MeshRoadClassPath;
+	{
+		static const TCHAR* CandidatePaths[] =
+		{
+			TEXT("/CityBLD/Blueprints/Roads/BP_MeshRoad.BP_MeshRoad_C"),
+			TEXT("/CityBLD/CityBLD/Blueprints/Roads/BP_MeshRoad.BP_MeshRoad_C"),
+		};
+
+		for (const TCHAR* Path : CandidatePaths)
+		{
+			if (UClass* Loaded = LoadClass<AActor>(nullptr, Path))
+			{
+				MeshRoadClass = Loaded;
+				MeshRoadClassPath = Path;
+				break;
+			}
+		}
+	}
 	if (!MeshRoadClass)
 	{
-		AddError(TEXT("Failed to load CityBLD BP_MeshRoad class at /CityBLD/Blueprints/Roads/BP_MeshRoad.BP_MeshRoad_C"));
+		AddError(TEXT("Failed to load CityBLD BP_MeshRoad class (tried /CityBLD/Blueprints/... and /CityBLD/CityBLD/Blueprints/...)."));
 		UTrafficAutomationLogger::EndTestLog();
 		return false;
 	}
+	UTrafficAutomationLogger::LogMetric(TEXT("CityBLD.MeshRoadClassPath"), MeshRoadClassPath);
 
 	auto SpawnCityBLDRoad = [&](const FTransform& Xform) -> AActor*
 	{

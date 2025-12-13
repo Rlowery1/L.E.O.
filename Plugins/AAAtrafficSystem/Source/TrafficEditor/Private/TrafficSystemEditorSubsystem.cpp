@@ -31,9 +31,11 @@
 #include "Engine/World.h"
 #include "Engine/Selection.h"
 #include "EngineUtils.h"
+#include "DrawDebugHelpers.h"
 #include "TrafficGeometryProviderFactory.h"
 #include "TrafficGeometryProvider.h"
 #include "ZoneGraphCalibrationUtils.h"
+#include "ZoneGraphLaneOverlayUtils.h"
 
 const FName UTrafficSystemEditorSubsystem::RoadLabTag = FName(TEXT("AAA_RoadLab"));
 
@@ -217,6 +219,74 @@ void UTrafficSystemEditorSubsystem::FocusCameraOnActor(AActor* Actor)
 	if (GEditor && Actor && Actor->IsValidLowLevel())
 	{
 		GEditor->MoveViewportCamerasToActor(*Actor, false);
+	}
+#endif
+}
+
+void UTrafficSystemEditorSubsystem::Editor_DrawCenterlineDebug(UWorld* World, const TArray<FVector>& CenterlinePoints, bool bColorByCurvature) const
+{
+#if WITH_EDITOR
+	if (!World || CenterlinePoints.Num() < 2)
+	{
+		return;
+	}
+
+	constexpr float HeadingSpikeThresholdDeg = 25.f;
+	constexpr float ArrowSpacingCm = 1000.f; // 10m
+	constexpr float ArrowLengthCm = 250.f;
+	constexpr float ZOffset = 25.f;
+	constexpr float LifeTimeSeconds = 30.f;
+	constexpr float Thickness = 8.f;
+
+	float DistanceUntilNextArrow = 0.f;
+
+	for (int32 i = 0; i + 1 < CenterlinePoints.Num(); ++i)
+	{
+		const FVector A = CenterlinePoints[i];
+		const FVector B = CenterlinePoints[i + 1];
+		const FVector Segment = B - A;
+		const float SegmentLen = Segment.Size();
+		if (SegmentLen <= KINDA_SMALL_NUMBER)
+		{
+			continue;
+		}
+
+		float HeadingDeltaDeg = 0.f;
+		if (bColorByCurvature && i + 2 < CenterlinePoints.Num())
+		{
+			const FVector Dir0 = (CenterlinePoints[i + 1] - CenterlinePoints[i]).GetSafeNormal2D();
+			const FVector Dir1 = (CenterlinePoints[i + 2] - CenterlinePoints[i + 1]).GetSafeNormal2D();
+			if (!Dir0.IsNearlyZero() && !Dir1.IsNearlyZero())
+			{
+				const float Dot = FMath::Clamp(FVector::DotProduct(Dir0, Dir1), -1.f, 1.f);
+				HeadingDeltaDeg = FMath::RadiansToDegrees(FMath::Acos(Dot));
+			}
+		}
+
+		const bool bSpike = bColorByCurvature && HeadingDeltaDeg > HeadingSpikeThresholdDeg;
+		const FColor Color = bSpike ? FColor::Red : FColor::Cyan;
+
+		DrawDebugLine(World, A, B, Color, /*bPersistentLines=*/false, LifeTimeSeconds, /*DepthPriority=*/0, Thickness);
+
+		const FVector Dir = Segment / SegmentLen;
+		while (DistanceUntilNextArrow < SegmentLen)
+		{
+			const FVector Pos = A + Dir * DistanceUntilNextArrow + FVector(0.f, 0.f, ZOffset);
+			DrawDebugDirectionalArrow(
+				World,
+				Pos,
+				Pos + Dir * ArrowLengthCm,
+				/*ArrowSize=*/75.f,
+				Color,
+				/*bPersistentLines=*/false,
+				LifeTimeSeconds,
+				/*DepthPriority=*/0,
+				Thickness);
+
+			DistanceUntilNextArrow += ArrowSpacingCm;
+		}
+
+		DistanceUntilNextArrow = FMath::Max(0.f, DistanceUntilNextArrow - SegmentLen);
 	}
 #endif
 }
@@ -1111,6 +1181,12 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 		return;
 	}
 
+	const UTrafficCityBLDAdapterSettings* AdapterSettings = GetDefault<UTrafficCityBLDAdapterSettings>();
+	if (AdapterSettings && AdapterSettings->bDrawCalibrationCenterlineDebug)
+	{
+		Editor_DrawCenterlineDebug(World, CenterlinePoints, /*bColorByCurvature=*/true);
+	}
+
 	const bool bHasUnderlyingMesh = (RoadActor->FindComponentByClass<UStaticMeshComponent>() != nullptr);
 
 	ALaneCalibrationOverlayActor* Overlay = World->SpawnActor<ALaneCalibrationOverlayActor>(
@@ -1144,7 +1220,23 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 		Calib.LaneWidthCm,
 		Calib.CenterlineOffsetCm);
 
-	Overlay->BuildFromCenterline(CenterlinePoints, Calib, RoadActor->GetActorTransform());
+	bool bBuiltOverlayFromZoneGraph = false;
+	if (AdapterSettings &&
+		AdapterSettings->bUseZoneGraphLanePolylinesForCalibrationOverlay &&
+		RoadActor->GetClass()->GetName().Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase))
+	{
+		TArray<TArray<FVector>> LanePolylines;
+		if (ZoneGraphLaneOverlayUtils::GetZoneGraphLanePolylinesNearActor(World, RoadActor, LanePolylines))
+		{
+			Overlay->BuildFromLanePolylines(LanePolylines, RoadActor->GetActorTransform());
+			bBuiltOverlayFromZoneGraph = true;
+		}
+	}
+
+	if (!bBuiltOverlayFromZoneGraph)
+	{
+		Overlay->BuildFromCenterline(CenterlinePoints, Calib, RoadActor->GetActorTransform());
+	}
 #if WITH_EDITOR
 	if (GEditor)
 	{
@@ -1608,6 +1700,12 @@ void UTrafficSystemEditorSubsystem::CalibrateSelectedRoad()
         }
     }
 
+	const UTrafficCityBLDAdapterSettings* AdapterSettings = GetDefault<UTrafficCityBLDAdapterSettings>();
+	if (AdapterSettings && AdapterSettings->bDrawCalibrationCenterlineDebug)
+	{
+		Editor_DrawCenterlineDebug(World, CenterlinePoints, /*bColorByCurvature=*/true);
+	}
+
     const bool bHasUnderlyingMesh = (RoadActor->FindComponentByClass<UStaticMeshComponent>() != nullptr);
 
 	if (CalibrationOverlayActor.IsValid() && CalibrationOverlayActor->IsValidLowLevel())
@@ -1630,7 +1728,23 @@ void UTrafficSystemEditorSubsystem::CalibrateSelectedRoad()
 		Calib.LaneWidthCm = Family.Forward.LaneWidthCm;
 		Calib.CenterlineOffsetCm = Family.Forward.InnerLaneCenterOffsetCm;
 
-		CalibrationOverlayActor->BuildFromCenterline(CenterlinePoints, Calib, RoadActor->GetActorTransform());
+		bool bBuiltOverlayFromZoneGraph = false;
+		if (AdapterSettings &&
+			AdapterSettings->bUseZoneGraphLanePolylinesForCalibrationOverlay &&
+			bIsCityBLD)
+		{
+			TArray<TArray<FVector>> LanePolylines;
+			if (ZoneGraphLaneOverlayUtils::GetZoneGraphLanePolylinesNearActor(World, RoadActor, LanePolylines))
+			{
+				CalibrationOverlayActor->BuildFromLanePolylines(LanePolylines, RoadActor->GetActorTransform());
+				bBuiltOverlayFromZoneGraph = true;
+			}
+		}
+
+		if (!bBuiltOverlayFromZoneGraph)
+		{
+			CalibrationOverlayActor->BuildFromCenterline(CenterlinePoints, Calib, RoadActor->GetActorTransform());
+		}
 		FocusCameraOnActor(CalibrationOverlayActor.Get());
 		ActiveFamilyId = FamilyInfo->FamilyId;
 		ActiveCalibrationRoadActor = RoadActor;
