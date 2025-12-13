@@ -194,6 +194,165 @@ namespace CityBLDZoneShapeBuilder
 			return FZoneLaneProfileRef(*Added);
 		}
 
+		static FString SanitizeRoadNameForLaneProfile(const FString& RoadName)
+		{
+			FString Name = RoadName;
+
+			const int32 UAIDIndex = Name.Find(TEXT("_UAID_"), ESearchCase::IgnoreCase, ESearchDir::FromStart);
+			if (UAIDIndex != INDEX_NONE)
+			{
+				Name = Name.Left(UAIDIndex);
+			}
+
+			// Strip a trailing instance suffix like "_01" to avoid generating profiles per-instance.
+			{
+				int32 CharIndex = Name.Len() - 1;
+				while (CharIndex >= 0 && FChar::IsDigit(Name[CharIndex]))
+				{
+					--CharIndex;
+				}
+
+				const bool bHadTrailingDigits = (CharIndex >= 0 && CharIndex < Name.Len() - 1);
+				if (bHadTrailingDigits)
+				{
+					int32 RemoveFrom = CharIndex + 1;
+					if (Name[CharIndex] == TEXT('_') || Name[CharIndex] == TEXT('-'))
+					{
+						RemoveFrom = CharIndex;
+					}
+					Name = Name.Left(RemoveFrom);
+				}
+			}
+
+			Name.ReplaceInline(TEXT(" "), TEXT("_"));
+
+			for (int32 i = 0; i < Name.Len(); ++i)
+			{
+				TCHAR& Ch = Name[i];
+				if (!(FChar::IsAlnum(Ch) || Ch == TEXT('_')))
+				{
+					Ch = TEXT('_');
+				}
+			}
+
+			while (Name.Contains(TEXT("__")))
+			{
+				Name.ReplaceInline(TEXT("__"), TEXT("_"));
+			}
+
+			Name.TrimCharInline(TEXT('_'), nullptr);
+			return Name.IsEmpty() ? TEXT("Road") : Name;
+		}
+
+		/**
+		 * Determine lane configuration for a CityBLD road based off its name.
+		 * Defaults to one lane per side with a 3.5m width.
+		 */
+		static void GetLaneConfigFromRoadName(const FString& RoadName, int32& OutLanesPerSide, float& OutLaneWidthCm)
+		{
+			OutLanesPerSide = 1;
+			OutLaneWidthCm = 350.f;
+
+			if (RoadName.Contains(TEXT("FourLane"), ESearchCase::IgnoreCase) ||
+				RoadName.Contains(TEXT("HighwayConnector_2Lane"), ESearchCase::IgnoreCase))
+			{
+				OutLanesPerSide = 2;
+			}
+			else if (RoadName.Contains(TEXT("TwoLane"), ESearchCase::IgnoreCase))
+			{
+				OutLanesPerSide = 1;
+			}
+			else if (RoadName.Contains(TEXT("SuburbanStreet"), ESearchCase::IgnoreCase))
+			{
+				OutLanesPerSide = 1;
+			}
+		}
+
+		/**
+		 * Create a lane profile directly in ZoneGraph settings for a given road name.
+		 * This bypasses the need for a lane profile asset. All lanes use the same width and tag.
+		 */
+		static FZoneLaneProfileRef CreateAutoLaneProfileForRoad(
+			UZoneGraphSettings* ZoneSettings,
+			const FString& RoadName,
+			const FZoneGraphTag VehiclesTag)
+		{
+			if (!ZoneSettings)
+			{
+				return FZoneLaneProfileRef();
+			}
+
+			int32 LanesPerSide = 1;
+			float LaneWidthCm = 350.f;
+			GetLaneConfigFromRoadName(RoadName, LanesPerSide, LaneWidthCm);
+			LanesPerSide = FMath::Clamp(LanesPerSide, 1, 8);
+			LaneWidthCm = FMath::Clamp(LaneWidthCm, 10.f, 2000.f);
+
+			const FZoneGraphTagMask LaneTags = VehiclesTag.IsValid()
+				? FZoneGraphTagMask(VehiclesTag)
+				: FZoneGraphTagMask::None;
+
+			const FString SanitizedRoadName = SanitizeRoadNameForLaneProfile(RoadName);
+			const FString ProfileNameString = FString::Printf(TEXT("AutoProfile_%s_%dLane"), *SanitizedRoadName, LanesPerSide);
+			const FName ProfileName(*ProfileNameString);
+
+			for (const FZoneLaneProfile& Existing : ZoneSettings->GetLaneProfiles())
+			{
+				if (Existing.Name == ProfileName)
+				{
+					return FZoneLaneProfileRef(Existing);
+				}
+			}
+
+			FZoneLaneProfile NewProfile;
+			NewProfile.Name = ProfileName;
+			NewProfile.Lanes.Reset();
+			NewProfile.Lanes.Reserve(LanesPerSide * 2);
+
+			for (int32 i = 0; i < LanesPerSide; ++i)
+			{
+				FZoneLaneDesc Lane;
+				Lane.Width = LaneWidthCm;
+				Lane.Direction = EZoneLaneDirection::Forward;
+				Lane.Tags = LaneTags;
+				NewProfile.Lanes.Add(Lane);
+			}
+
+			for (int32 i = 0; i < LanesPerSide; ++i)
+			{
+				FZoneLaneDesc Lane;
+				Lane.Width = LaneWidthCm;
+				Lane.Direction = EZoneLaneDirection::Backward;
+				Lane.Tags = LaneTags;
+				NewProfile.Lanes.Add(Lane);
+			}
+
+			FArrayProperty* LaneProfilesProp = nullptr;
+			void* LaneProfilesPtr = nullptr;
+			if (!GetZoneGraphLaneProfilesArray(ZoneSettings, LaneProfilesProp, LaneProfilesPtr))
+			{
+				return FZoneLaneProfileRef();
+			}
+
+			FScriptArrayHelper Helper(LaneProfilesProp, LaneProfilesPtr);
+			FStructProperty* InnerStruct = CastField<FStructProperty>(LaneProfilesProp->Inner);
+			if (!InnerStruct || InnerStruct->Struct != FZoneLaneProfile::StaticStruct())
+			{
+				return FZoneLaneProfileRef();
+			}
+
+			const int32 NewIndex = Helper.AddValue();
+			FZoneLaneProfile* Added = reinterpret_cast<FZoneLaneProfile*>(Helper.GetRawPtr(NewIndex));
+			if (!Added)
+			{
+				return FZoneLaneProfileRef();
+			}
+
+			*Added = NewProfile;
+			UE::ZoneGraphDelegates::OnZoneGraphLaneProfileChanged.Broadcast(FZoneLaneProfileRef(*Added));
+			return FZoneLaneProfileRef(*Added);
+		}
+
 		void ClearExistingCalibrationZoneShapes(UWorld* World)
 		{
 			if (!World)
@@ -332,18 +491,25 @@ namespace CityBLDZoneShapeBuilder
 			UE_LOG(LogTraffic, Warning, TEXT("[CityBLDZoneShapeBuilder] ZoneGraph tag 'Vehicles' not found/created; lane filtering may not work."));
 		}
 
-		const UTrafficZoneLaneProfile* ProfileAsset = Cast<UTrafficZoneLaneProfile>(LoadSoftObjectSync(VehicleLaneProfileAssetPath));
-		if (!ProfileAsset)
-		{
-			UE_LOG(LogTraffic, Warning,
-				TEXT("[CityBLDZoneShapeBuilder] Failed to load UTrafficZoneLaneProfile at '%s'."),
-				*VehicleLaneProfileAssetPath.ToString());
-		}
-
 		FZoneLaneProfileRef LaneProfileRef;
+		const UTrafficZoneLaneProfile* ProfileAsset = Cast<UTrafficZoneLaneProfile>(LoadSoftObjectSync(VehicleLaneProfileAssetPath));
 		if (ProfileAsset)
 		{
 			LaneProfileRef = FindOrAddLaneProfileFromAsset(ZoneSettings, ProfileAsset, VehiclesTag);
+		}
+		else
+		{
+			UE_LOG(LogTraffic, Warning,
+				TEXT("[CityBLDZoneShapeBuilder] Failed to load UTrafficZoneLaneProfile at '%s'. Creating auto lane profile."),
+				*VehicleLaneProfileAssetPath.ToString());
+
+			LaneProfileRef = CreateAutoLaneProfileForRoad(ZoneSettings, RoadActor->GetName(), VehiclesTag);
+		}
+
+		if (!LaneProfileRef.ID.IsValid())
+		{
+			UE_LOG(LogTraffic, Warning,
+				TEXT("[CityBLDZoneShapeBuilder] No valid lane profile available; ZoneGraph lanes may use defaults."));
 		}
 
 		ClearExistingCalibrationZoneShapes(World);
