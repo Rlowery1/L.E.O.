@@ -1524,14 +1524,9 @@ void UTrafficSystemEditorSubsystem::CalibrateSelectedRoad()
         return;
     }
 
-    USplineComponent* Spline = RoadActor->FindComponentByClass<USplineComponent>();
-    if (!Spline)
-    {
-        UE_LOG(LogTraffic, Warning,
-            TEXT("[TrafficEditor] CalibrateSelectedRoad: Actor '%s' has no USplineComponent."),
-            *RoadActor->GetName());
-        return;
-    }
+    // NOTE: DO NOT rely on raw spline points for calibration on CityBLD.
+    // CityBLD control splines frequently contain sharp corners (90-degree segments).
+    // We must use the provider chain to get the *smoothed* display centerline.
 
     UTrafficRoadMetadataComponent* Meta = RoadActor->FindComponentByClass<UTrafficRoadMetadataComponent>();
     if (!Meta)
@@ -1577,22 +1572,39 @@ void UTrafficSystemEditorSubsystem::CalibrateSelectedRoad()
         Family.FamilyName = FName(*FamilyInfo->DisplayName);
     }
 
-    FCalibrationSnippet Snippet;
-    TArray<FVector> CenterlinePoints;
+    // === Get smoothed display centerline from provider chain (same logic as Editor_BeginCalibrationForFamily) ===
+    TArray<TObjectPtr<UObject>> ProviderObjects;
+    TArray<ITrafficRoadGeometryProvider*> Providers;
+    UTrafficGeometryProviderFactory::CreateProviderChainForEditorWorld(World, ProviderObjects, Providers);
 
-    if (ExtractCalibrationSnippet(RoadActor, Snippet) && Snippet.SnippetPoints.Num() >= 2)
+    TArray<FVector> CenterlinePoints;
+    for (ITrafficRoadGeometryProvider* Provider : Providers)
     {
-        CenterlinePoints = Snippet.SnippetPoints;
-        UE_LOG(LogTraffic, Log,
-            TEXT("[TrafficEditor] CalibrateSelectedRoad: Using snippet of %.0fcm with %d points."),
-            Snippet.SnippetLength, Snippet.SnippetPoints.Num());
-    }
-    else
-    {
-        const int32 NumSplinePoints = Spline->GetNumberOfSplinePoints();
-        for (int32 i = 0; i < NumSplinePoints; ++i)
+        if (Provider && Provider->GetDisplayCenterlineForActor(RoadActor, CenterlinePoints) && CenterlinePoints.Num() >= 2)
         {
-            CenterlinePoints.Add(Spline->GetLocationAtSplinePoint(i, ESplineCoordinateSpace::World));
+            break;
+        }
+    }
+
+    if (CenterlinePoints.Num() < 2)
+    {
+        UE_LOG(LogTraffic, Warning,
+            TEXT("[TrafficEditor] CalibrateSelectedRoad: No provider could supply a display centerline for '%s'."),
+            *GetNameSafe(RoadActor));
+        return;
+    }
+
+    // Optional: allow snippet extraction for non-CityBLD spline roads (fast UX); never for CityBLD BP_MeshRoad.
+    const bool bIsCityBLD = RoadActor->GetClass()->GetName().Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase);
+    if (!bIsCityBLD)
+    {
+        FCalibrationSnippet Snippet;
+        if (ExtractCalibrationSnippet(RoadActor, Snippet) && Snippet.SnippetPoints.Num() >= 2)
+        {
+            CenterlinePoints = Snippet.SnippetPoints;
+            UE_LOG(LogTraffic, Log,
+                TEXT("[TrafficEditor] CalibrateSelectedRoad: Using snippet of %.0fcm with %d points."),
+                Snippet.SnippetLength, Snippet.SnippetPoints.Num());
         }
     }
 

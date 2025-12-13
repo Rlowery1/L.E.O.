@@ -18,6 +18,10 @@ class TRAFFICRUNTIME_API UCityBLDRoadGeometryProvider : public UObject, public I
 
 public:
 	virtual void CollectRoads(UWorld* World, TArray<FTrafficRoad>& OutRoads) override;
+	// IMPORTANT: Editor calibration overlay calls GetDisplayCenterlineForActor() through the provider chain.
+	// If CityBLD provider does not implement this, the chain falls back to other providers (often raw spline),
+	// producing 90-degree snapping and arrows flying off-road.
+	virtual bool GetDisplayCenterlineForActor(AActor* RoadActor, TArray<FVector>& OutPoints) const override;
 
 protected:
 	bool BuildCenterlineFromCityBLDRoad(const AActor* Actor, TArray<FVector>& OutPoints) const;

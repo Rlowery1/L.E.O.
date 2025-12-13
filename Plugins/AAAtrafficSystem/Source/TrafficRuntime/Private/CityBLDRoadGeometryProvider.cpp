@@ -168,6 +168,24 @@ void UCityBLDRoadGeometryProvider::CollectRoads(UWorld* World, TArray<FTrafficRo
 		OutRoads.Num());
 }
 
+bool UCityBLDRoadGeometryProvider::GetDisplayCenterlineForActor(AActor* RoadActor, TArray<FVector>& OutPoints) const
+{
+	OutPoints.Reset();
+	if (!RoadActor)
+	{
+		return false;
+	}
+
+	// Only handle CityBLD BP_MeshRoad here; let other providers handle non-CityBLD roads.
+	if (!RoadActor->GetClass()->GetName().Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase))
+	{
+		return false;
+	}
+
+	// This uses the full CityBLD smoothing pipeline already implemented in BuildCenterlineFromCityBLDRoad.
+	return BuildCenterlineFromCityBLDRoad(RoadActor, OutPoints) && OutPoints.Num() >= 2;
+}
+
 bool UCityBLDRoadGeometryProvider::BuildCenterlineFromCityBLDRoad(const AActor* Actor, TArray<FVector>& OutPoints) const
 {
 	OutPoints.Reset();
