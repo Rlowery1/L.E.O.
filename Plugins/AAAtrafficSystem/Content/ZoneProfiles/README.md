@@ -1,6 +1,6 @@
 # ZoneGraph Lane Profiles (AAA Traffic)
 
-AAA Traffic expects two `ZoneLaneProfile` data assets at these plugin content paths:
+AAA Traffic expects two `TrafficZoneLaneProfile` data assets at these plugin content paths:
 
 - `/AAAtrafficSystem/ZoneProfiles/CityBLDUrbanTwoLane`
   - 2 lanes, each ~350cm (total ~700cm)
@@ -11,4 +11,3 @@ AAA Traffic expects two `ZoneLaneProfile` data assets at these plugin content pa
 
 These are referenced from `UTrafficRoadFamilySettings` (`FRoadFamilyDefinition.VehicleLaneProfile` / `FootpathLaneProfile`)
 and are preloaded in `TrafficRuntime` module startup to reduce runtime hitching.
-

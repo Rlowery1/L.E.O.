@@ -8,7 +8,7 @@
 // ZoneGraph lane direction enum + tag mask live in ZoneGraphTypes.h (ZoneGraph plugin).
 #include "ZoneGraphTypes.h"
 
-#include "ZoneLaneProfile.generated.h"
+#include "TrafficZoneLaneProfile.generated.h"
 
 /**
  * Simple data asset describing a ZoneGraph lane profile to be used by AAA Traffic when generating ZoneGraph shapes.
@@ -17,7 +17,7 @@
  * this asset as a source-of-truth and mirrors it into ZoneGraphSettings at build time.
  */
 UCLASS(BlueprintType)
-class TRAFFICRUNTIME_API UZoneLaneProfile : public UDataAsset
+class TRAFFICRUNTIME_API UTrafficZoneLaneProfile : public UDataAsset
 {
 	GENERATED_BODY()
 
@@ -42,4 +42,3 @@ public:
 	UPROPERTY(EditAnywhere, Category = "ZoneLaneProfile")
 	FName LaneTagName = FName(TEXT("Vehicles"));
 };
-

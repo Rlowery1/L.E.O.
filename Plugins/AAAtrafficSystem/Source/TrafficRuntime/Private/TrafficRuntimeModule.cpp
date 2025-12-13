@@ -2,6 +2,7 @@
 #include "TrafficRoadFamilySettings.h"
 #include "Engine/AssetManager.h"
 #include "Engine/StreamableManager.h"
+#include "Misc/CoreDelegates.h"
 
 DEFINE_LOG_CATEGORY(LogTraffic);
 
@@ -9,12 +10,12 @@ DEFINE_LOG_CATEGORY(LogTraffic);
 
 namespace
 {
-	void PreloadZoneLaneProfilesFromTrafficSettings()
+	bool PreloadZoneLaneProfilesFromTrafficSettings()
 	{
 		const UTrafficRoadFamilySettings* FamilySettings = GetDefault<UTrafficRoadFamilySettings>();
 		if (!FamilySettings)
 		{
-			return;
+			return true;
 		}
 
 		TSet<FSoftObjectPath> UniquePaths;
@@ -32,7 +33,14 @@ namespace
 
 		if (UniquePaths.Num() == 0)
 		{
-			return;
+			return true;
+		}
+
+		// UAssetManager can exist but not be initialized yet during early engine startup. Defer in that case.
+		if (!UAssetManager::IsInitialized())
+		{
+			UE_LOG(LogTraffic, Verbose, TEXT("[AAA Traffic][ZoneGraph] AssetManager not initialized yet; deferring TrafficZoneLaneProfile preloading."));
+			return false;
 		}
 
 		FStreamableManager& Streamable = UAssetManager::GetStreamableManager();
@@ -48,12 +56,13 @@ namespace
 			else
 			{
 				UE_LOG(LogTraffic, Warning,
-					TEXT("[AAA Traffic][ZoneGraph] Failed to preload ZoneLaneProfile asset at '%s'. Create it under the AAAtrafficSystem plugin content if you intend to generate ZoneGraph."),
+					TEXT("[AAA Traffic][ZoneGraph] Failed to preload TrafficZoneLaneProfile asset at '%s'. Create it under the AAAtrafficSystem plugin content if you intend to generate ZoneGraph."),
 					*Path.ToString());
 			}
 		}
 
-		UE_LOG(LogTraffic, Log, TEXT("[AAA Traffic][ZoneGraph] Preloaded %d ZoneLaneProfile assets."), LoadedCount);
+		UE_LOG(LogTraffic, Log, TEXT("[AAA Traffic][ZoneGraph] Preloaded %d TrafficZoneLaneProfile assets."), LoadedCount);
+		return true;
 	}
 }
 
@@ -63,12 +72,32 @@ void FTrafficRuntimeModule::StartupModule()
 	UE_LOG(LogTraffic, Log, TEXT("TrafficRuntime module started."));
 
 	// Preload ZoneGraph lane profile assets so later ZoneGraph generation does not block on disk loads.
-	PreloadZoneLaneProfilesFromTrafficSettings();
+	if (!PreloadZoneLaneProfilesFromTrafficSettings())
+	{
+		PostEngineInitDelegateHandle = FCoreDelegates::OnPostEngineInit.AddRaw(this, &FTrafficRuntimeModule::HandlePostEngineInit);
+	}
 }
 
 void FTrafficRuntimeModule::ShutdownModule()
 {
+	if (PostEngineInitDelegateHandle.IsValid())
+	{
+		FCoreDelegates::OnPostEngineInit.Remove(PostEngineInitDelegateHandle);
+		PostEngineInitDelegateHandle = FDelegateHandle();
+	}
+
 	UE_LOG(LogTraffic, Log, TEXT("TrafficRuntime module shutdown."));
+}
+
+void FTrafficRuntimeModule::HandlePostEngineInit()
+{
+	if (PostEngineInitDelegateHandle.IsValid())
+	{
+		FCoreDelegates::OnPostEngineInit.Remove(PostEngineInitDelegateHandle);
+		PostEngineInitDelegateHandle = FDelegateHandle();
+	}
+
+	PreloadZoneLaneProfilesFromTrafficSettings();
 }
 
 #undef LOCTEXT_NAMESPACE

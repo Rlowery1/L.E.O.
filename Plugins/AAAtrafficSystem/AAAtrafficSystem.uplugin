@@ -35,7 +35,10 @@
 		{
 			"Name": "ProceduralMeshComponent",
 			"Enabled": true
+		},
+		{
+			"Name": "ZoneGraph",
+			"Enabled": true
 		}
 	]
 }
-

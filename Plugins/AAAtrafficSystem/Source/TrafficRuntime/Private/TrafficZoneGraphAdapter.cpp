@@ -4,7 +4,7 @@
 
 #include "TrafficRuntimeModule.h"
 #include "TrafficRoadFamilySettings.h"
-#include "ZoneLaneProfile.h"
+#include "TrafficZoneLaneProfile.h"
 
 #include "Engine/AssetManager.h"
 #include "Engine/StreamableManager.h"
@@ -104,7 +104,7 @@ namespace
 
 	static FZoneLaneProfileRef FindOrAddLaneProfileFromAsset(
 		UZoneGraphSettings* ZoneSettings,
-		const UZoneLaneProfile* ProfileAsset,
+		const UTrafficZoneLaneProfile* ProfileAsset,
 		const FZoneGraphTag LaneTag)
 	{
 		if (!ZoneSettings || !ProfileAsset)
@@ -349,10 +349,10 @@ void FTrafficZoneGraphAdapter::BuildZoneGraphForNetwork(
 	{
 		const FRoadFamilyDefinition* Family = GetFamilyForRoad(FamilySettings, Road);
 
-		const UZoneLaneProfile* VehicleProfileAsset = nullptr;
+		const UTrafficZoneLaneProfile* VehicleProfileAsset = nullptr;
 		if (Family && Family->VehicleLaneProfile.IsValid())
 		{
-			VehicleProfileAsset = Cast<UZoneLaneProfile>(LoadSoftObjectSync(Family->VehicleLaneProfile));
+			VehicleProfileAsset = Cast<UTrafficZoneLaneProfile>(LoadSoftObjectSync(Family->VehicleLaneProfile));
 		}
 
 		FZoneLaneProfileRef LaneProfileRef;
@@ -433,10 +433,10 @@ void FTrafficZoneGraphAdapter::BuildZoneGraphForNetwork(
 			? &FamilySettings->Families[FamilyId]
 			: nullptr;
 
-		const UZoneLaneProfile* VehicleProfileAsset = nullptr;
+		const UTrafficZoneLaneProfile* VehicleProfileAsset = nullptr;
 		if (Family && Family->VehicleLaneProfile.IsValid())
 		{
-			VehicleProfileAsset = Cast<UZoneLaneProfile>(LoadSoftObjectSync(Family->VehicleLaneProfile));
+			VehicleProfileAsset = Cast<UTrafficZoneLaneProfile>(LoadSoftObjectSync(Family->VehicleLaneProfile));
 		}
 
 		FZoneLaneProfileRef LaneProfileRef;
