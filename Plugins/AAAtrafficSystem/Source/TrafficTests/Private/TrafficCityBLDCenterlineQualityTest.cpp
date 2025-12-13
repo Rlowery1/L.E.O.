@@ -1,4 +1,6 @@
 #include "Misc/AutomationTest.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 
 #include "TrafficAutomationLogger.h"
 #include "TrafficGeometryProvider.h"
@@ -200,17 +202,34 @@ bool FTrafficCityBLDCenterlineQualityTest::RunTest(const FString& Parameters)
 
 	// Prefer the RoadLab map (real-world content), otherwise fall back to a deterministic synthetic setup.
 	const FString RoadLabMapPath = TEXT("/Game/Maps/Test_Maps/RoadLab/Traffic_RoadLab");
-	const bool bLoadedRoadLab = AutomationOpenMap(RoadLabMapPath);
-	if (!bLoadedRoadLab)
+	const bool bUseRoadLabMap = FParse::Param(FCommandLine::Get(), TEXT("TrafficUseRoadLab"));
+	bool bLoadedRoadLab = false;
+	if (bUseRoadLabMap && !IsRunningCommandlet())
 	{
-		FAutomationEditorCommonUtils::CreateNewMap();
+		bLoadedRoadLab = AutomationOpenMap(RoadLabMapPath);
+		if (!bLoadedRoadLab && GEditor && !GEditor->PlayWorld && !GIsPlayInEditorWorld)
+		{
+			FAutomationEditorCommonUtils::CreateNewMap();
+		}
 	}
 	UTrafficAutomationLogger::LogMetricInt(TEXT("RoadLabMapLoaded"), bLoadedRoadLab ? 1 : 0);
 
-	UWorld* World = GEditor->GetEditorWorldContext().World();
+	UWorld* World = nullptr;
+	if (bLoadedRoadLab && GEditor)
+	{
+		World = GEditor->GetEditorWorldContext().World();
+	}
+	else
+	{
+		World = AutomationCommon::GetAnyGameWorld();
+		if (!World && GEditor)
+		{
+			World = GEditor->GetEditorWorldContext().World();
+		}
+	}
 	if (!World)
 	{
-		AddError(TEXT("Editor world is null."));
+		AddError(TEXT("World is null."));
 		UTrafficAutomationLogger::EndTestLog();
 		return false;
 	}

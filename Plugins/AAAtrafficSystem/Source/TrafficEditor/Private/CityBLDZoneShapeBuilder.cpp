@@ -410,31 +410,57 @@ namespace CityBLDZoneShapeBuilder
 
 		bool EnsureAtLeastOneZoneGraphDataActor(UWorld* World)
 		{
+			// Deprecated: use EnsureCalibrationZoneGraphDataActorForLevel(). Kept for reference only.
+			return World != nullptr;
+		}
+
+		AZoneGraphData* EnsureCalibrationZoneGraphDataActorForLevel(UWorld* World, ULevel* Level)
+		{
 			if (!World)
 			{
-				return false;
+				return nullptr;
 			}
+
+			ULevel* TargetLevel = Level ? Level : World->PersistentLevel.Get();
 
 			for (TActorIterator<AZoneGraphData> It(World); It; ++It)
 			{
-				if (*It)
+				AZoneGraphData* DataActor = *It;
+				if (!DataActor)
 				{
-					return true;
+					continue;
+				}
+
+				// Only reuse transient, calibration-tagged data actors so we never mutate user-authored ZoneGraphData.
+				if (!DataActor->HasAnyFlags(RF_Transient) ||
+					!DataActor->ActorHasTag(TrafficCityBLDCalibrationZoneShapeTag))
+				{
+					continue;
+				}
+
+				if (DataActor->GetLevel() == TargetLevel)
+				{
+					return DataActor;
 				}
 			}
 
 			FActorSpawnParameters Params;
 			Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 			Params.ObjectFlags |= RF_Transient;
+			Params.OverrideLevel = TargetLevel;
+#if WITH_EDITOR
+			Params.bTemporaryEditorActor = true;
+			Params.bHideFromSceneOutliner = true;
+#endif
 
 			AZoneGraphData* DataActor = World->SpawnActor<AZoneGraphData>(AZoneGraphData::StaticClass(), FTransform::Identity, Params);
 			if (!DataActor)
 			{
-				return false;
+				return nullptr;
 			}
 
 			DataActor->Tags.AddUnique(TrafficCityBLDCalibrationZoneShapeTag);
-			return true;
+			return DataActor;
 		}
 
 		void CollectZoneGraphDataActors(UWorld* World, TArray<AZoneGraphData*>& OutDataActors)
@@ -514,15 +540,21 @@ namespace CityBLDZoneShapeBuilder
 
 		ClearExistingCalibrationZoneShapes(World);
 
-		if (!EnsureAtLeastOneZoneGraphDataActor(World))
+		AZoneGraphData* CalibrationDataActor = EnsureCalibrationZoneGraphDataActorForLevel(World, RoadActor->GetLevel());
+		if (!CalibrationDataActor)
 		{
-			UE_LOG(LogTraffic, Warning, TEXT("[CityBLDZoneShapeBuilder] Failed to ensure a ZoneGraphData actor exists."));
+			UE_LOG(LogTraffic, Warning, TEXT("[CityBLDZoneShapeBuilder] Failed to ensure a calibration ZoneGraphData actor exists in the road's level."));
 			return false;
 		}
 
 		FActorSpawnParameters SpawnParams;
 		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 		SpawnParams.ObjectFlags |= RF_Transient;
+		SpawnParams.OverrideLevel = RoadActor->GetLevel();
+#if WITH_EDITOR
+		SpawnParams.bTemporaryEditorActor = true;
+		SpawnParams.bHideFromSceneOutliner = true;
+#endif
 
 		AZoneShape* ShapeActor = World->SpawnActor<AZoneShape>(AZoneShape::StaticClass(), FTransform::Identity, SpawnParams);
 		if (!ShapeActor)
@@ -555,11 +587,7 @@ namespace CityBLDZoneShapeBuilder
 		SetSplinePoints(ShapeComp, RoadCenterlinePoints);
 
 		TArray<AZoneGraphData*> DataActors;
-		CollectZoneGraphDataActors(World, DataActors);
-		if (DataActors.Num() == 0)
-		{
-			return false;
-		}
+		DataActors.Add(CalibrationDataActor);
 
 		ZGS->GetBuilder().BuildAll(DataActors, /*bForceRebuild=*/true);
 

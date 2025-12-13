@@ -10,10 +10,16 @@ for /f "tokens=2 delims==; " %%P in ('tasklist /FI "IMAGENAME eq UnrealEditor-Cm
 )
 
 REM RUN FULL EDITOR WITH AUTOMATION COMMANDS
-start "" /WAIT "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor.exe" ^
+start "" /WAIT "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" ^
   "C:\Users\rllax\L_E_O\L_E_O.uproject" ^
+  "/Game/FirstPerson/Lvl_FirstPerson" ^
   -TestFilter=Engine ^
   -nop4 ^
-  -ExecCmds="Automation RunTests Traffic; Quit"
+  -unattended ^
+  -nullrhi ^
+  -stdout ^
+  -FullStdOutLogOutput ^
+  -TestExit="Automation Test Queue Empty" ^
+  -ExecCmds="Automation RunTests Traffic"
 
 exit /b %ERRORLEVEL%
