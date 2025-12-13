@@ -20,9 +20,11 @@ public:
 
 	bool LoadNetwork();
 	void SpawnTestVehicles(int32 VehiclesPerLane = 3, float SpeedCmPerSec = 800.f);
+	void SpawnZoneGraphVehicles(int32 VehiclesPerLane = 3, float SpeedCmPerSec = 800.f, FName RequiredLaneTag = FName(TEXT("Vehicles")));
 	void ClearVehicles();
 	void SetActiveRunMetrics(FTrafficRunMetrics* InMetrics);
 	void SetForceLogicOnlyForTests(bool bInForce);
+	int32 GetSpawnedVehicleCount() const { return Vehicles.Num(); }
 
 protected:
 	virtual void BeginPlay() override;

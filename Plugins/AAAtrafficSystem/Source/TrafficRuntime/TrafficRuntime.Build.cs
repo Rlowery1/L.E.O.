@@ -11,7 +11,8 @@ public class TrafficRuntime : ModuleRules
 			"Core",
 			"CoreUObject",
 			"Engine",
-			"DeveloperSettings"
+			"DeveloperSettings",
+			"ZoneGraph"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]

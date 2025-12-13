@@ -594,6 +594,19 @@ void UTrafficSystemEditorSubsystem::DoBuild()
 	if (!HasAnyCalibratedFamilies())
 	{
 		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] DoBuild: No calibrated families. Calibrate at least one family first."));
+		const bool bAutomationOrCmdlet = IsRunningCommandlet() || GIsAutomationTesting;
+		if (!bAutomationOrCmdlet)
+		{
+			FMessageDialog::Open(
+				EAppMsgType::Ok,
+				NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_NoCalibratedFamilies_Build",
+					"No calibrated road families found.\n\n"
+					"Run PREPARE MAP, then CALIBRATE and BAKE at least one road family before building traffic."));
+		}
+		else
+		{
+			UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor][Automation] No calibrated families; dialog suppressed."));
+		}
 		return;
 	}
 
@@ -1109,16 +1122,20 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 	}
 
 	TagAsRoadLab(Overlay);
+	const int32 ClampedForward = FMath::Clamp(FamilyInfo->FamilyDefinition.Forward.NumLanes, 1, 5);
+	const int32 ClampedBackward = FMath::Clamp(FamilyInfo->FamilyDefinition.Backward.NumLanes, 1, 5);
+	const float ClampedLaneWidth = FMath::Clamp(FamilyInfo->FamilyDefinition.Forward.LaneWidthCm, 200.f, 500.f);
+
 	Overlay->ApplyCalibrationSettings(
-		FamilyInfo->FamilyDefinition.Forward.NumLanes,
-		FamilyInfo->FamilyDefinition.Backward.NumLanes,
-		FamilyInfo->FamilyDefinition.Forward.LaneWidthCm,
+		ClampedForward,
+		ClampedBackward,
+		ClampedLaneWidth,
 		FamilyInfo->FamilyDefinition.Forward.InnerLaneCenterOffsetCm);
 
 	FTrafficLaneFamilyCalibration Calib;
-	Calib.NumLanesPerSideForward = FamilyInfo->FamilyDefinition.Forward.NumLanes;
-	Calib.NumLanesPerSideBackward = FamilyInfo->FamilyDefinition.Backward.NumLanes;
-	Calib.LaneWidthCm = FamilyInfo->FamilyDefinition.Forward.LaneWidthCm;
+	Calib.NumLanesPerSideForward = ClampedForward;
+	Calib.NumLanesPerSideBackward = ClampedBackward;
+	Calib.LaneWidthCm = ClampedLaneWidth;
 	Calib.CenterlineOffsetCm = FamilyInfo->FamilyDefinition.Forward.InnerLaneCenterOffsetCm;
 
 	Overlay->BuildFromCenterline(CenterlinePoints, Calib, RoadActor->GetActorTransform());
@@ -1235,12 +1252,72 @@ void UTrafficSystemEditorSubsystem::Editor_BakeCalibrationForActiveFamily()
 	};
 
 	FTrafficLaneFamilyCalibration NewCalib;
-	NewCalib.NumLanesPerSideForward = CalibrationOverlayActor->NumLanesPerSideForward;
-	NewCalib.NumLanesPerSideBackward = CalibrationOverlayActor->NumLanesPerSideBackward;
-	NewCalib.LaneWidthCm = CalibrationOverlayActor->LaneWidthCm;
+	NewCalib.NumLanesPerSideForward = FMath::Clamp(CalibrationOverlayActor->NumLanesPerSideForward, 1, 5);
+	NewCalib.NumLanesPerSideBackward = FMath::Clamp(CalibrationOverlayActor->NumLanesPerSideBackward, 1, 5);
+	NewCalib.LaneWidthCm = FMath::Clamp(CalibrationOverlayActor->LaneWidthCm, 200.f, 500.f);
 	NewCalib.CenterlineOffsetCm = CalibrationOverlayActor->CenterlineOffsetCm;
 
+	if (NewCalib.NumLanesPerSideForward != CalibrationOverlayActor->NumLanesPerSideForward ||
+		NewCalib.NumLanesPerSideBackward != CalibrationOverlayActor->NumLanesPerSideBackward ||
+		!FMath::IsNearlyEqual(NewCalib.LaneWidthCm, CalibrationOverlayActor->LaneWidthCm))
+	{
+		UE_LOG(LogTraffic, Warning,
+			TEXT("[TrafficCalib] Clamped calibration values for safety. Forward=%d Backward=%d Width=%.1f"),
+			NewCalib.NumLanesPerSideForward,
+			NewCalib.NumLanesPerSideBackward,
+			NewCalib.LaneWidthCm);
+
+		if (!bAutomationOrCmdlet)
+		{
+			FMessageDialog::Open(
+				EAppMsgType::Ok,
+				NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_CalibrationClamped",
+					"Calibration values were out of the supported range and were clamped.\n\n"
+					"Supported ranges:\n"
+					"  - Lanes per side: 1 to 5\n"
+					"  - Lane width: 200cm to 500cm"));
+		}
+		else
+		{
+			UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor][Automation] Calibration clamped; dialog suppressed."));
+		}
+	}
+
 	Registry->ApplyCalibration(ActiveFamilyId, NewCalib);
+
+	// Persist calibration into game-visible TrafficRoadFamilySettings so builds use the calibrated layout.
+	if (UTrafficRoadFamilySettings* RoadSettings = GetMutableDefault<UTrafficRoadFamilySettings>())
+	{
+		const FName CalibFamilyName = FamilyInfo->FamilyDefinition.FamilyName.IsNone()
+			? FName(*FamilyInfo->DisplayName)
+			: FamilyInfo->FamilyDefinition.FamilyName;
+
+		const int32 FoundIndex = RoadSettings->Families.IndexOfByPredicate(
+			[CalibFamilyName](const FRoadFamilyDefinition& Def)
+			{
+				return Def.FamilyName == CalibFamilyName;
+			});
+
+		if (RoadSettings->Families.IsValidIndex(FoundIndex))
+		{
+			FRoadFamilyDefinition& Def = RoadSettings->Families[FoundIndex];
+			Def.Forward.NumLanes = NewCalib.NumLanesPerSideForward;
+			Def.Backward.NumLanes = NewCalib.NumLanesPerSideBackward;
+			Def.Forward.LaneWidthCm = NewCalib.LaneWidthCm;
+			Def.Backward.LaneWidthCm = NewCalib.LaneWidthCm;
+			Def.Forward.InnerLaneCenterOffsetCm = NewCalib.CenterlineOffsetCm;
+			Def.Backward.InnerLaneCenterOffsetCm = NewCalib.CenterlineOffsetCm;
+
+			RoadSettings->SaveConfig();
+			UE_LOG(LogTraffic, Log, TEXT("[TrafficCalib] Saved calibrated layout into TrafficRoadFamilySettings for '%s' (Index=%d)."), *CalibFamilyName.ToString(), FoundIndex);
+		}
+		else
+		{
+			UE_LOG(LogTraffic, Warning,
+				TEXT("[TrafficCalib] Could not find matching family '%s' in TrafficRoadFamilySettings; calibration will not affect builds until you add it."),
+				*CalibFamilyName.ToString());
+		}
+	}
 
 	// Update any existing metadata components to keep display name in sync.
 	if (FamilyInfo->FamilyDefinition.FamilyName.IsNone())

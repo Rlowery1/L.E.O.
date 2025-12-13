@@ -8,6 +8,8 @@
 #include "TrafficAutomationLogger.h"
 #include "TrafficLaneGeometry.h"
 #include "TrafficKinematicFollower.h"
+#include "TrafficRuntimeModule.h"
+#include "ZoneGraphSubsystem.h"
 
 ATrafficVehicleBase::ATrafficVehicleBase()
 {
@@ -28,7 +30,10 @@ ATrafficVehicleBase::ATrafficVehicleBase()
 void ATrafficVehicleBase::BeginPlay()
 {
 	Super::BeginPlay();
-	EnsureFollower();
+	if (!bUseZoneGraphLane)
+	{
+		EnsureFollower();
+	}
 }
 
 UTrafficKinematicFollower* ATrafficVehicleBase::EnsureFollower()
@@ -42,6 +47,11 @@ UTrafficKinematicFollower* ATrafficVehicleBase::EnsureFollower()
 
 void ATrafficVehicleBase::InitializeOnLane(const FTrafficLane* Lane, float InitialS, float SpeedCmPerSec)
 {
+	bUseZoneGraphLane = false;
+	ZoneGraph = nullptr;
+	ZoneSpeedCmPerSec = 0.f;
+	ZoneLaneLocation = FZoneGraphLaneLocation();
+
 	if (UTrafficKinematicFollower* F = EnsureFollower())
 	{
 		F->InitForLane(Lane, InitialS, SpeedCmPerSec);
@@ -50,15 +60,78 @@ void ATrafficVehicleBase::InitializeOnLane(const FTrafficLane* Lane, float Initi
 
 void ATrafficVehicleBase::InitializeOnMovement(const FTrafficMovement* Movement, float InitialS, float SpeedCmPerSec)
 {
+	bUseZoneGraphLane = false;
+	ZoneGraph = nullptr;
+	ZoneSpeedCmPerSec = 0.f;
+	ZoneLaneLocation = FZoneGraphLaneLocation();
+
 	if (UTrafficKinematicFollower* F = EnsureFollower())
 	{
 		F->InitForMovement(Movement, InitialS, SpeedCmPerSec);
 	}
 }
 
+void ATrafficVehicleBase::InitializeOnZoneGraphLane(UZoneGraphSubsystem* ZoneGraphSubsystem, const FZoneGraphLaneHandle& LaneHandle, float InitialDistanceCm, float SpeedCmPerSec)
+{
+	bUseZoneGraphLane = true;
+	ZoneGraph = ZoneGraphSubsystem;
+	ZoneSpeedCmPerSec = SpeedCmPerSec;
+	ZoneLaneLocation = FZoneGraphLaneLocation();
+
+	if (!ZoneGraph || !LaneHandle.IsValid())
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[TrafficVehicleBase] InitializeOnZoneGraphLane: Invalid ZoneGraph subsystem or lane handle."));
+		bUseZoneGraphLane = false;
+		return;
+	}
+
+	FZoneGraphLaneLocation StartLoc;
+	if (!ZoneGraph->CalculateLocationAlongLane(LaneHandle, InitialDistanceCm, StartLoc))
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[TrafficVehicleBase] InitializeOnZoneGraphLane: Failed to calculate initial lane location (lane=%s)."), *LaneHandle.ToString());
+		bUseZoneGraphLane = false;
+		return;
+	}
+
+	ZoneLaneLocation = StartLoc;
+	SetActorLocationAndRotation(StartLoc.Position, StartLoc.Direction.Rotation());
+}
+
 void ATrafficVehicleBase::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	if (bUseZoneGraphLane)
+	{
+		if (!ZoneGraph || !ZoneLaneLocation.LaneHandle.IsValid() || DeltaSeconds <= KINDA_SMALL_NUMBER)
+		{
+			return;
+		}
+
+		FZoneGraphLaneLocation NewLoc;
+		const float AdvanceDistance = ZoneSpeedCmPerSec * DeltaSeconds;
+		if (!ZoneGraph->AdvanceLaneLocation(ZoneLaneLocation, AdvanceDistance, NewLoc))
+		{
+			return;
+		}
+
+		ZoneLaneLocation = NewLoc;
+
+		SetActorLocationAndRotation(NewLoc.Position, NewLoc.Direction.Rotation());
+
+		const float PrevSpeed = LastSpeed;
+		const float PrevAccel = LastAccel;
+		const float Speed = ZoneSpeedCmPerSec;
+		const float Accel = (DeltaSeconds > KINDA_SMALL_NUMBER) ? (Speed - PrevSpeed) / DeltaSeconds : 0.f;
+		const float Jerk = (DeltaSeconds > KINDA_SMALL_NUMBER) ? (Accel - PrevAccel) / DeltaSeconds : 0.f;
+
+		LastSpeed = Speed;
+		LastAccel = Accel;
+		LastJerk = Jerk;
+		LastPos = NewLoc.Position;
+
+		return;
+	}
 
 	if (!Follower)
 	{

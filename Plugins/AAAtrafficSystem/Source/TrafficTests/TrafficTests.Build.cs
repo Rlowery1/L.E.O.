@@ -12,6 +12,7 @@ public class TrafficTests : ModuleRules
 			"CoreUObject",
 			"Engine",
 			"TrafficRuntime",
+			"ZoneGraph",
 			"UnrealEd",
 			"TrafficEditor", // REQUIRED
 			"AutomationController"

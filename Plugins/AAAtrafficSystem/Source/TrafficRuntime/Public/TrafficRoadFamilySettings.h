@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DeveloperSettings.h"
+#include "UObject/SoftObjectPath.h"
 #include "TrafficRoadFamilySettings.generated.h"
 
 USTRUCT(BlueprintType)
@@ -35,6 +36,18 @@ struct TRAFFICRUNTIME_API FRoadFamilyDefinition
 
 	UPROPERTY(EditAnywhere, Config, Category="Traffic", meta=(ClampMin="0.0", ClampMax="300.0"))
 	float DefaultSpeedLimitKmh = 50.f;
+
+	/**
+	 * ZoneGraph lane profile assets (AAA Traffic wrapper) used when generating ZoneGraph shapes for this family.
+	 * Expected to reference assets under the AAAtrafficSystem plugin mount point, e.g.:
+	 *   /AAAtrafficSystem/ZoneProfiles/CityBLDUrbanTwoLane.CityBLDUrbanTwoLane
+	 */
+	UPROPERTY(EditAnywhere, Config, Category="ZoneGraph")
+	FSoftObjectPath VehicleLaneProfile;
+
+	/** Optional lane profile for footpaths/sidewalks when generating ZoneGraph shapes. */
+	UPROPERTY(EditAnywhere, Config, Category="ZoneGraph")
+	FSoftObjectPath FootpathLaneProfile;
 };
 
 UCLASS(Config=Game, DefaultConfig)
@@ -53,4 +66,3 @@ public:
 
 	const FRoadFamilyDefinition* FindFamilyByName(FName FamilyName) const;
 };
-

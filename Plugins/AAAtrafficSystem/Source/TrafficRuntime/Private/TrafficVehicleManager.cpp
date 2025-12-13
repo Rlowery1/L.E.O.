@@ -14,6 +14,7 @@
 #include "HAL/IConsoleManager.h"
 #include "UObject/SoftObjectPath.h"
 #include "Misc/AutomationTest.h"
+#include "ZoneGraphSubsystem.h"
 
 static TAutoConsoleVariable<int32> CVarShowLogicDebugMesh(
 	TEXT("aaa.Traffic.ShowLogicDebugMesh"),
@@ -358,4 +359,211 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 	}
 
 	UE_LOG(LogTraffic, Log, TEXT("[VehicleManager] Spawned %d vehicles."), Vehicles.Num());
+}
+
+void ATrafficVehicleManager::SpawnZoneGraphVehicles(int32 VehiclesPerLane, float SpeedCmPerSec, FName RequiredLaneTag)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	UZoneGraphSubsystem* ZGS = World->GetSubsystem<UZoneGraphSubsystem>();
+	if (!ZGS)
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[VehicleManager] ZoneGraphSubsystem unavailable; cannot spawn ZoneGraph vehicles."));
+		return;
+	}
+
+	ClearVehicles();
+
+	const UTrafficVehicleProfile* Profile = ResolveDefaultVehicleProfile();
+	if (Profile && !bForceLogicOnlyForTests)
+	{
+		UE_LOG(LogTraffic, Log, TEXT("[VehicleManager] ZoneGraph: Using vehicle profile '%s' (%s)."),
+			*Profile->GetName(),
+			Profile->VehicleClass.IsNull() ? TEXT("<no class>") : *Profile->VehicleClass.ToString());
+	}
+
+	const UTrafficVehicleSettings* VehicleSettings = UTrafficVehicleSettings::Get();
+	const float MinSpacingMultiplier = VehicleSettings ? VehicleSettings->MinSpawnSpacingMultiplier : 2.0f;
+	const float MinUsableLaneLengthCm = VehicleSettings ? VehicleSettings->MinUsableLaneLengthCm : 2000.f;
+
+	// Default sizes if no profile is configured.
+	const float ApproxVehicleLengthCm = Profile ? Profile->LengthCm : 450.f;
+
+	// Resolve visual class if allowed.
+	UClass* VisualClass = nullptr;
+	if (Profile && !bForceLogicOnlyForTests)
+	{
+		VisualClass = Profile->VehicleClass.LoadSynchronous();
+	}
+
+	// In automation, allow a dev fallback class if the default profile is missing.
+	if (GIsAutomationTesting && !VisualClass && !bForceLogicOnlyForTests)
+	{
+		const TCHAR* DevChaosClassPath = TEXT("/Game/Traffic/Dev/BP_TrafficChaosCar.BP_TrafficChaosCar_C");
+		FSoftObjectPath DevPath(DevChaosClassPath);
+		UObject* LoadedObj = DevPath.TryLoad();
+		VisualClass = Cast<UClass>(LoadedObj);
+		if (!VisualClass)
+		{
+			VisualClass = LoadClass<APawn>(nullptr, DevChaosClassPath);
+		}
+		if (VisualClass)
+		{
+			UE_LOG(LogTraffic, Warning, TEXT("[VehicleManager] ZoneGraph Automation: Using dev Chaos class %s"), DevChaosClassPath);
+		}
+	}
+
+	if (!bForceLogicOnlyForTests && !VisualClass && !GIsAutomationTesting)
+	{
+		UE_LOG(LogTraffic, Error,
+			TEXT("[VehicleManager] ZoneGraph: No Chaos vehicle configured. Set a DefaultVehicleProfile with a valid VehicleClass in Project Settings -> AAA Traffic Vehicle Settings."));
+		// Still allow logic-only spawn to proceed (debug cubes).
+	}
+
+	FZoneGraphTag RequiredTag = FZoneGraphTag::None;
+	if (!RequiredLaneTag.IsNone())
+	{
+		RequiredTag = ZGS->GetTagByName(RequiredLaneTag);
+		if (!RequiredTag.IsValid())
+		{
+			UE_LOG(LogTraffic, Warning,
+				TEXT("[VehicleManager] ZoneGraph: Required tag '%s' is not defined in ZoneGraph settings; spawning on all lanes."),
+				*RequiredLaneTag.ToString());
+		}
+	}
+
+	const float MinSpacing = ApproxVehicleLengthCm * FMath::Max(MinSpacingMultiplier, 1.0f);
+
+	FActorSpawnParameters VehicleSpawnParams;
+	VehicleSpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	VehicleSpawnParams.Owner = this;
+
+	int32 TotalLaneCount = 0;
+	int32 EligibleLaneCount = 0;
+
+	for (const FRegisteredZoneGraphData& Registered : ZGS->GetRegisteredZoneGraphData())
+	{
+		const AZoneGraphData* DataActor = Registered.ZoneGraphData;
+		if (!DataActor)
+		{
+			continue;
+		}
+
+		const FZoneGraphStorage& Storage = DataActor->GetStorage();
+		const FZoneGraphDataHandle DataHandle = Storage.DataHandle;
+		if (!DataHandle.IsValid())
+		{
+			continue;
+		}
+
+		for (int32 LaneIndex = 0; LaneIndex < Storage.Lanes.Num(); ++LaneIndex)
+		{
+			++TotalLaneCount;
+
+			const FZoneGraphLaneHandle LaneHandle(LaneIndex, DataHandle);
+			if (!ZGS->IsLaneValid(LaneHandle))
+			{
+				continue;
+			}
+
+			if (RequiredTag.IsValid())
+			{
+				FZoneGraphTagMask LaneTags;
+				if (!ZGS->GetLaneTags(LaneHandle, LaneTags) || !LaneTags.Contains(RequiredTag))
+				{
+					continue;
+				}
+			}
+
+			float LaneLength = 0.f;
+			if (!ZGS->GetLaneLength(LaneHandle, LaneLength))
+			{
+				continue;
+			}
+
+			if (LaneLength < MinUsableLaneLengthCm || LaneLength <= KINDA_SMALL_NUMBER)
+			{
+				continue;
+			}
+
+			const int32 MaxVehiclesByLength = FMath::FloorToInt(LaneLength / MinSpacing);
+			const int32 NumToSpawn = FMath::Clamp(VehiclesPerLane, 0, MaxVehiclesByLength);
+			if (NumToSpawn <= 0)
+			{
+				continue;
+			}
+
+			++EligibleLaneCount;
+
+			const float Segment = LaneLength / (NumToSpawn + 1);
+			for (int32 i = 0; i < NumToSpawn; ++i)
+			{
+				float Dist = Segment * (i + 1);
+				// Small jitter to avoid perfect alignment stacks.
+				Dist += FMath::FRandRange(-0.1f * Segment, 0.1f * Segment);
+				Dist = FMath::Clamp(Dist, 0.f, LaneLength);
+
+				FZoneGraphLaneLocation LaneLoc;
+				if (!ZGS->CalculateLocationAlongLane(LaneHandle, Dist, LaneLoc))
+				{
+					continue;
+				}
+
+				const FTransform SpawnXform(LaneLoc.Direction.Rotation(), LaneLoc.Position);
+
+				ATrafficVehicleBase* Vehicle = World->SpawnActor<ATrafficVehicleBase>(ATrafficVehicleBase::StaticClass(), SpawnXform, VehicleSpawnParams);
+				if (!Vehicle)
+				{
+					continue;
+				}
+
+				Vehicle->InitializeOnZoneGraphLane(ZGS, LaneHandle, Dist, SpeedCmPerSec);
+				Vehicles.Add(Vehicle);
+
+				if (ActiveMetrics)
+				{
+					ActiveMetrics->VehiclesSpawned++;
+				}
+
+				if (VisualClass && !bForceLogicOnlyForTests)
+				{
+					FActorSpawnParameters Params;
+					Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+					Params.Owner = this;
+
+					APawn* VisualPawn = World->SpawnActor<APawn>(VisualClass, SpawnXform, Params);
+					if (VisualPawn)
+					{
+						VisualPawn->SetActorEnableCollision(false);
+
+						ATrafficVehicleAdapter* Adapter = World->SpawnActor<ATrafficVehicleAdapter>(Params);
+						if (Adapter)
+						{
+							Adapter->Initialize(Vehicle, VisualPawn);
+							Adapters.Add(Adapter);
+						}
+
+						VisualVehicles.Add(VisualPawn);
+
+						const int32 bShowDebugMesh = CVarShowLogicDebugMesh.GetValueOnGameThread();
+						if (!bForceLogicOnlyForTests && bShowDebugMesh == 0 && Vehicle)
+						{
+							Vehicle->SetDebugBodyVisible(false);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	UE_LOG(LogTraffic, Log,
+		TEXT("[VehicleManager] ZoneGraph: EligibleLanes=%d/%d SpawnedVehicles=%d RequiredTag=%s"),
+		EligibleLaneCount,
+		TotalLaneCount,
+		Vehicles.Num(),
+		*RequiredLaneTag.ToString());
 }

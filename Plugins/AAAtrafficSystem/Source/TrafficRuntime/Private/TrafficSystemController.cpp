@@ -6,6 +6,7 @@
 #include "TrafficRoadFamilySettings.h"
 #include "TrafficRuntimeModule.h"
 #include "TrafficVehicleManager.h"
+#include "TrafficZoneGraphAdapter.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
 
@@ -49,6 +50,11 @@ bool ATrafficSystemController::BuildNetworkInternal(UWorld* World)
 		*ProviderInterface,
 		FamSettings,
 		Network);
+
+	if (bGenerateZoneGraph)
+	{
+		FTrafficZoneGraphAdapter::BuildZoneGraphForNetwork(World, Network, FamSettings);
+	}
 
 	if (!BuiltNetworkAsset)
 	{
@@ -139,7 +145,21 @@ void ATrafficSystemController::Runtime_SpawnTraffic()
 
 	// Runtime uses Chaos visuals when configured; no logic-only forcing here.
 	Manager->SetForceLogicOnlyForTests(false);
-	Manager->SpawnTestVehicles(VehiclesPerLaneRuntime, RuntimeSpeedCmPerSec);
+	if (bGenerateZoneGraph)
+	{
+		Manager->SpawnZoneGraphVehicles(VehiclesPerLaneRuntime, RuntimeSpeedCmPerSec, FName(TEXT("Vehicles")));
+
+		// Fallback: if ZoneGraph produced nothing (e.g. no ZoneGraphData yet), keep existing spline-based spawning working.
+		if (Manager->GetSpawnedVehicleCount() == 0)
+		{
+			UE_LOG(LogTraffic, Warning, TEXT("[TrafficSystemController] ZoneGraph spawn produced 0 vehicles; falling back to TrafficNetwork lane spawning."));
+			Manager->SpawnTestVehicles(VehiclesPerLaneRuntime, RuntimeSpeedCmPerSec);
+		}
+	}
+	else
+	{
+		Manager->SpawnTestVehicles(VehiclesPerLaneRuntime, RuntimeSpeedCmPerSec);
+	}
 }
 
 void ATrafficSystemController::BeginPlay()

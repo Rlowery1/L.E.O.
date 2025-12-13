@@ -52,6 +52,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Traffic|Runtime")
 	float RuntimeSpeedCmPerSec = 800.f;
 
+	// ZoneGraph integration (Editor/PIE workflows; requires ZoneGraph plugin).
+	UPROPERTY(EditAnywhere, Category="Traffic|ZoneGraph")
+	bool bGenerateZoneGraph = true;
+
 private:
 	bool BuildNetworkInternal(UWorld* World);
 };
