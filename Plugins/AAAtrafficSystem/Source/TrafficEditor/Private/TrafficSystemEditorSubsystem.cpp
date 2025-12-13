@@ -34,6 +34,7 @@
 #include "DrawDebugHelpers.h"
 #include "TrafficGeometryProviderFactory.h"
 #include "TrafficGeometryProvider.h"
+#include "CityBLDZoneShapeBuilder.h"
 #include "ZoneGraphCalibrationUtils.h"
 #include "ZoneGraphLaneOverlayUtils.h"
 
@@ -1187,6 +1188,23 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 		Editor_DrawCenterlineDebug(World, CenterlinePoints, /*bColorByCurvature=*/true);
 	}
 
+	const bool bIsCityBLD = RoadActor->GetClass()->GetName().Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase);
+	if (bIsCityBLD && AdapterSettings && AdapterSettings->bUseZoneGraphLanePolylinesForCalibrationOverlay)
+	{
+		// Ensure a lane profile is present so ZoneShapes can generate lanes deterministically.
+		if (!FamilyInfo->FamilyDefinition.VehicleLaneProfile.IsValid() && AdapterSettings->DefaultCityBLDVehicleLaneProfile.IsValid())
+		{
+			FamilyInfo->FamilyDefinition.VehicleLaneProfile = AdapterSettings->DefaultCityBLDVehicleLaneProfile;
+			Registry->SaveConfig();
+		}
+
+		const FSoftObjectPath LaneProfilePath = FamilyInfo->FamilyDefinition.VehicleLaneProfile.IsValid()
+			? FamilyInfo->FamilyDefinition.VehicleLaneProfile
+			: AdapterSettings->DefaultCityBLDVehicleLaneProfile;
+
+		CityBLDZoneShapeBuilder::BuildVehicleZoneGraphForCityBLDRoad(World, RoadActor, CenterlinePoints, LaneProfilePath);
+	}
+
 	const bool bHasUnderlyingMesh = (RoadActor->FindComponentByClass<UStaticMeshComponent>() != nullptr);
 
 	ALaneCalibrationOverlayActor* Overlay = World->SpawnActor<ALaneCalibrationOverlayActor>(
@@ -1201,7 +1219,7 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 	TagAsRoadLab(Overlay);
 	FTrafficLaneFamilyCalibration Calib;
 	bool bUsedZoneGraph = false;
-	if (RoadActor->GetClass()->GetName().Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase))
+	if (bIsCityBLD)
 	{
 		bUsedZoneGraph = ComputeCalibrationFromZoneGraph(World, CenterlinePoints, Calib);
 	}
@@ -1223,7 +1241,7 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 	bool bBuiltOverlayFromZoneGraph = false;
 	if (AdapterSettings &&
 		AdapterSettings->bUseZoneGraphLanePolylinesForCalibrationOverlay &&
-		RoadActor->GetClass()->GetName().Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase))
+		bIsCityBLD)
 	{
 		TArray<TArray<FVector>> LanePolylines;
 		if (ZoneGraphLaneOverlayUtils::GetZoneGraphLanePolylinesNearActor(World, RoadActor, LanePolylines))
@@ -1704,6 +1722,25 @@ void UTrafficSystemEditorSubsystem::CalibrateSelectedRoad()
 	if (AdapterSettings && AdapterSettings->bDrawCalibrationCenterlineDebug)
 	{
 		Editor_DrawCenterlineDebug(World, CenterlinePoints, /*bColorByCurvature=*/true);
+	}
+
+	if (bIsCityBLD && AdapterSettings && AdapterSettings->bUseZoneGraphLanePolylinesForCalibrationOverlay)
+	{
+		// Ensure a lane profile is present so ZoneShapes can generate lanes deterministically.
+		if (FamilyInfo && !FamilyInfo->FamilyDefinition.VehicleLaneProfile.IsValid() && AdapterSettings->DefaultCityBLDVehicleLaneProfile.IsValid())
+		{
+			FamilyInfo->FamilyDefinition.VehicleLaneProfile = AdapterSettings->DefaultCityBLDVehicleLaneProfile;
+			if (Registry)
+			{
+				Registry->SaveConfig();
+			}
+		}
+
+		const FSoftObjectPath LaneProfilePath = (FamilyInfo && FamilyInfo->FamilyDefinition.VehicleLaneProfile.IsValid())
+			? FamilyInfo->FamilyDefinition.VehicleLaneProfile
+			: AdapterSettings->DefaultCityBLDVehicleLaneProfile;
+
+		CityBLDZoneShapeBuilder::BuildVehicleZoneGraphForCityBLDRoad(World, RoadActor, CenterlinePoints, LaneProfilePath);
 	}
 
     const bool bHasUnderlyingMesh = (RoadActor->FindComponentByClass<UStaticMeshComponent>() != nullptr);

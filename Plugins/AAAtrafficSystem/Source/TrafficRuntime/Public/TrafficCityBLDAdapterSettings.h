@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DeveloperSettings.h"
+#include "UObject/SoftObjectPath.h"
 #include "TrafficCityBLDAdapterSettings.generated.h"
 
 UCLASS(Config=Game, DefaultConfig)
@@ -56,7 +57,11 @@ public:
 
 	/** Uses ZoneGraph lane polylines (when available) for CityBLD calibration overlay arrow placement. */
 	UPROPERTY(EditAnywhere, Config, Category="ZoneGraph")
-	bool bUseZoneGraphLanePolylinesForCalibrationOverlay = false;
+	bool bUseZoneGraphLanePolylinesForCalibrationOverlay = true;
+
+	/** Default VehicleLaneProfile asset used when auto-building ZoneGraph for CityBLD calibration. */
+	UPROPERTY(EditAnywhere, Config, Category="ZoneGraph")
+	FSoftObjectPath DefaultCityBLDVehicleLaneProfile;
 
 	// NOTE: MinMeshAspectRatio filter has been removed to avoid excluding valid road meshes.
 };
