@@ -504,9 +504,11 @@ bool FTrafficCityBLDOverlayDiagnosticsTest::RunTest(const FString& Parameters)
 	UTrafficAutomationLogger::LogMetric(TEXT("Calibration.LaneProfilePath.Selected"), LaneProfilePath.ToString());
 
 	UObject* LoadedObj = LaneProfilePath.IsValid() ? LaneProfilePath.TryLoad() : nullptr;
+	const UTrafficZoneLaneProfile* LoadedLaneProfileAsset = nullptr;
 	UTrafficAutomationLogger::LogMetricInt(TEXT("LaneProfileAsset.Loaded"), LoadedObj ? 1 : 0);
 	if (const UTrafficZoneLaneProfile* LaneProfileAsset = Cast<UTrafficZoneLaneProfile>(LoadedObj))
 	{
+		LoadedLaneProfileAsset = LaneProfileAsset;
 		UTrafficAutomationLogger::LogMetric(TEXT("LaneProfileAsset.ProfileName"), LaneProfileAsset->ProfileName.ToString());
 		UTrafficAutomationLogger::LogMetricInt(TEXT("LaneProfileAsset.NumLanes"), LaneProfileAsset->NumLanes);
 		UTrafficAutomationLogger::LogMetricFloat(TEXT("LaneProfileAsset.LaneWidthCm"), LaneProfileAsset->LaneWidthCm, 1);
@@ -618,6 +620,31 @@ bool FTrafficCityBLDOverlayDiagnosticsTest::RunTest(const FString& Parameters)
 				Poly[0].X, Poly[0].Y, Poly[0].Z,
 				Poly.Last().X, Poly.Last().Y, Poly.Last().Z,
 				*MakePolylineKey(Poly)));
+		}
+	}
+
+	// Strong assertions: default CityBLD vehicle profiles are expected to generate opposing lanes (two-way).
+	{
+		static const FName VehiclesLaneTagName(TEXT("Vehicles"));
+		const bool bIsCityBLDVehicleProfile =
+			LoadedLaneProfileAsset &&
+			LoadedLaneProfileAsset->LaneTagName == VehiclesLaneTagName &&
+			LoadedLaneProfileAsset->ProfileName.ToString().Contains(TEXT("CityBLD"), ESearchCase::IgnoreCase);
+
+		if (bUseZoneGraphLanePolylines && bIsCityBLDVehicleProfile && CalibrationDataActor)
+		{
+			const int32 LanesPerDirection = FMath::Clamp(LoadedLaneProfileAsset->NumLanes, 1, 4);
+			const int32 ExpectedMinPolylines = LanesPerDirection * 2;
+			UTrafficAutomationLogger::LogMetricInt(TEXT("ZoneGraph.ExpectedMinLanePolylines"), ExpectedMinPolylines);
+
+			if (ExtractedPolylines.Num() < ExpectedMinPolylines)
+			{
+				AddError(FString::Printf(
+					TEXT("ZoneGraph overlay is enabled and CityBLD vehicle lane profile '%s' expects >=%d lane polylines, but only %d were extracted."),
+					*LoadedLaneProfileAsset->GetName(),
+					ExpectedMinPolylines,
+					ExtractedPolylines.Num()));
+			}
 		}
 	}
 

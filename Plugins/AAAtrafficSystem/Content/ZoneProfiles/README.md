@@ -3,7 +3,8 @@
 AAA Traffic expects two `TrafficZoneLaneProfile` data assets at these plugin content paths:
 
 - `/AAAtrafficSystem/ZoneProfiles/CityBLDUrbanTwoLane`
-  - 2 lanes, each ~350cm (total ~700cm)
+  - CityBLD *vehicle* profiles treat `NumLanes` as **lanes per direction** and auto-generate opposing lanes in ZoneGraph.
+    - Example: `NumLanes=1` -> 2 total lanes (1 forward + 1 backward), each ~350cm (total ~700cm)
   - `LaneTagName` = `Vehicles`
 - `/AAAtrafficSystem/ZoneProfiles/CityBLDFootpath`
   - 1 lane, ~200cm

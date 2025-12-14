@@ -146,15 +146,56 @@ namespace CityBLDZoneShapeBuilder
 			}
 
 			NewProfile.Lanes.Reset();
-			NewProfile.Lanes.Reserve(ProfileAsset->NumLanes);
+			static const FName VehiclesLaneTagName(TEXT("Vehicles"));
+			const bool bIsCityBLDVehicleProfile =
+				ProfileName.ToString().Contains(TEXT("CityBLD"), ESearchCase::IgnoreCase) &&
+				ProfileAsset->LaneTagName == VehiclesLaneTagName;
 
-			for (int32 i = 0; i < ProfileAsset->NumLanes; ++i)
+			if (bIsCityBLDVehicleProfile)
 			{
-				FZoneLaneDesc Lane;
-				Lane.Width = ProfileAsset->LaneWidthCm;
-				Lane.Direction = ProfileAsset->Direction;
-				Lane.Tags = LaneTags;
-				NewProfile.Lanes.Add(Lane);
+				// CityBLD calibration expects bidirectional lanes. Interpret NumLanes as "lanes per direction"
+				// and generate opposing lanes automatically (Forward lanes followed by Backward lanes).
+				const int32 LanesPerDirection = FMath::Clamp(ProfileAsset->NumLanes, 1, 4);
+				NewProfile.Lanes.Reserve(LanesPerDirection * 2);
+
+				const EZoneLaneDirection ForwardDir = ProfileAsset->Direction;
+				const EZoneLaneDirection BackwardDir = (ForwardDir == EZoneLaneDirection::Forward)
+					? EZoneLaneDirection::Backward
+					: (ForwardDir == EZoneLaneDirection::Backward)
+						? EZoneLaneDirection::Forward
+						: ForwardDir;
+
+				for (int32 i = 0; i < LanesPerDirection; ++i)
+				{
+					FZoneLaneDesc Lane;
+					Lane.Width = ProfileAsset->LaneWidthCm;
+					Lane.Direction = ForwardDir;
+					Lane.Tags = LaneTags;
+					NewProfile.Lanes.Add(Lane);
+				}
+
+				for (int32 i = 0; i < LanesPerDirection; ++i)
+				{
+					FZoneLaneDesc Lane;
+					Lane.Width = ProfileAsset->LaneWidthCm;
+					Lane.Direction = BackwardDir;
+					Lane.Tags = LaneTags;
+					NewProfile.Lanes.Add(Lane);
+				}
+			}
+			else
+			{
+				const int32 NumLanes = FMath::Clamp(ProfileAsset->NumLanes, 1, 8);
+				NewProfile.Lanes.Reserve(NumLanes);
+
+				for (int32 i = 0; i < NumLanes; ++i)
+				{
+					FZoneLaneDesc Lane;
+					Lane.Width = ProfileAsset->LaneWidthCm;
+					Lane.Direction = ProfileAsset->Direction;
+					Lane.Tags = LaneTags;
+					NewProfile.Lanes.Add(Lane);
+				}
 			}
 
 			FArrayProperty* LaneProfilesProp = nullptr;

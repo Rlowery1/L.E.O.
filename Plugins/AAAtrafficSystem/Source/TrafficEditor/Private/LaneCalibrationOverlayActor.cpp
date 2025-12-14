@@ -482,6 +482,16 @@ void ALaneCalibrationOverlayActor::BuildFromLanePolylines(const TArray<TArray<FV
 
 	const FTransform InverseRoadTransform = RoadTransform.Inverse();
 
+	int32 ValidLaneCount = 0;
+	for (const TArray<FVector>& WorldLanePoints : LanePolylines)
+	{
+		if (WorldLanePoints.Num() >= 2)
+		{
+			++ValidLaneCount;
+		}
+	}
+	const int32 ForwardLaneCount = (ValidLaneCount > 1) ? (ValidLaneCount / 2) : 0;
+
 	int32 NumLanes = 0;
 
 	for (const TArray<FVector>& WorldLanePoints : LanePolylines)
@@ -511,7 +521,12 @@ void ALaneCalibrationOverlayActor::BuildFromLanePolylines(const TArray<TArray<FV
 		ISM->SetCastShadow(false);
 		ISM->RegisterComponent();
 
-		CreateArrowMaterialInstance(ISM, FLinearColor(0.2f, 0.75f, 1.0f, 1.0f));
+		const FLinearColor LaneColor = (ValidLaneCount <= 1)
+			? FLinearColor(0.2f, 0.75f, 1.0f, 1.0f)
+			: (NumLanes < ForwardLaneCount)
+				? FLinearColor(0.2f, 0.95f, 0.3f, 1.0f)
+				: FLinearColor(0.95f, 0.3f, 0.2f, 1.0f);
+		CreateArrowMaterialInstance(ISM, LaneColor);
 
 		BuildChevronArrows(ISM, LocalLanePoints, /*bForwardDirection=*/true, VisualSettings);
 		ChevronArrowComponents.Add(ISM);
