@@ -299,7 +299,8 @@ void FTrafficNetworkBuilder::BuildIntersectionsAndMovements(
 		{
 			const float DistScore = FVector::Dist(InEp->Position, OutEp->Position) / 100.0f; // meters-ish
 
-			const FVector InDir = (-InEp->Direction).GetSafeNormal();
+			// InEp is an incoming endpoint at the lane's travel end. Its direction already points into the intersection.
+			const FVector InDir = InEp->Direction.GetSafeNormal();
 			const FVector OutDir = OutEp->Direction.GetSafeNormal();
 			const float Dot = FMath::Clamp(FVector::DotProduct(InDir, OutDir), -1.f, 1.f);
 			const float AngleDeg = FMath::RadiansToDegrees(FMath::Acos(Dot));
@@ -332,7 +333,7 @@ void FTrafficNetworkBuilder::BuildIntersectionsAndMovements(
 
 			const FVector StartPos = InEp->Position;
 			const FVector EndPos = OutEp->Position;
-			const FVector InDirNorm = (-InEp->Direction).GetSafeNormal();
+			const FVector InDirNorm = InEp->Direction.GetSafeNormal();
 			const FVector OutDirNorm = OutEp->Direction.GetSafeNormal();
 
 			TrafficMovementGeometry::BuildSmoothMovementPath(
@@ -363,7 +364,7 @@ void FTrafficNetworkBuilder::BuildIntersectionsAndMovements(
 					continue;
 				}
 
-				const FVector InDirNorm = (-InEp->Direction).GetSafeNormal();
+				const FVector InDirNorm = InEp->Direction.GetSafeNormal();
 				const FVector OutDirNorm = OutEp->Direction.GetSafeNormal();
 				const ETrafficTurnType TurnType = ComputeTurnType(InDirNorm, OutDirNorm);
 				if (TurnType == ETrafficTurnType::UTurn)

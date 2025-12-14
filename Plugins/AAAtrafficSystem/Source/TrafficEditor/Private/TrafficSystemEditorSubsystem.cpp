@@ -942,7 +942,12 @@ void UTrafficSystemEditorSubsystem::DoDrawIntersectionDebug()
 		{
 			if (const ATrafficLaneEndpointMarkerActor* Marker = Cast<ATrafficLaneEndpointMarkerActor>(*It))
 			{
-				SelectedLaneId = Marker->LaneId;
+				// Only treat "incoming" markers as the selection for chosen-path filtering.
+				// For this debug tool, an incoming lane endpoint is the lane's travel end (bIsStart==false).
+				if (!Marker->bIsStart)
+				{
+					SelectedLaneId = Marker->LaneId;
+				}
 				FocusLocation = Marker->GetActorLocation();
 				bHasFocusLocation = true;
 				break;
@@ -1034,10 +1039,11 @@ void UTrafficSystemEditorSubsystem::DoDrawIntersectionDebug()
 			Marker->bIsStart = bEndpointIsStart;
 			Marker->IntersectionId = TargetIntersection->IntersectionId;
 
+			const bool bIsIncomingLane = TargetIntersection->IncomingLaneIds.Contains(LaneId);
 			DrawDebugString(
 				World,
 				MarkerPos + FVector(0.f, 0.f, ZOffsetLane + 55.f),
-				FString::Printf(TEXT("Lane %d"), LaneId),
+				FString::Printf(TEXT("%s Lane %d"), bIsIncomingLane ? TEXT("IN") : TEXT("OUT"), LaneId),
 				/*TestBaseActor=*/nullptr,
 				FColor(255, 230, 80, 255),
 				LifeTimeSeconds,

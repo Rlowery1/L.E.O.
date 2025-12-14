@@ -6,6 +6,13 @@
 #include "Widgets/Docking/SDockTab.h"
 #include "Styling/AppStyle.h"
 #include "Editor.h"
+#include "HAL/IConsoleManager.h"
+
+static TAutoConsoleVariable<int32> CVarTrafficEnableDestructiveResets(
+	TEXT("aaa.Traffic.EnableDestructiveResets"),
+	0,
+	TEXT("Enables destructive reset buttons in the AAA Traffic editor panel."),
+	ECVF_Default);
 
 const FName FTrafficEditorModule::TrafficSystemPanelTabName(TEXT("AAA_TrafficSystemPanel"));
 
