@@ -1249,7 +1249,7 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 	TagAsRoadLab(Overlay);
 	FTrafficLaneFamilyCalibration Calib;
 	bool bUsedZoneGraph = false;
-	if (bIsCityBLD)
+	if (bIsCityBLD && AdapterSettings && AdapterSettings->bUseZoneGraphLanePolylinesForCalibrationOverlay)
 	{
 		bUsedZoneGraph = ComputeCalibrationFromZoneGraph(World, CenterlinePoints, Calib);
 	}

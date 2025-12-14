@@ -232,6 +232,20 @@ bool UCityBLDRoadGeometryProvider::BuildCenterlineFromCityBLDRoad(const AActor* 
 
 	if (!ControlSpline)
 	{
+		// Many kits expose a generic "Spline" component as the actual road path.
+		// Prefer an exact-name match before selecting "ControlSpline" helpers.
+		for (USplineComponent* Spline : Splines)
+		{
+			if (Spline && Spline->GetName().Equals(TEXT("Spline"), ESearchCase::IgnoreCase))
+			{
+				ControlSpline = Spline;
+				break;
+			}
+		}
+	}
+
+	if (!ControlSpline)
+	{
 		for (USplineComponent* Spline : Splines)
 		{
 			if (Spline && Spline->GetName().Contains(TEXT("Control"), ESearchCase::IgnoreCase))
@@ -284,11 +298,13 @@ bool UCityBLDRoadGeometryProvider::BuildCenterlineFromCityBLDRoad(const AActor* 
 
 		UE_LOG(LogTraffic, Warning,
 			TEXT("[CityBLD] %s has %d spline components but none are tagged '%s'. Using '%s'. ")
-			TEXT("Calibration overlay may be wrong until the correct spline component is tagged. Candidates: [%s]"),
+			TEXT("Calibration overlay may be wrong until the correct spline component is tagged. ")
+			TEXT("Tag the intended centerline spline component with '%s' to avoid heuristics. Candidates: [%s]"),
 			*Actor->GetName(),
 			Splines.Num(),
 			*AdapterSettings->RoadSplineTag.ToString(),
 			*ControlSpline->GetName(),
+			*AdapterSettings->RoadSplineTag.ToString(),
 			*FString::Join(Candidates, TEXT(", ")));
 	}
 

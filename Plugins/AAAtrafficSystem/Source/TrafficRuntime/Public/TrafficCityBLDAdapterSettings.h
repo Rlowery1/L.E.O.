@@ -61,7 +61,7 @@ public:
 
 	/** Uses ZoneGraph lane polylines (when available) for CityBLD calibration overlay arrow placement. */
 	UPROPERTY(EditAnywhere, Config, Category="ZoneGraph")
-	bool bUseZoneGraphLanePolylinesForCalibrationOverlay = true;
+	bool bUseZoneGraphLanePolylinesForCalibrationOverlay = false;
 
 	/** Default VehicleLaneProfile asset used when auto-building ZoneGraph for CityBLD calibration. */
 	UPROPERTY(EditAnywhere, Config, Category="ZoneGraph")
