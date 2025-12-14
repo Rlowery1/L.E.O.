@@ -7,5 +7,5 @@ UTrafficCityBLDAdapterSettings::UTrafficCityBLDAdapterSettings()
 	DefaultFamilyName = FName(TEXT("Urban_2x2"));
 	RoadClassNameContains.Add(TEXT("CityKit_Road"));
 	RoadClassNameContains.Add(TEXT("CityKit_MeshRoad"));
-	DefaultCityBLDVehicleLaneProfile = FSoftObjectPath(TEXT("/WorldBld/Traffic/LaneProfiles/CityBLD-Sample-2Lane.CityBLD-Sample-2Lane"));
+	DefaultCityBLDVehicleLaneProfile = FSoftObjectPath(TEXT("/AAAtrafficSystem/ZoneProfiles/CityBLDUrbanTwoLane.CityBLDUrbanTwoLane"));
 }

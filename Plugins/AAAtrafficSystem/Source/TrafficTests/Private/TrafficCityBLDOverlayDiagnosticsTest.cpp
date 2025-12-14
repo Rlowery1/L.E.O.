@@ -32,7 +32,7 @@ namespace
 	static const int32 MaxLaneWidthsToLog = 12;
 	static const int32 MaxDuplicateKeysToLog = 12;
 
-	static UClass* LoadCityBLDMeshRoadClass(FString& OutUsedPath)
+	static UClass* OverlayDiag_LoadCityBLDMeshRoadClass(FString& OutUsedPath)
 	{
 		OutUsedPath.Reset();
 
@@ -54,7 +54,7 @@ namespace
 		return nullptr;
 	}
 
-	static void EnableCollisionForActor(AActor* Actor)
+	static void OverlayDiag_EnableCollisionForActor(AActor* Actor)
 	{
 		if (!Actor)
 		{
@@ -76,7 +76,7 @@ namespace
 		}
 	}
 
-	static bool ConfigureControlSplineWorld(AActor* RoadActor, const TArray<FVector>& WorldPoints)
+	static bool OverlayDiag_ConfigureControlSplineWorld(AActor* RoadActor, const TArray<FVector>& WorldPoints)
 	{
 		if (!RoadActor || WorldPoints.Num() < 2)
 		{
@@ -399,7 +399,7 @@ bool FTrafficCityBLDOverlayDiagnosticsTest::RunTest(const FString& Parameters)
 	Subsys->Editor_ResetRoadLabHard(false);
 
 	FString MeshRoadClassPath;
-	UClass* MeshRoadClass = LoadCityBLDMeshRoadClass(MeshRoadClassPath);
+	UClass* MeshRoadClass = OverlayDiag_LoadCityBLDMeshRoadClass(MeshRoadClassPath);
 	if (!MeshRoadClass)
 	{
 		AddError(TEXT("Failed to load CityBLD BP_MeshRoad class (tried /CityBLD/Blueprints/... and /CityBLD/CityBLD/Blueprints/...)."));
@@ -415,7 +415,7 @@ bool FTrafficCityBLDOverlayDiagnosticsTest::RunTest(const FString& Parameters)
 		AActor* RoadActor = World->SpawnActor<AActor>(MeshRoadClass, Xform, SpawnParams);
 		if (RoadActor)
 		{
-			EnableCollisionForActor(RoadActor);
+			OverlayDiag_EnableCollisionForActor(RoadActor);
 		}
 		return RoadActor;
 	};
@@ -431,11 +431,11 @@ bool FTrafficCityBLDOverlayDiagnosticsTest::RunTest(const FString& Parameters)
 	// Ensure the road blueprint has a non-degenerate control spline so generated geometry/bounds and ZoneGraph lanes are meaningful.
 	{
 		const FVector Base = FVector::ZeroVector;
-		if (!ConfigureControlSplineWorld(RoadActor, { Base, Base + FVector(3000.f, 0.f, 0.f), Base + FVector(3000.f, 3000.f, 0.f) }))
+		if (!OverlayDiag_ConfigureControlSplineWorld(RoadActor, { Base, Base + FVector(3000.f, 0.f, 0.f), Base + FVector(3000.f, 3000.f, 0.f) }))
 		{
 			AddWarning(TEXT("Could not locate/configure a control spline on BP_MeshRoad; road may remain degenerate in automation."));
 		}
-		EnableCollisionForActor(RoadActor);
+		OverlayDiag_EnableCollisionForActor(RoadActor);
 	}
 
 	// Make calibration selection deterministic: BeginCalibration uses a selected actor if present.

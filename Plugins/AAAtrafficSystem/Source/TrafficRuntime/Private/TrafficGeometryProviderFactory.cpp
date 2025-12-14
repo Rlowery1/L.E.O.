@@ -5,6 +5,7 @@
 #include "RoadFamilyRegistry.h"
 #include "TrafficRuntimeModule.h"
 #include "TrafficRuntimeSettings.h"
+#include "TrafficCityBLDAdapterSettings.h"
 #include "UObject/UObjectIterator.h"
 #include "Interfaces/IPluginManager.h"
 #include "EngineUtils.h"
@@ -46,8 +47,12 @@ TObjectPtr<UObject> UTrafficGeometryProviderFactory::CreateProvider(
 					FRoadFamilyInfo* Info = Registry->FindOrCreateFamilyForClass(It->GetClass(), nullptr);
 					if (Info && !Info->FamilyDefinition.VehicleLaneProfile.IsValid())
 					{
-						// Set CityBLD sample 2-lane profile as default. Adjust the path if your asset lives elsewhere.
-						Info->FamilyDefinition.VehicleLaneProfile = FSoftObjectPath(TEXT("/WorldBld/Traffic/LaneProfiles/CityBLD-Sample-2Lane.CityBLD-Sample-2Lane"));
+						// Set a default vehicle lane profile for CityBLD roads (used for ZoneGraph + calibration overlay).
+						// Prefer adapter settings so projects can override via config.
+						const UTrafficCityBLDAdapterSettings* AdapterSettings = GetDefault<UTrafficCityBLDAdapterSettings>();
+						Info->FamilyDefinition.VehicleLaneProfile = (AdapterSettings && AdapterSettings->DefaultCityBLDVehicleLaneProfile.IsValid())
+							? AdapterSettings->DefaultCityBLDVehicleLaneProfile
+							: FSoftObjectPath(TEXT("/AAAtrafficSystem/ZoneProfiles/CityBLDUrbanTwoLane.CityBLDUrbanTwoLane"));
 
 						// Also set reasonable default lane counts (1 lane forward, 1 lane backward).
 						Info->FamilyDefinition.Forward.NumLanes = 1;
