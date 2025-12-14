@@ -29,6 +29,86 @@ namespace
 		int32 SegmentIndex = INDEX_NONE;
 	};
 
+	struct FPolylineSampleCache
+	{
+		TArray<float> CumulativeS;
+		float TotalLengthCm = 0.f;
+	};
+
+	static void BuildPolylineCumulativeDistances(const TArray<FVector>& Points, FPolylineSampleCache& OutCache)
+	{
+		OutCache.CumulativeS.Reset();
+		OutCache.TotalLengthCm = 0.f;
+
+		const int32 NumPts = Points.Num();
+		if (NumPts < 2)
+		{
+			return;
+		}
+
+		OutCache.CumulativeS.SetNum(NumPts);
+		OutCache.CumulativeS[0] = 0.f;
+
+		float Accum = 0.f;
+		for (int32 i = 1; i < NumPts; ++i)
+		{
+			Accum += FVector::Dist(Points[i - 1], Points[i]);
+			OutCache.CumulativeS[i] = Accum;
+		}
+		OutCache.TotalLengthCm = Accum;
+	}
+
+	static bool SamplePolylineAtS(
+		const TArray<FVector>& Points,
+		const FPolylineSampleCache& Cache,
+		float S,
+		FVector& OutPos,
+		FVector& OutTan)
+	{
+		const int32 NumPts = Points.Num();
+		if (NumPts < 2 || Cache.CumulativeS.Num() != NumPts)
+		{
+			return false;
+		}
+
+		if (Cache.TotalLengthCm <= KINDA_SMALL_NUMBER)
+		{
+			OutPos = Points[0];
+			OutTan = (Points[1] - Points[0]).GetSafeNormal2D();
+			if (OutTan.IsNearlyZero())
+			{
+				OutTan = FVector::ForwardVector;
+			}
+			return true;
+		}
+
+		const float ClampedS = FMath::Clamp(S, 0.f, Cache.TotalLengthCm);
+
+		int32 SegmentIdx = 0;
+		for (int32 i = 0; i + 1 < Cache.CumulativeS.Num(); ++i)
+		{
+			if (ClampedS >= Cache.CumulativeS[i] && ClampedS <= Cache.CumulativeS[i + 1])
+			{
+				SegmentIdx = i;
+				break;
+			}
+		}
+
+		const FVector A = Points[SegmentIdx];
+		const FVector B = Points[SegmentIdx + 1];
+		const float SegStartS = Cache.CumulativeS[SegmentIdx];
+		const float SegLen = FVector::Dist(A, B);
+		const float T = (SegLen > KINDA_SMALL_NUMBER) ? (ClampedS - SegStartS) / SegLen : 0.f;
+
+		OutPos = FMath::Lerp(A, B, T);
+		OutTan = (B - A).GetSafeNormal2D();
+		if (OutTan.IsNearlyZero())
+		{
+			OutTan = FVector::ForwardVector;
+		}
+		return true;
+	}
+
 	static FPolylineClosestResult ClosestPointOnPolyline2D(const TArray<FVector>& Points, const FVector& Query)
 	{
 		FPolylineClosestResult Result;
@@ -269,10 +349,74 @@ bool TrafficCalibrationTestUtils::EvaluateNetworkLaneAlignment(
 		return false;
 	}
 
+	struct FSampleDebug
+	{
+		int32 RoadId = INDEX_NONE;
+		int32 LaneId = INDEX_NONE;
+		ELaneDirection LaneDirection = ELaneDirection::Forward;
+		int32 SideIndex = 0;
+		FString ActorName;
+
+		int32 SampleIndex = INDEX_NONE;
+		float LaneS = 0.f;
+		float LaneLengthCm = 0.f;
+		float RoadS = 0.f;
+		float RoadLengthCm = 0.f;
+
+		FVector LanePos = FVector::ZeroVector;
+		FVector LaneTan = FVector::ForwardVector;
+		FVector RoadPos = FVector::ZeroVector;
+		FVector RoadTan = FVector::ForwardVector;
+
+		bool bHasSurface = false;
+		bool bUsedVertexBounds = false;
+		float MinLat = 0.f;
+		float MaxLat = 0.f;
+		float LaneLat = 0.f;
+
+		float DevCm = 0.f;
+		float HeadingDeg = 0.f;
+
+		int32 LaneNumPoints = 0;
+		int32 RoadNumPoints = 0;
+		float LaneMaxSegLenCm = 0.f;
+		float RoadMaxSegLenCm = 0.f;
+	};
+
+	auto LaneDirToString = [](ELaneDirection Dir) -> const TCHAR*
+	{
+		switch (Dir)
+		{
+		case ELaneDirection::Forward:
+			return TEXT("Forward");
+		case ELaneDirection::Backward:
+			return TEXT("Backward");
+		case ELaneDirection::Bidirectional:
+			return TEXT("Bidirectional");
+		default:
+			return TEXT("Unknown");
+		}
+	};
+
+	auto ComputeMaxSegLen2D = [](const TArray<FVector>& Points) -> float
+	{
+		float MaxLen = 0.f;
+		for (int32 i = 1; i < Points.Num(); ++i)
+		{
+			MaxLen = FMath::Max(MaxLen, FVector::Dist2D(Points[i - 1], Points[i]));
+		}
+		return MaxLen;
+	};
+
 	TMap<int32, const FTrafficRoad*> RoadById;
+	TMap<int32, FPolylineSampleCache> RoadSampleCacheById;
 	for (const FTrafficRoad& Road : Network.Roads)
 	{
 		RoadById.Add(Road.RoadId, &Road);
+
+		FPolylineSampleCache Cache;
+		BuildPolylineCumulativeDistances(Road.CenterlinePoints, Cache);
+		RoadSampleCacheById.Add(Road.RoadId, MoveTemp(Cache));
 	}
 
 	TMap<AActor*, TArray<FVector>> DynamicVertsByActor;
@@ -281,6 +425,10 @@ bool TrafficCalibrationTestUtils::EvaluateNetworkLaneAlignment(
 	double SumOutward = 0.0;
 	float MaxDev = 0.f;
 	float MaxHeading = 0.f;
+	FSampleDebug WorstDevSample;
+	FSampleDebug WorstHeadingSample;
+	WorstDevSample.DevCm = -1.f;
+	WorstHeadingSample.HeadingDeg = -1.f;
 
 	int32 TotalSamples = 0;
 	int32 WithSurface = 0;
@@ -290,6 +438,12 @@ bool TrafficCalibrationTestUtils::EvaluateNetworkLaneAlignment(
 	{
 		const FTrafficRoad* Road = RoadById.FindRef(Lane.RoadId);
 		if (!Road)
+		{
+			continue;
+		}
+
+		const FPolylineSampleCache* RoadCache = RoadSampleCacheById.Find(Lane.RoadId);
+		if (!RoadCache || RoadCache->TotalLengthCm <= KINDA_SMALL_NUMBER)
 		{
 			continue;
 		}
@@ -319,12 +473,14 @@ bool TrafficCalibrationTestUtils::EvaluateNetworkLaneAlignment(
 				continue;
 			}
 
-			FPolylineClosestResult RoadClosest = ClosestPointOnPolyline2D(Road->CenterlinePoints, LanePos);
-			FVector RoadTan = RoadClosest.Tangent;
-			RoadTan.Z = 0.f;
-			if (!RoadTan.Normalize())
+			const float LaneT = (LaneLength > KINDA_SMALL_NUMBER) ? (S / LaneLength) : 0.f;
+			const float RoadS = LaneT * RoadCache->TotalLengthCm;
+
+			FVector RoadPos = FVector::ZeroVector;
+			FVector RoadTan = FVector::ForwardVector;
+			if (!SamplePolylineAtS(Road->CenterlinePoints, *RoadCache, RoadS, RoadPos, RoadTan))
 			{
-				RoadTan = FVector::ForwardVector;
+				continue;
 			}
 
 			const FVector RoadRight = FVector::CrossProduct(FVector::UpVector, RoadTan).GetSafeNormal();
@@ -336,12 +492,13 @@ bool TrafficCalibrationTestUtils::EvaluateNetworkLaneAlignment(
 
 			++TotalSamples;
 
-			const FVector RoadPos = RoadClosest.ClosestPoint;
 			float MinLat = 0.f;
 			float MaxLat = 0.f;
 			bool bHasSurface = false;
+			bool bUsedVertexBounds = false;
 			float DevCm = 0.f;
 			float OutwardErrCm = 0.f;
+			float LaneLat = 0.f;
 
 			if (TArray<FVector>* CachedVerts = DynamicVertsByActor.Find(RoadActor))
 			{
@@ -354,6 +511,7 @@ bool TrafficCalibrationTestUtils::EvaluateNetworkLaneAlignment(
 					Params.MinVertsPerCrossSection,
 					MinLat,
 					MaxLat);
+				bUsedVertexBounds = bHasSurface;
 			}
 			else
 			{
@@ -371,6 +529,7 @@ bool TrafficCalibrationTestUtils::EvaluateNetworkLaneAlignment(
 						Params.MinVertsPerCrossSection,
 						MinLat,
 						MaxLat);
+					bUsedVertexBounds = bHasSurface;
 				}
 			}
 
@@ -378,7 +537,7 @@ bool TrafficCalibrationTestUtils::EvaluateNetworkLaneAlignment(
 			{
 				++WithSurface;
 
-				const float LaneLat = FVector::DotProduct(LanePos - RoadPos, RoadRight);
+				LaneLat = FVector::DotProduct(LanePos - RoadPos, RoadRight);
 				const float ClampedLat = FMath::Clamp(LaneLat, MinLat, MaxLat);
 				DevCm = FMath::Abs(LaneLat - ClampedLat);
 
@@ -418,6 +577,63 @@ bool TrafficCalibrationTestUtils::EvaluateNetworkLaneAlignment(
 
 			SumDev += DevCm;
 			MaxDev = FMath::Max(MaxDev, DevCm);
+			if (DevCm > WorstDevSample.DevCm)
+			{
+				WorstDevSample.RoadId = Road->RoadId;
+				WorstDevSample.LaneId = Lane.LaneId;
+				WorstDevSample.LaneDirection = Lane.Direction;
+				WorstDevSample.SideIndex = Lane.SideIndex;
+				WorstDevSample.ActorName = RoadActor ? RoadActor->GetName() : TEXT("None");
+				WorstDevSample.SampleIndex = i;
+				WorstDevSample.LaneS = S;
+				WorstDevSample.LaneLengthCm = LaneLength;
+				WorstDevSample.RoadS = RoadS;
+				WorstDevSample.RoadLengthCm = RoadCache->TotalLengthCm;
+				WorstDevSample.LanePos = LanePos;
+				WorstDevSample.LaneTan = LaneTangent;
+				WorstDevSample.RoadPos = RoadPos;
+				WorstDevSample.RoadTan = RoadTan;
+				WorstDevSample.bHasSurface = bHasSurface;
+				WorstDevSample.bUsedVertexBounds = bUsedVertexBounds;
+				WorstDevSample.MinLat = MinLat;
+				WorstDevSample.MaxLat = MaxLat;
+				WorstDevSample.LaneLat = LaneLat;
+				WorstDevSample.DevCm = DevCm;
+				WorstDevSample.HeadingDeg = HeadingDeg;
+				WorstDevSample.LaneNumPoints = Lane.CenterlinePoints.Num();
+				WorstDevSample.RoadNumPoints = Road->CenterlinePoints.Num();
+				WorstDevSample.LaneMaxSegLenCm = ComputeMaxSegLen2D(Lane.CenterlinePoints);
+				WorstDevSample.RoadMaxSegLenCm = ComputeMaxSegLen2D(Road->CenterlinePoints);
+			}
+
+			if (HeadingDeg > WorstHeadingSample.HeadingDeg)
+			{
+				WorstHeadingSample.RoadId = Road->RoadId;
+				WorstHeadingSample.LaneId = Lane.LaneId;
+				WorstHeadingSample.LaneDirection = Lane.Direction;
+				WorstHeadingSample.SideIndex = Lane.SideIndex;
+				WorstHeadingSample.ActorName = RoadActor ? RoadActor->GetName() : TEXT("None");
+				WorstHeadingSample.SampleIndex = i;
+				WorstHeadingSample.LaneS = S;
+				WorstHeadingSample.LaneLengthCm = LaneLength;
+				WorstHeadingSample.RoadS = RoadS;
+				WorstHeadingSample.RoadLengthCm = RoadCache->TotalLengthCm;
+				WorstHeadingSample.LanePos = LanePos;
+				WorstHeadingSample.LaneTan = LaneTangent;
+				WorstHeadingSample.RoadPos = RoadPos;
+				WorstHeadingSample.RoadTan = RoadTan;
+				WorstHeadingSample.bHasSurface = bHasSurface;
+				WorstHeadingSample.bUsedVertexBounds = bUsedVertexBounds;
+				WorstHeadingSample.MinLat = MinLat;
+				WorstHeadingSample.MaxLat = MaxLat;
+				WorstHeadingSample.LaneLat = LaneLat;
+				WorstHeadingSample.DevCm = DevCm;
+				WorstHeadingSample.HeadingDeg = HeadingDeg;
+				WorstHeadingSample.LaneNumPoints = Lane.CenterlinePoints.Num();
+				WorstHeadingSample.RoadNumPoints = Road->CenterlinePoints.Num();
+				WorstHeadingSample.LaneMaxSegLenCm = ComputeMaxSegLen2D(Lane.CenterlinePoints);
+				WorstHeadingSample.RoadMaxSegLenCm = ComputeMaxSegLen2D(Road->CenterlinePoints);
+			}
 			if (DevCm <= Params.LateralToleranceCm)
 			{
 				++WithinTol;
@@ -447,6 +663,70 @@ bool TrafficCalibrationTestUtils::EvaluateNetworkLaneAlignment(
 	if (WithSurface > 0)
 	{
 		OutMetrics.MeanOutwardSignedErrorCm = static_cast<float>(SumOutward / static_cast<double>(WithSurface));
+	}
+
+	if (WorstDevSample.DevCm >= 0.f)
+	{
+		UTrafficAutomationLogger::LogLine(FString::Printf(
+			TEXT("Alignment.WorstDev=DevCm=%.2f HeadingDeg=%.2f RoadId=%d LaneId=%d LaneDir=%s SideIndex=%d Actor=%s Sample=%d LaneS=%.1f/%.1f RoadS=%.1f/%.1f UsedVertexBounds=%d MinLat=%.1f MaxLat=%.1f LaneLat=%.1f LanePts=%d RoadPts=%d LaneMaxSegCm=%.1f RoadMaxSegCm=%.1f LanePos=%.0f,%.0f RoadPos=%.0f,%.0f"),
+			WorstDevSample.DevCm,
+			WorstDevSample.HeadingDeg,
+			WorstDevSample.RoadId,
+			WorstDevSample.LaneId,
+			LaneDirToString(WorstDevSample.LaneDirection),
+			WorstDevSample.SideIndex,
+			*WorstDevSample.ActorName,
+			WorstDevSample.SampleIndex,
+			WorstDevSample.LaneS,
+			WorstDevSample.LaneLengthCm,
+			WorstDevSample.RoadS,
+			WorstDevSample.RoadLengthCm,
+			WorstDevSample.bUsedVertexBounds ? 1 : 0,
+			WorstDevSample.MinLat,
+			WorstDevSample.MaxLat,
+			WorstDevSample.LaneLat,
+			WorstDevSample.LaneNumPoints,
+			WorstDevSample.RoadNumPoints,
+			WorstDevSample.LaneMaxSegLenCm,
+			WorstDevSample.RoadMaxSegLenCm,
+			WorstDevSample.LanePos.X,
+			WorstDevSample.LanePos.Y,
+			WorstDevSample.RoadPos.X,
+			WorstDevSample.RoadPos.Y));
+	}
+
+	if (WorstHeadingSample.HeadingDeg >= 0.f)
+	{
+		UTrafficAutomationLogger::LogLine(FString::Printf(
+			TEXT("Alignment.WorstHeading=HeadingDeg=%.2f DevCm=%.2f RoadId=%d LaneId=%d LaneDir=%s SideIndex=%d Actor=%s Sample=%d LaneS=%.1f/%.1f RoadS=%.1f/%.1f UsedVertexBounds=%d MinLat=%.1f MaxLat=%.1f LaneLat=%.1f LanePts=%d RoadPts=%d LaneMaxSegCm=%.1f RoadMaxSegCm=%.1f LaneTan=%.2f,%.2f RoadTan=%.2f,%.2f LanePos=%.0f,%.0f RoadPos=%.0f,%.0f"),
+			WorstHeadingSample.HeadingDeg,
+			WorstHeadingSample.DevCm,
+			WorstHeadingSample.RoadId,
+			WorstHeadingSample.LaneId,
+			LaneDirToString(WorstHeadingSample.LaneDirection),
+			WorstHeadingSample.SideIndex,
+			*WorstHeadingSample.ActorName,
+			WorstHeadingSample.SampleIndex,
+			WorstHeadingSample.LaneS,
+			WorstHeadingSample.LaneLengthCm,
+			WorstHeadingSample.RoadS,
+			WorstHeadingSample.RoadLengthCm,
+			WorstHeadingSample.bUsedVertexBounds ? 1 : 0,
+			WorstHeadingSample.MinLat,
+			WorstHeadingSample.MaxLat,
+			WorstHeadingSample.LaneLat,
+			WorstHeadingSample.LaneNumPoints,
+			WorstHeadingSample.RoadNumPoints,
+			WorstHeadingSample.LaneMaxSegLenCm,
+			WorstHeadingSample.RoadMaxSegLenCm,
+			WorstHeadingSample.LaneTan.X,
+			WorstHeadingSample.LaneTan.Y,
+			WorstHeadingSample.RoadTan.X,
+			WorstHeadingSample.RoadTan.Y,
+			WorstHeadingSample.LanePos.X,
+			WorstHeadingSample.LanePos.Y,
+			WorstHeadingSample.RoadPos.X,
+			WorstHeadingSample.RoadPos.Y));
 	}
 
 	return TotalSamples > 0;

@@ -55,6 +55,10 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category="Debug")
 	bool bDrawCalibrationCenterlineDebug = false;
 
+	/** Uses the BP_MeshRoad control spline directly for the display centerline (recommended for calibration overlay). */
+	UPROPERTY(EditAnywhere, Config, Category="Centerline")
+	bool bUseControlSplineForDisplayCenterline = true;
+
 	/** Uses ZoneGraph lane polylines (when available) for CityBLD calibration overlay arrow placement. */
 	UPROPERTY(EditAnywhere, Config, Category="ZoneGraph")
 	bool bUseZoneGraphLanePolylinesForCalibrationOverlay = true;

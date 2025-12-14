@@ -8,6 +8,7 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "TrafficGeometrySmoothing.h"
+#include "TrafficCityBLDAdapterSettings.h"
 #include "TrafficRuntimeModule.h"
 #include "TrafficRoadTypes.h"
 
@@ -197,25 +198,116 @@ bool UCityBLDRoadGeometryProvider::BuildCenterlineFromCityBLDRoad(const AActor* 
 
 	UE_LOG(LogTraffic, Verbose, TEXT("[CityBLD] Processing actor %s"), *Actor->GetName());
 
+	const UTrafficCityBLDAdapterSettings* AdapterSettings = GetDefault<UTrafficCityBLDAdapterSettings>();
+
 	const USplineComponent* ControlSpline = nullptr;
 	TArray<USplineComponent*> Splines;
 	Actor->GetComponents<USplineComponent>(Splines);
-	for (USplineComponent* Spline : Splines)
+
+	// Prefer an explicitly tagged centerline spline when present (CityBLD road kits typically tag this).
+	if (AdapterSettings && !AdapterSettings->RoadSplineTag.IsNone())
 	{
-		if (Spline && Spline->GetName().Contains(TEXT("Control")))
+		for (USplineComponent* Spline : Splines)
 		{
-			ControlSpline = Spline;
-			break;
+			if (Spline && Spline->ComponentHasTag(AdapterSettings->RoadSplineTag))
+			{
+				ControlSpline = Spline;
+				break;
+			}
 		}
 	}
+
+	// Heuristics fallback when tags aren't set.
+	if (!ControlSpline)
+	{
+		for (USplineComponent* Spline : Splines)
+		{
+			if (Spline && Spline->GetName().Contains(TEXT("Centerline"), ESearchCase::IgnoreCase))
+			{
+				ControlSpline = Spline;
+				break;
+			}
+		}
+	}
+
+	if (!ControlSpline)
+	{
+		for (USplineComponent* Spline : Splines)
+		{
+			if (Spline && Spline->GetName().Contains(TEXT("Control"), ESearchCase::IgnoreCase))
+			{
+				ControlSpline = Spline;
+				break;
+			}
+		}
+	}
+
+	// If multiple splines exist and none matched tags/names, pick the longest (usually the road path).
 	if (!ControlSpline && Splines.Num() > 0)
 	{
-		ControlSpline = Splines[0];
+		float BestLen = -1.f;
+		for (USplineComponent* Spline : Splines)
+		{
+			if (!Spline)
+			{
+				continue;
+			}
+			const float Len = Spline->GetSplineLength();
+			if (Len > BestLen)
+			{
+				BestLen = Len;
+				ControlSpline = Spline;
+			}
+		}
 	}
+
 	if (!ControlSpline)
 	{
 		UE_LOG(LogTraffic, Warning, TEXT("[CityBLD] No SplineComponent found on %s"), *Actor->GetName());
 		return false;
+	}
+
+	// Warn when multiple splines exist but we couldn't find the tagged centerline spline; this is the #1 cause of "spaghetti" overlays.
+	if (AdapterSettings && !AdapterSettings->RoadSplineTag.IsNone() && Splines.Num() > 1 && !ControlSpline->ComponentHasTag(AdapterSettings->RoadSplineTag))
+	{
+		TArray<FString> Candidates;
+		Candidates.Reserve(Splines.Num());
+		for (USplineComponent* Spline : Splines)
+		{
+			if (!Spline)
+			{
+				continue;
+			}
+			const FString TagHit = Spline->ComponentHasTag(AdapterSettings->RoadSplineTag) ? TEXT("TAG_MATCH") : TEXT("no_tag");
+			Candidates.Add(FString::Printf(TEXT("%s(%s)"), *Spline->GetName(), *TagHit));
+		}
+
+		UE_LOG(LogTraffic, Warning,
+			TEXT("[CityBLD] %s has %d spline components but none are tagged '%s'. Using '%s'. ")
+			TEXT("Calibration overlay may be wrong until the correct spline component is tagged. Candidates: [%s]"),
+			*Actor->GetName(),
+			Splines.Num(),
+			*AdapterSettings->RoadSplineTag.ToString(),
+			*ControlSpline->GetName(),
+			*FString::Join(Candidates, TEXT(", ")));
+	}
+
+	if (AdapterSettings && AdapterSettings->bUseControlSplineForDisplayCenterline)
+	{
+		// For calibration overlay, the control spline is the most stable "ground truth" for the road path.
+		// Mesh-based fitting can be thrown off by nearby segments/overlaps in complex test tracks.
+		const float Length = ControlSpline->GetSplineLength();
+		const int32 SampleCount = FMath::Clamp(static_cast<int32>(Length / 200.f), 10, 200);
+		OutPoints.Reserve(SampleCount + 1);
+
+		for (int32 i = 0; i <= SampleCount; ++i)
+		{
+			const float Dist = (SampleCount > 0) ? (Length * static_cast<float>(i) / static_cast<float>(SampleCount)) : 0.f;
+			OutPoints.Add(ControlSpline->GetLocationAtDistanceAlongSpline(Dist, ESplineCoordinateSpace::World));
+		}
+
+		UE_LOG(LogTraffic, Verbose, TEXT("[CityBLD] %s used control spline samples (%d points)"), *Actor->GetName(), OutPoints.Num());
+		return OutPoints.Num() >= 2;
 	}
 
 	TArray<FVector> CollectedVerts;

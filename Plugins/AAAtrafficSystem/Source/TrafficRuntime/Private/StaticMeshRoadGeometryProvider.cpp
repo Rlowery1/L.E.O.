@@ -434,6 +434,22 @@ bool UStaticMeshRoadGeometryProvider::BuildCenterlineFromActor(const AActor* Act
 		return false;
 	}
 
+	// If the actor has a spline, prefer it as the authoritative ordering for the road path.
+	// Vertex-cloud extraction (PCA/projection) is fundamentally ambiguous for looped/branching meshes and can
+	// produce "spaghetti" centerlines that cut across the level (as seen in calibration overlays).
+	if (const USplineComponent* SplineComp = Actor->FindComponentByClass<USplineComponent>())
+	{
+		const float Length = SplineComp->GetSplineLength();
+		const int32 SampleCount = FMath::Clamp(static_cast<int32>(Length / 200.f), 10, 200);
+		OutPoints.Reserve(SampleCount + 1);
+		for (int32 i = 0; i <= SampleCount; ++i)
+		{
+			const float Distance = (SampleCount > 0) ? (Length * static_cast<float>(i) / static_cast<float>(SampleCount)) : 0.f;
+			OutPoints.Add(SplineComp->GetLocationAtDistanceAlongSpline(Distance, ESplineCoordinateSpace::World));
+		}
+		return OutPoints.Num() >= 2;
+	}
+
 	TArray<UStaticMeshComponent*> MeshComps;
 	Actor->GetComponents<UStaticMeshComponent>(MeshComps);
 
