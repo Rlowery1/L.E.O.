@@ -9,6 +9,7 @@
 class UStaticMeshComponent;
 class UTrafficKinematicFollower;
 class UZoneGraphSubsystem;
+class UTrafficNetworkAsset;
 struct FTrafficLane;
 struct FTrafficMovement;
 
@@ -24,6 +25,7 @@ public:
 
 	void InitializeOnLane(const FTrafficLane* Lane, float InitialS, float SpeedCmPerSec);
 	void InitializeOnMovement(const FTrafficMovement* Movement, float InitialS, float SpeedCmPerSec);
+	void SetNetworkAsset(UTrafficNetworkAsset* InNetworkAsset);
 
 	/**
 	 * Initialize this logic vehicle to follow a ZoneGraph lane (instead of an AAA Traffic lane polyline).
@@ -46,6 +48,12 @@ protected:
 
 	UPROPERTY()
 	UTrafficKinematicFollower* Follower;
+
+	UPROPERTY()
+	TObjectPtr<UTrafficNetworkAsset> NetworkAsset = nullptr;
+
+	// When following a movement, remember where we're headed so we can re-enter lane following.
+	int32 PendingOutgoingLaneId = INDEX_NONE;
 
 	// ZoneGraph-following mode (alternative to UTrafficKinematicFollower).
 	bool bUseZoneGraphLane = false;

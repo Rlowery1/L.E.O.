@@ -41,6 +41,7 @@ public:
 	void DoPrepare();
 	void DoBuild();
 	void DoCars();
+	void DoDrawIntersectionDebug();
 
 	/** Scans the current level for spline-based roads and prepares families/metadata. */
 	void Editor_PrepareMapForTraffic();

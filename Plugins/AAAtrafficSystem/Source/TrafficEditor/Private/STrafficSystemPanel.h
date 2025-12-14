@@ -34,6 +34,7 @@ private:
 	FReply OnPrepareClicked();
 	FReply OnBuildClicked();
 	FReply OnCarsClicked();
+	FReply OnDrawIntersectionDebugClicked();
 	FReply OnPrepareMapForTrafficClicked();
 
 	bool CanCalibrate() const;

@@ -407,6 +407,39 @@ void STrafficSystemPanel::Construct(const FArguments& InArgs)
 						.ButtonStyle(&FAppStyle::Get().GetWidgetStyle<FButtonStyle>("PrimaryButton"))
 						.HAlign(HAlign_Left)
 						.ContentPadding(FMargin(16.0f, 8.0f))
+						.OnClicked(this, &STrafficSystemPanel::OnDrawIntersectionDebugClicked)
+						[
+							SNew(SVerticalBox)
+							+ SVerticalBox::Slot()
+							.AutoHeight()
+							[
+								SNew(STextBlock)
+								.Text(FText::FromString(TEXT("DEBUG: Draw intersection movement paths")))
+								.Font(TitleFont)
+								.ColorAndOpacity(FLinearColor::White)
+								.WrapTextAt(420.0f)
+							]
+							+ SVerticalBox::Slot()
+							.AutoHeight()
+							.Padding(0.0f, 2.0f, 0.0f, 0.0f)
+							[
+								SNew(STextBlock)
+								.Text(FText::FromString(TEXT("Builds the traffic network (if needed) and draws turn connectors at intersections.")))
+								.Font(SubtitleFont)
+								.ColorAndOpacity(FLinearColor(0.8f, 0.8f, 0.8f))
+								.WrapTextAt(420.0f)
+							]
+						]
+					]
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0.0f, 0.0f, 0.0f, 6.0f)
+					[
+						SNew(SButton)
+						.ButtonStyle(&FAppStyle::Get().GetWidgetStyle<FButtonStyle>("PrimaryButton"))
+						.HAlign(HAlign_Left)
+						.ContentPadding(FMargin(16.0f, 8.0f))
 						.OnClicked(this, &STrafficSystemPanel::OnConvertSelectedClicked)
 						[
 							SNew(SVerticalBox)
@@ -684,6 +717,29 @@ FReply STrafficSystemPanel::OnCarsClicked()
 			return FReply::Handled();
 		}
 		Subsys->DoCars();
+	}
+	return FReply::Handled();
+}
+
+FReply STrafficSystemPanel::OnDrawIntersectionDebugClicked()
+{
+	const bool bAutomationOrCmdlet = IsRunningCommandlet() || GIsAutomationTesting;
+	if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
+	{
+		if (!HasDetectedFamilies())
+		{
+			if (!bAutomationOrCmdlet)
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(TEXT("No road families detected. Run Prepare Map first.")));
+			}
+			else
+			{
+				UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor][Automation] No road families detected; dialog suppressed."));
+			}
+			return FReply::Handled();
+		}
+
+		Subsys->DoDrawIntersectionDebug();
 	}
 	return FReply::Handled();
 }

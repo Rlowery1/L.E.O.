@@ -98,12 +98,15 @@ void FTrafficNetworkBuilder::GenerateLanesForRoad(
 
 		const float InnerOffset = Side.InnerLaneCenterOffsetCm;
 		const float LaneWidth = Side.LaneWidthCm;
-		const float DirectionSign = bForwardDirection ? 1.f : -1.f;
+
+		// Keep lane points ordered in the lane's travel direction.
+		// Forward lanes travel along the road's centerline order; backward lanes travel in reverse.
+		const bool bReverseAlongCenterline = (LaneDirectionTag == ELaneDirection::Backward);
 
 		for (int32 LaneIndex = 0; LaneIndex < Side.NumLanes; ++LaneIndex)
 		{
 			const float CenterOffset = InnerOffset + LaneIndex * LaneWidth;
-			const float LateralOffset = DirectionSign * CenterOffset;
+			const float LateralOffset = CenterOffset;
 
 			FTrafficLane Lane;
 			Lane.LaneId = InOutNextLaneId++;
@@ -116,16 +119,19 @@ void FTrafficNetworkBuilder::GenerateLanesForRoad(
 
 			for (int32 i = 0; i < NumPoints; ++i)
 			{
-				const FVector Pos = Centerline[i];
+				const int32 SrcIndex = bReverseAlongCenterline ? (NumPoints - 1 - i) : i;
+				const FVector Pos = Centerline[SrcIndex];
 
 				FVector Tangent;
 				if (i < NumPoints - 1)
 				{
-					Tangent = (Centerline[i + 1] - Centerline[i]).GetSafeNormal();
+					const int32 SrcNextIndex = bReverseAlongCenterline ? (NumPoints - 1 - (i + 1)) : (i + 1);
+					Tangent = (Centerline[SrcNextIndex] - Centerline[SrcIndex]).GetSafeNormal();
 				}
 				else
 				{
-					Tangent = (Centerline[i] - Centerline[i - 1]).GetSafeNormal();
+					const int32 SrcPrevIndex = bReverseAlongCenterline ? (NumPoints - 1 - (i - 1)) : (i - 1);
+					Tangent = (Centerline[SrcIndex] - Centerline[SrcPrevIndex]).GetSafeNormal();
 				}
 
 				const FVector UpVector = FVector::UpVector;
@@ -254,15 +260,8 @@ void FTrafficNetworkBuilder::BuildIntersectionsAndMovements(
 				continue;
 			}
 
-			bool bIsIncoming = false;
-			if (Lane->Direction == ELaneDirection::Forward)
-			{
-				bIsIncoming = !Ep.bIsStart;
-			}
-			else if (Lane->Direction == ELaneDirection::Backward)
-			{
-				bIsIncoming = Ep.bIsStart;
-			}
+			// Lane centerline points are stored in travel order, so an endpoint is incoming when it is the travel end.
+			const bool bIsIncoming = !Ep.bIsStart;
 
 			if (bIsIncoming)
 			{
@@ -278,8 +277,85 @@ void FTrafficNetworkBuilder::BuildIntersectionsAndMovements(
 
 		OutNetwork.Intersections.Add(Intersection);
 
+		auto ComputeTurnType = [](const FVector& InDir, const FVector& OutDir) -> ETrafficTurnType
+		{
+			const FVector InDirN = InDir.GetSafeNormal();
+			const FVector OutDirN = OutDir.GetSafeNormal();
+			const float DotProduct = FVector::DotProduct(InDirN, OutDirN);
+			const FVector CrossProduct = FVector::CrossProduct(InDirN, OutDirN);
+
+			if (DotProduct > 0.7f)
+			{
+				return ETrafficTurnType::Through;
+			}
+			if (DotProduct < -0.7f)
+			{
+				return ETrafficTurnType::UTurn;
+			}
+			return (CrossProduct.Z > 0.0f) ? ETrafficTurnType::Left : ETrafficTurnType::Right;
+		};
+
+		auto ScoreCandidate = [&](const FLaneEndpoint* InEp, const FLaneEndpoint* OutEp) -> float
+		{
+			const float DistScore = FVector::Dist(InEp->Position, OutEp->Position) / 100.0f; // meters-ish
+
+			const FVector InDir = (-InEp->Direction).GetSafeNormal();
+			const FVector OutDir = OutEp->Direction.GetSafeNormal();
+			const float Dot = FMath::Clamp(FVector::DotProduct(InDir, OutDir), -1.f, 1.f);
+			const float AngleDeg = FMath::RadiansToDegrees(FMath::Acos(Dot));
+
+			const ETrafficTurnType TurnType = ComputeTurnType(InDir, OutDir);
+			const float IdealDeg =
+				(TurnType == ETrafficTurnType::Through) ? 0.f :
+				(TurnType == ETrafficTurnType::Left) ? 90.f :
+				(TurnType == ETrafficTurnType::Right) ? 90.f :
+				180.f;
+
+			const float AngleScore = FMath::Abs(AngleDeg - IdealDeg) / 15.0f;
+			const float UTurnPenalty = (TurnType == ETrafficTurnType::UTurn) ? 50.f : 0.f;
+			return DistScore + AngleScore + UTurnPenalty;
+		};
+
+		auto AddMovement = [&](const FLaneEndpoint* InEp, const FLaneEndpoint* OutEp, ETrafficTurnType TurnType)
+		{
+			if (!InEp || !OutEp)
+			{
+				return;
+			}
+
+			FTrafficMovement Movement;
+			Movement.MovementId = NextMovementId++;
+			Movement.IntersectionId = Intersection.IntersectionId;
+			Movement.IncomingLaneId = InEp->LaneId;
+			Movement.OutgoingLaneId = OutEp->LaneId;
+			Movement.TurnType = TurnType;
+
+			const FVector StartPos = InEp->Position;
+			const FVector EndPos = OutEp->Position;
+			const FVector InDirNorm = (-InEp->Direction).GetSafeNormal();
+			const FVector OutDirNorm = OutEp->Direction.GetSafeNormal();
+
+			TrafficMovementGeometry::BuildSmoothMovementPath(
+				StartPos,
+				InDirNorm,
+				EndPos,
+				OutDirNorm,
+				24,
+				Movement);
+
+			OutNetwork.Movements.Add(Movement);
+		};
+
 		for (const FLaneEndpoint* InEp : IncomingEndpoints)
 		{
+			const FLaneEndpoint* BestThrough = nullptr;
+			const FLaneEndpoint* BestLeft = nullptr;
+			const FLaneEndpoint* BestRight = nullptr;
+
+			float BestThroughScore = TNumericLimits<float>::Max();
+			float BestLeftScore = TNumericLimits<float>::Max();
+			float BestRightScore = TNumericLimits<float>::Max();
+
 			for (const FLaneEndpoint* OutEp : OutgoingEndpoints)
 			{
 				if (InEp->LaneId == OutEp->LaneId)
@@ -287,49 +363,35 @@ void FTrafficNetworkBuilder::BuildIntersectionsAndMovements(
 					continue;
 				}
 
-				FTrafficMovement Movement;
-				Movement.MovementId = NextMovementId++;
-				Movement.IntersectionId = Intersection.IntersectionId;
-				Movement.IncomingLaneId = InEp->LaneId;
-				Movement.OutgoingLaneId = OutEp->LaneId;
-
-				const FVector InDir = InEp->Direction.GetSafeNormal();
-				const FVector OutDir = OutEp->Direction.GetSafeNormal();
-				const float DotProduct = FVector::DotProduct(InDir, OutDir);
-				const FVector CrossProduct = FVector::CrossProduct(InDir, OutDir);
-
-				if (DotProduct > 0.7f)
-				{
-					Movement.TurnType = ETrafficTurnType::Through;
-				}
-				else if (DotProduct < -0.7f)
-				{
-					Movement.TurnType = ETrafficTurnType::UTurn;
-				}
-				else if (CrossProduct.Z > 0.0f)
-				{
-					Movement.TurnType = ETrafficTurnType::Left;
-				}
-				else
-				{
-					Movement.TurnType = ETrafficTurnType::Right;
-				}
-
-				const FVector StartPos = InEp->Position;
-				const FVector EndPos = OutEp->Position;
 				const FVector InDirNorm = (-InEp->Direction).GetSafeNormal();
 				const FVector OutDirNorm = OutEp->Direction.GetSafeNormal();
+				const ETrafficTurnType TurnType = ComputeTurnType(InDirNorm, OutDirNorm);
+				if (TurnType == ETrafficTurnType::UTurn)
+				{
+					continue;
+				}
 
-				TrafficMovementGeometry::BuildSmoothMovementPath(
-					StartPos,
-					InDirNorm,
-					EndPos,
-					OutDirNorm,
-					24,
-					Movement);
-
-				OutNetwork.Movements.Add(Movement);
+				const float Score = ScoreCandidate(InEp, OutEp);
+				if (TurnType == ETrafficTurnType::Through && Score < BestThroughScore)
+				{
+					BestThroughScore = Score;
+					BestThrough = OutEp;
+				}
+				else if (TurnType == ETrafficTurnType::Left && Score < BestLeftScore)
+				{
+					BestLeftScore = Score;
+					BestLeft = OutEp;
+				}
+				else if (TurnType == ETrafficTurnType::Right && Score < BestRightScore)
+				{
+					BestRightScore = Score;
+					BestRight = OutEp;
+				}
 			}
+
+			AddMovement(InEp, BestThrough, ETrafficTurnType::Through);
+			AddMovement(InEp, BestLeft, ETrafficTurnType::Left);
+			AddMovement(InEp, BestRight, ETrafficTurnType::Right);
 		}
 	}
 

@@ -49,6 +49,7 @@ public:
 	float GetCurrentSpeedCmPerSec() const { return State.SpeedCmPerSec; }
 	float GetDistanceAlongLane() const { return State.S; }
 	const FTrafficLane* GetCurrentLane() const { return LanePtr; }
+	const FTrafficMovement* GetCurrentMovement() const { return MovementPtr; }
 
 private:
 	FPathFollowState State;
@@ -56,4 +57,3 @@ private:
 	const FTrafficLane* LanePtr = nullptr;
 	const FTrafficMovement* MovementPtr = nullptr;
 };
-

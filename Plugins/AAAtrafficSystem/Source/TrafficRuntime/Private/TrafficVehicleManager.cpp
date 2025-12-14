@@ -241,9 +241,9 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 
 	if (!bForceLogicOnlyForTests && !VisualClass && !GIsAutomationTesting)
 	{
-		UE_LOG(LogTraffic, Error,
-			TEXT("[VehicleManager] No Chaos vehicle configured. Set a DefaultVehicleProfile with a valid VehicleClass in Project Settings -> AAA Traffic Vehicle Settings."));
-		return;
+		UE_LOG(LogTraffic, Warning,
+			TEXT("[VehicleManager] No Chaos vehicle configured. Spawning logic-only vehicles (debug cubes).\n")
+			TEXT("Set a DefaultVehicleProfile with a valid VehicleClass in Project Settings -> AAA Traffic Vehicle Settings for full Chaos visuals."));
 	}
 
 	const TArray<FTrafficLane>& Lanes = NetworkAsset->Network.Lanes;
@@ -310,6 +310,7 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 			LastLaneSpawnTimes.Add(LaneKey, Now);
 
 			Vehicle->InitializeOnLane(&Lane, S, SpeedCmPerSec);
+			Vehicle->SetNetworkAsset(NetworkAsset);
 			Vehicles.Add(Vehicle);
 			SpawnedPerLane.FindOrAdd(LaneKey) += 1;
 			if (ActiveMetrics)

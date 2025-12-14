@@ -8,6 +8,9 @@
 #include "TrafficAutomationLogger.h"
 #include "TrafficLaneGeometry.h"
 #include "TrafficKinematicFollower.h"
+#include "TrafficMovementGeometry.h"
+#include "TrafficNetworkAsset.h"
+#include "TrafficRouting.h"
 #include "TrafficRuntimeModule.h"
 #include "ZoneGraphSubsystem.h"
 
@@ -51,6 +54,7 @@ void ATrafficVehicleBase::InitializeOnLane(const FTrafficLane* Lane, float Initi
 	ZoneGraph = nullptr;
 	ZoneSpeedCmPerSec = 0.f;
 	ZoneLaneLocation = FZoneGraphLaneLocation();
+	PendingOutgoingLaneId = INDEX_NONE;
 
 	if (UTrafficKinematicFollower* F = EnsureFollower())
 	{
@@ -71,12 +75,18 @@ void ATrafficVehicleBase::InitializeOnMovement(const FTrafficMovement* Movement,
 	}
 }
 
+void ATrafficVehicleBase::SetNetworkAsset(UTrafficNetworkAsset* InNetworkAsset)
+{
+	NetworkAsset = InNetworkAsset;
+}
+
 void ATrafficVehicleBase::InitializeOnZoneGraphLane(UZoneGraphSubsystem* ZoneGraphSubsystem, const FZoneGraphLaneHandle& LaneHandle, float InitialDistanceCm, float SpeedCmPerSec)
 {
 	bUseZoneGraphLane = true;
 	ZoneGraph = ZoneGraphSubsystem;
 	ZoneSpeedCmPerSec = SpeedCmPerSec;
 	ZoneLaneLocation = FZoneGraphLaneLocation();
+	PendingOutgoingLaneId = INDEX_NONE;
 
 	if (!ZoneGraph || !LaneHandle.IsValid())
 	{
@@ -138,7 +148,56 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 		return;
 	}
 
+	const float CurrentSpeed = Follower->GetCurrentSpeedCmPerSec();
 	Follower->Step(DeltaSeconds);
+
+	// Simple lane->movement->lane transitions (non-ZoneGraph mode).
+	// This makes vehicles continue through intersections instead of clamping at lane ends.
+	if (NetworkAsset)
+	{
+		const FTrafficNetwork& Net = NetworkAsset->Network;
+		const FPathFollowState& State = Follower->GetState();
+
+		if (State.TargetType == EPathFollowTargetType::Lane)
+		{
+			const FTrafficLane* Lane = Follower->GetCurrentLane();
+			if (Lane)
+			{
+				const float LaneLen = TrafficLaneGeometry::ComputeLaneLengthCm(*Lane);
+				constexpr float EndToleranceCm = 10.f;
+				if (LaneLen > KINDA_SMALL_NUMBER && State.S >= (LaneLen - EndToleranceCm))
+				{
+					if (const FTrafficMovement* NextMovement = TrafficRouting::ChooseDefaultMovementForIncomingLane(Net, Lane->LaneId))
+					{
+						PendingOutgoingLaneId = NextMovement->OutgoingLaneId;
+						InitializeOnMovement(NextMovement, /*InitialS=*/0.0f, CurrentSpeed);
+					}
+				}
+			}
+		}
+		else if (State.TargetType == EPathFollowTargetType::Movement)
+		{
+			const FTrafficMovement* Movement = Follower->GetCurrentMovement();
+			if (Movement && PendingOutgoingLaneId != INDEX_NONE)
+			{
+				TArray<FMovementSample> Samples;
+				TrafficMovementGeometry::AnalyzeMovementPath(*Movement, Samples);
+				const float MovementLen = (Samples.Num() > 0) ? Samples.Last().S : 0.f;
+				constexpr float EndToleranceCm = 10.f;
+				if (MovementLen > KINDA_SMALL_NUMBER && State.S >= (MovementLen - EndToleranceCm))
+				{
+					if (const FTrafficLane* OutLane = TrafficRouting::FindLaneById(Net, PendingOutgoingLaneId))
+					{
+						InitializeOnLane(OutLane, /*InitialS=*/0.0f, CurrentSpeed);
+					}
+					else
+					{
+						PendingOutgoingLaneId = INDEX_NONE;
+					}
+				}
+			}
+		}
+	}
 
 	FVector Pos;
 	FVector Tangent;

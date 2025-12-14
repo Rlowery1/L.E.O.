@@ -5,6 +5,7 @@
 #include "TrafficLaneCalibration.h"
 #include "RoadFamilyRegistry.h"
 #include "TrafficSystemController.h"
+#include "TrafficNetworkAsset.h"
 #include "TrafficVehicleManager.h"
 #include "TrafficVehicleBase.h"
 #include "TrafficCityBLDAdapterSettings.h"
@@ -12,6 +13,8 @@
 #include "TrafficVisualSettings.h"
 #include "LaneCalibrationOverlayActor.h"
 #include "RoadLanePreviewActor.h"
+#include "TrafficLaneEndpointMarkerActor.h"
+#include "TrafficRouting.h"
 #include "Components/SplineComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "ProceduralMeshComponent.h"
@@ -24,6 +27,8 @@
 #include "Misc/MessageDialog.h"
 #include "Misc/App.h"
 #include "Misc/AutomationTest.h"
+#include "HAL/IConsoleManager.h"
+#include "Algo/Count.h"
 
 #include "Editor.h"
 #include "EditorViewportClient.h"
@@ -37,6 +42,18 @@
 #include "CityBLDZoneShapeBuilder.h"
 #include "ZoneGraphCalibrationUtils.h"
 #include "ZoneGraphLaneOverlayUtils.h"
+
+static TAutoConsoleVariable<int32> CVarTrafficDrawAllIntersectionDebug(
+	TEXT("aaa.Traffic.Debug.DrawAllIntersectionDebug"),
+	0,
+	TEXT("0=draw closest/selected intersection only; 1=draw all intersections/movements."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarTrafficDebugIntersectionId(
+	TEXT("aaa.Traffic.Debug.IntersectionId"),
+	-1,
+	TEXT("If >=0, draws this intersection id (overrides closest/selected)."),
+	ECVF_Default);
 
 const FName UTrafficSystemEditorSubsystem::RoadLabTag = FName(TEXT("AAA_RoadLab"));
 
@@ -789,6 +806,334 @@ void UTrafficSystemEditorSubsystem::DoCars()
 	else
 	{
 		FocusCameraOnActor(Manager);
+	}
+#endif
+}
+
+void UTrafficSystemEditorSubsystem::DoDrawIntersectionDebug()
+{
+#if WITH_EDITOR
+	UE_LOG(LogTraffic, Log, TEXT("[AAA Traffic] Version=%s"), TEXT(AAA_TRAFFIC_PLUGIN_VERSION));
+	UWorld* World = GetEditorWorld();
+	if (!World)
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] DoDrawIntersectionDebug: No editor world."));
+		return;
+	}
+
+	if (!EnsureDetectedFamilies(TEXT("IntersectionDebug")))
+	{
+		return;
+	}
+
+	ATrafficSystemController* Controller = GetOrSpawnController();
+	if (!Controller)
+	{
+		return;
+	}
+
+	if (Controller->GetNumRoads() <= 0 || Controller->GetNumLanes() <= 0 || !Controller->GetBuiltNetworkAsset())
+	{
+		UE_LOG(LogTraffic, Log, TEXT("[TrafficEditor] IntersectionDebug: No built network detected; building now."));
+		Controller->Editor_BuildTrafficNetwork();
+	}
+
+	const UTrafficNetworkAsset* NetAsset = Controller->GetBuiltNetworkAsset();
+	if (!NetAsset)
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] IntersectionDebug: No network asset after build."));
+		return;
+	}
+
+	const FTrafficNetwork& Network = NetAsset->Network;
+	UE_LOG(LogTraffic, Log,
+		TEXT("[TrafficEditor] IntersectionDebug: Drawing network debug. Roads=%d Lanes=%d Intersections=%d Movements=%d"),
+		Network.Roads.Num(),
+		Network.Lanes.Num(),
+		Network.Intersections.Num(),
+		Network.Movements.Num());
+
+	if (Network.Intersections.Num() == 0)
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] IntersectionDebug: Network contains 0 intersections."));
+		return;
+	}
+
+	constexpr float LifeTimeSeconds = 30.f;
+	constexpr float LaneThickness = 6.f;
+	constexpr float MovementThickness = 10.f;
+	constexpr float ZOffsetLane = 25.f;
+	constexpr float ZOffsetMovement = 45.f;
+	constexpr float ArrowLengthCm = 250.f;
+	constexpr float ArrowSpacingCm = 800.f;
+
+	auto DrawPolylineWithArrows = [&](const TArray<FVector>& InPoints, const FColor& Color, float ZOffset, float Thickness)
+	{
+		if (InPoints.Num() < 2)
+		{
+			return;
+		}
+
+		float DistanceUntilNextArrow = 0.f;
+		for (int32 i = 0; i + 1 < InPoints.Num(); ++i)
+		{
+			const FVector A0 = InPoints[i] + FVector(0.f, 0.f, ZOffset);
+			const FVector B0 = InPoints[i + 1] + FVector(0.f, 0.f, ZOffset);
+			DrawDebugLine(World, A0, B0, Color, /*bPersistentLines=*/false, LifeTimeSeconds, /*DepthPriority=*/0, Thickness);
+
+			const FVector Segment = B0 - A0;
+			const float SegmentLen = Segment.Size();
+			if (SegmentLen <= KINDA_SMALL_NUMBER)
+			{
+				continue;
+			}
+
+			const FVector Dir = Segment / SegmentLen;
+			while (DistanceUntilNextArrow < SegmentLen)
+			{
+				const FVector Pos = A0 + Dir * DistanceUntilNextArrow;
+				DrawDebugDirectionalArrow(
+					World,
+					Pos,
+					Pos + Dir * ArrowLengthCm,
+					/*ArrowSize=*/75.f,
+					Color,
+					/*bPersistentLines=*/false,
+					LifeTimeSeconds,
+					/*DepthPriority=*/0,
+					Thickness);
+
+				DistanceUntilNextArrow += ArrowSpacingCm;
+			}
+
+			DistanceUntilNextArrow = FMath::Max(0.f, DistanceUntilNextArrow - SegmentLen);
+		}
+	};
+
+	const bool bDrawAll = CVarTrafficDrawAllIntersectionDebug.GetValueOnGameThread() != 0;
+	const int32 ForcedIntersectionId = CVarTrafficDebugIntersectionId.GetValueOnGameThread();
+
+	const FTrafficIntersection* TargetIntersection = nullptr;
+	int32 SelectedLaneId = INDEX_NONE;
+	const FTrafficMovement* SelectedMovement = nullptr;
+	int32 SelectedOutgoingLaneId = INDEX_NONE;
+	if (bDrawAll)
+	{
+		TargetIntersection = nullptr;
+	}
+	else if (ForcedIntersectionId >= 0)
+	{
+		TargetIntersection = Network.Intersections.FindByPredicate([&](const FTrafficIntersection& I)
+		{
+			return I.IntersectionId == ForcedIntersectionId;
+		});
+
+		if (!TargetIntersection)
+		{
+			UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] IntersectionDebug: Requested IntersectionId=%d not found; falling back to closest."), ForcedIntersectionId);
+		}
+	}
+
+	FVector FocusLocation = FVector::ZeroVector;
+	bool bHasFocusLocation = false;
+	if (!bDrawAll && !TargetIntersection && GEditor && GEditor->GetSelectedActors())
+	{
+		for (FSelectionIterator It(*GEditor->GetSelectedActors()); It; ++It)
+		{
+			if (const ATrafficLaneEndpointMarkerActor* Marker = Cast<ATrafficLaneEndpointMarkerActor>(*It))
+			{
+				SelectedLaneId = Marker->LaneId;
+				FocusLocation = Marker->GetActorLocation();
+				bHasFocusLocation = true;
+				break;
+			}
+
+			if (const AActor* SelectedActor = Cast<AActor>(*It))
+			{
+				FocusLocation = SelectedActor->GetActorLocation();
+				bHasFocusLocation = true;
+				break;
+			}
+		}
+	}
+
+	if (!bDrawAll && !TargetIntersection && !bHasFocusLocation && GCurrentLevelEditingViewportClient)
+	{
+		FocusLocation = GCurrentLevelEditingViewportClient->GetViewLocation();
+		bHasFocusLocation = true;
+	}
+
+	if (!bDrawAll && !TargetIntersection && bHasFocusLocation)
+	{
+		float BestDistSq = TNumericLimits<float>::Max();
+		for (const FTrafficIntersection& Intersection : Network.Intersections)
+		{
+			const float DistSq = FVector::DistSquared(FocusLocation, Intersection.Center);
+			if (DistSq < BestDistSq)
+			{
+				BestDistSq = DistSq;
+				TargetIntersection = &Intersection;
+			}
+		}
+	}
+
+	TSet<int32> RelevantLaneIds;
+	if (TargetIntersection)
+	{
+		RelevantLaneIds.Reserve(TargetIntersection->IncomingLaneIds.Num() + TargetIntersection->OutgoingLaneIds.Num());
+		for (const int32 LaneId : TargetIntersection->IncomingLaneIds)
+		{
+			RelevantLaneIds.Add(LaneId);
+		}
+		for (const int32 LaneId : TargetIntersection->OutgoingLaneIds)
+		{
+			RelevantLaneIds.Add(LaneId);
+		}
+
+		UE_LOG(LogTraffic, Log,
+			TEXT("[TrafficEditor] IntersectionDebug: Focus IntersectionId=%d (In=%d Out=%d). Use aaa.Traffic.Debug.DrawAllIntersectionDebug=1 to draw all."),
+			TargetIntersection->IntersectionId,
+			TargetIntersection->IncomingLaneIds.Num(),
+			TargetIntersection->OutgoingLaneIds.Num());
+
+		// Refresh selectable endpoint markers for this intersection to allow "click an endpoint" workflows.
+		for (TActorIterator<ATrafficLaneEndpointMarkerActor> It(World); It; ++It)
+		{
+			if (It->Tags.Contains(RoadLabTag))
+			{
+				It->Destroy();
+			}
+		}
+
+		for (const int32 LaneId : RelevantLaneIds)
+		{
+			const FTrafficLane* LanePtr = Network.Lanes.FindByPredicate([&](const FTrafficLane& L) { return L.LaneId == LaneId; });
+			if (!LanePtr || LanePtr->CenterlinePoints.Num() < 2)
+			{
+				continue;
+			}
+
+			const FVector StartPos = LanePtr->CenterlinePoints[0];
+			const FVector EndPos = LanePtr->CenterlinePoints.Last();
+			const float StartDist = FVector::DistSquared(StartPos, TargetIntersection->Center);
+			const float EndDist = FVector::DistSquared(EndPos, TargetIntersection->Center);
+			const bool bEndpointIsStart = StartDist <= EndDist;
+			const FVector MarkerPos = bEndpointIsStart ? StartPos : EndPos;
+
+			FActorSpawnParameters Params;
+			Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+			ATrafficLaneEndpointMarkerActor* Marker = World->SpawnActor<ATrafficLaneEndpointMarkerActor>(MarkerPos + FVector(0.f, 0.f, ZOffsetLane + 15.f), FRotator::ZeroRotator, Params);
+			if (!Marker)
+			{
+				continue;
+			}
+
+			TagAsRoadLab(Marker);
+			Marker->LaneId = LaneId;
+			Marker->bIsStart = bEndpointIsStart;
+			Marker->IntersectionId = TargetIntersection->IntersectionId;
+
+			DrawDebugString(
+				World,
+				MarkerPos + FVector(0.f, 0.f, ZOffsetLane + 55.f),
+				FString::Printf(TEXT("Lane %d"), LaneId),
+				/*TestBaseActor=*/nullptr,
+				FColor(255, 230, 80, 255),
+				LifeTimeSeconds,
+				/*bDrawShadow=*/true);
+		}
+	}
+
+	if (SelectedLaneId != INDEX_NONE)
+	{
+		SelectedMovement = TrafficRouting::ChooseDefaultMovementForIncomingLane(Network, SelectedLaneId);
+		SelectedOutgoingLaneId = SelectedMovement ? SelectedMovement->OutgoingLaneId : INDEX_NONE;
+	}
+
+	// Lanes: draw centerlines so you can see continuity across road segments.
+	for (const FTrafficLane& Lane : Network.Lanes)
+	{
+		if (SelectedLaneId != INDEX_NONE && Lane.LaneId != SelectedLaneId)
+		{
+			// Also draw the chosen outgoing lane (if any) to make the "chosen path" obvious.
+			if (SelectedOutgoingLaneId == INDEX_NONE || Lane.LaneId != SelectedOutgoingLaneId)
+			{
+				continue;
+			}
+		}
+
+		if (!bDrawAll && TargetIntersection && !RelevantLaneIds.Contains(Lane.LaneId))
+		{
+			continue;
+		}
+
+		const FColor LaneColor =
+			(Lane.Direction == ELaneDirection::Forward) ? FColor(40, 220, 80, 220) :
+			(Lane.Direction == ELaneDirection::Backward) ? FColor(220, 60, 40, 220) :
+			FColor(40, 160, 255, 220);
+
+		DrawPolylineWithArrows(Lane.CenterlinePoints, LaneColor, ZOffsetLane, LaneThickness);
+
+		if (Lane.CenterlinePoints.Num() >= 2)
+		{
+			DrawDebugSphere(World, Lane.CenterlinePoints[0] + FVector(0.f, 0.f, ZOffsetLane), /*Radius=*/35.f, /*Segments=*/8, LaneColor, false, LifeTimeSeconds, 0, 2.f);
+			DrawDebugSphere(World, Lane.CenterlinePoints.Last() + FVector(0.f, 0.f, ZOffsetLane), /*Radius=*/35.f, /*Segments=*/8, LaneColor, false, LifeTimeSeconds, 0, 2.f);
+		}
+	}
+
+	// Intersections: draw a simple sphere representing the clustered endpoint radius.
+	for (const FTrafficIntersection& Intersection : Network.Intersections)
+	{
+		if (!bDrawAll && TargetIntersection && Intersection.IntersectionId != TargetIntersection->IntersectionId)
+		{
+			continue;
+		}
+
+		const float Radius = FMath::Max(Intersection.Radius, 50.f);
+		DrawDebugSphere(World, Intersection.Center + FVector(0.f, 0.f, ZOffsetMovement), Radius, /*Segments=*/16, FColor(255, 255, 255, 60), false, LifeTimeSeconds, 0, 2.f);
+
+		const int32 MovementCount = Algo::CountIf(Network.Movements, [&](const FTrafficMovement& M)
+		{
+			return M.IntersectionId == Intersection.IntersectionId;
+		});
+
+		DrawDebugString(
+			World,
+			Intersection.Center + FVector(0.f, 0.f, ZOffsetMovement + 60.f),
+			FString::Printf(TEXT("Intersection %d\nIn=%d Out=%d Mov=%d"),
+				Intersection.IntersectionId,
+				Intersection.IncomingLaneIds.Num(),
+				Intersection.OutgoingLaneIds.Num(),
+				MovementCount),
+			/*TestBaseActor=*/nullptr,
+			FColor::White,
+			LifeTimeSeconds,
+			/*bDrawShadow=*/true);
+	}
+
+	// Movements: draw explicit turn connectors (what "going through an intersection" means in this plugin).
+	for (const FTrafficMovement& Movement : Network.Movements)
+	{
+		if (SelectedLaneId != INDEX_NONE && Movement.IncomingLaneId != SelectedLaneId)
+		{
+			continue;
+		}
+
+		if (!bDrawAll && TargetIntersection && Movement.IntersectionId != TargetIntersection->IntersectionId)
+		{
+			continue;
+		}
+
+		const bool bIsChosen = SelectedMovement && SelectedMovement->MovementId == Movement.MovementId;
+		const FColor MoveColor = bIsChosen
+			? FColor::White
+			: (Movement.TurnType == ETrafficTurnType::Through) ? FColor::Yellow :
+			  (Movement.TurnType == ETrafficTurnType::Left) ? FColor(255, 0, 255, 255) :
+			  (Movement.TurnType == ETrafficTurnType::Right) ? FColor::Cyan :
+			  FColor::Red;
+
+		DrawPolylineWithArrows(Movement.PathPoints, MoveColor, ZOffsetMovement, bIsChosen ? (MovementThickness * 1.6f) : MovementThickness);
 	}
 #endif
 }
