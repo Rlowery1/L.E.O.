@@ -16,6 +16,30 @@
 
 namespace
 {
+	static TAutoConsoleVariable<int32> CVarTrafficCityBLDWarnMissingCenterlineSplineTag(
+		TEXT("aaa.Traffic.CityBLD.WarnMissingCenterlineSplineTag"),
+		1,
+		TEXT("If non-zero, warns when BP_MeshRoad has multiple splines but none are tagged with RoadSplineTag (e.g. CityBLD_Centerline)."),
+		ECVF_Default);
+
+	static bool ShouldWarnOncePerActor(const AActor* Actor)
+	{
+		if (!Actor)
+		{
+			return false;
+		}
+
+		static TSet<FString> WarnedActorPaths;
+		const FString Key = Actor->GetPathName();
+		if (WarnedActorPaths.Contains(Key))
+		{
+			return false;
+		}
+
+		WarnedActorPaths.Add(Key);
+		return true;
+	}
+
 	static void SampleControlSpline(const USplineComponent* SplineComp, const TArray<FVector>& Vertices, TArray<FVector>& OutPoints)
 	{
 		if (!SplineComp)
@@ -306,7 +330,10 @@ bool UCityBLDRoadGeometryProvider::BuildCenterlineFromCityBLDRoad(const AActor* 
 	}
 
 	// Warn when multiple splines exist but we couldn't find the tagged centerline spline; this is the #1 cause of "spaghetti" overlays.
-	if (AdapterSettings && !AdapterSettings->RoadSplineTag.IsNone() && Splines.Num() > 1 && !ControlSpline->ComponentHasTag(AdapterSettings->RoadSplineTag))
+	if (CVarTrafficCityBLDWarnMissingCenterlineSplineTag.GetValueOnGameThread() != 0 &&
+		AdapterSettings && !AdapterSettings->RoadSplineTag.IsNone() &&
+		Splines.Num() > 1 && !ControlSpline->ComponentHasTag(AdapterSettings->RoadSplineTag) &&
+		ShouldWarnOncePerActor(Actor))
 	{
 		TArray<FString> Candidates;
 		Candidates.Reserve(Splines.Num());

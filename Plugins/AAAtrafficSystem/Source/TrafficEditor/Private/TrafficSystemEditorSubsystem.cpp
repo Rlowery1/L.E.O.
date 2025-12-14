@@ -55,6 +55,24 @@ static TAutoConsoleVariable<int32> CVarTrafficDebugIntersectionId(
 	TEXT("If >=0, draws this intersection id (overrides closest/selected)."),
 	ECVF_Default);
 
+static TAutoConsoleVariable<int32> CVarTrafficEditorVehiclesPerLane(
+	TEXT("aaa.Traffic.EditorTest.VehiclesPerLane"),
+	1,
+	TEXT("Vehicles per lane to spawn when using BUILD + CARS (Editor Test). Default: 1."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficEditorVehicleSpeedCmPerSec(
+	TEXT("aaa.Traffic.EditorTest.SpeedCmPerSec"),
+	800.f,
+	TEXT("Speed (cm/s) for vehicles spawned by BUILD + CARS (Editor Test). Default: 800."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarTrafficCityBLDAutoTagCenterlineSpline(
+	TEXT("aaa.Traffic.CityBLD.AutoTagCenterlineSpline"),
+	1,
+	TEXT("If non-zero, PREPARE MAP will auto-tag the chosen CityBLD centerline spline component with the configured RoadSplineTag (e.g. CityBLD_Centerline) when missing."),
+	ECVF_Default);
+
 const FName UTrafficSystemEditorSubsystem::RoadLabTag = FName(TEXT("AAA_RoadLab"));
 
 void UTrafficSystemEditorSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -532,9 +550,142 @@ void UTrafficSystemEditorSubsystem::Editor_PrepareMapForTraffic()
 	static const FSoftObjectPath DefaultVehicleProfilePath(TEXT("/AAAtrafficSystem/ZoneProfiles/CityBLDUrbanTwoLane.CityBLDUrbanTwoLane"));
 	static const FSoftObjectPath DefaultFootpathProfilePath(TEXT("/AAAtrafficSystem/ZoneProfiles/CityBLDFootpath.CityBLDFootpath"));
 
+	const UTrafficCityBLDAdapterSettings* AdapterSettings = GetDefault<UTrafficCityBLDAdapterSettings>();
+	const FName RoadTagFromSettings = AdapterSettings ? AdapterSettings->RoadActorTag : NAME_None;
+
+	// If this level contains CityBLD BP_MeshRoad actors, be stricter about what counts as a "road"
+	// to avoid picking up sidewalk/support spline actors that confuse users.
+	bool bHasCityBLDRoads = false;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (AActor* Actor = *It)
+		{
+			if (Actor->GetClass()->GetName().Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase))
+			{
+				bHasCityBLDRoads = true;
+				break;
+			}
+		}
+	}
+
 	int32 ActorsFound = 0;
 	int32 FamiliesCreated = 0;
 	int32 MetadataAttached = 0;
+	int32 CityBLDSplineTagsAdded = 0;
+
+	TUniquePtr<FScopedTransaction> AutoTagTransaction;
+
+	auto EnsureCityBLDCenterlineSplineTag = [&](AActor* Actor)
+	{
+		if (!Actor)
+		{
+			return;
+		}
+
+		if (CVarTrafficCityBLDAutoTagCenterlineSpline.GetValueOnGameThread() == 0)
+		{
+			return;
+		}
+
+		const UTrafficCityBLDAdapterSettings* AdapterSettings = GetDefault<UTrafficCityBLDAdapterSettings>();
+		if (!AdapterSettings || AdapterSettings->RoadSplineTag.IsNone())
+		{
+			return;
+		}
+
+		// Only target CityBLD mesh roads (all share BP_MeshRoad class).
+		if (!Actor->GetClass()->GetName().Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase))
+		{
+			return;
+		}
+
+		TArray<USplineComponent*> Splines;
+		Actor->GetComponents<USplineComponent>(Splines);
+		if (Splines.Num() <= 1)
+		{
+			return;
+		}
+
+		for (USplineComponent* Spline : Splines)
+		{
+			if (Spline && Spline->ComponentHasTag(AdapterSettings->RoadSplineTag))
+			{
+				return; // already tagged
+			}
+		}
+
+		USplineComponent* Chosen = nullptr;
+
+		// Mirror the selection heuristics used by the CityBLD geometry provider to avoid behavior changes.
+		for (USplineComponent* Spline : Splines)
+		{
+			if (Spline && Spline->GetName().Contains(TEXT("Centerline"), ESearchCase::IgnoreCase))
+			{
+				Chosen = Spline;
+				break;
+			}
+		}
+		if (!Chosen)
+		{
+			for (USplineComponent* Spline : Splines)
+			{
+				if (Spline && Spline->GetName().Equals(TEXT("Spline"), ESearchCase::IgnoreCase))
+				{
+					Chosen = Spline;
+					break;
+				}
+			}
+		}
+		if (!Chosen)
+		{
+			for (USplineComponent* Spline : Splines)
+			{
+				if (Spline && Spline->GetName().Contains(TEXT("Control"), ESearchCase::IgnoreCase))
+				{
+					Chosen = Spline;
+					break;
+				}
+			}
+		}
+		if (!Chosen)
+		{
+			float BestLen = -1.f;
+			for (USplineComponent* Spline : Splines)
+			{
+				if (!Spline)
+				{
+					continue;
+				}
+				const float Len = Spline->GetSplineLength();
+				if (Len > BestLen)
+				{
+					BestLen = Len;
+					Chosen = Spline;
+				}
+			}
+		}
+
+		if (!Chosen)
+		{
+			return;
+		}
+
+		if (!AutoTagTransaction)
+		{
+			AutoTagTransaction = MakeUnique<FScopedTransaction>(
+				NSLOCTEXT("TrafficEditor", "AutoTagCityBLDCenterline", "AAA Traffic: Auto-tag CityBLD centerline splines"));
+		}
+
+		Chosen->Modify();
+		Chosen->ComponentTags.AddUnique(AdapterSettings->RoadSplineTag);
+		++CityBLDSplineTagsAdded;
+
+		UE_LOG(LogTraffic, Log,
+			TEXT("[TrafficPrep] Auto-tagged %s.%s with '%s' (CityBLD centerline spline)."),
+			*Actor->GetName(),
+			*Chosen->GetName(),
+			*AdapterSettings->RoadSplineTag.ToString());
+	};
 
 	for (TActorIterator<AActor> It(World); It; ++It)
 	{
@@ -556,8 +707,46 @@ void UTrafficSystemEditorSubsystem::Editor_PrepareMapForTraffic()
 			continue;
 		}
 
+		// If CityBLD roads exist, only include CityBLD road actors (or explicitly tagged/included roads).
+		if (bHasCityBLDRoads)
+		{
+			if (!RoadTagFromSettings.IsNone() && Actor->ActorHasTag(RoadTagFromSettings))
+			{
+				// explicitly tagged as road
+			}
+			else if (UTrafficRoadMetadataComponent* ExistingMeta = Actor->FindComponentByClass<UTrafficRoadMetadataComponent>())
+			{
+				if (!ExistingMeta->bIncludeInTraffic)
+				{
+					continue;
+				}
+			}
+			else
+			{
+				// Only accept classes that look like CityBLD road actors.
+				bool bCityBLDClassMatch = ClassName.Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase);
+				if (!bCityBLDClassMatch && AdapterSettings)
+				{
+					for (const FString& Contains : AdapterSettings->RoadClassNameContains)
+					{
+						if (!Contains.IsEmpty() && ClassName.Contains(Contains, ESearchCase::IgnoreCase))
+						{
+							bCityBLDClassMatch = true;
+							break;
+						}
+					}
+				}
+				if (!bCityBLDClassMatch)
+				{
+					continue;
+				}
+			}
+		}
+
 		++ActorsFound;
 		UE_LOG(LogTraffic, Log, TEXT("[TrafficPrep] Found road actor: %s"), *ClassName);
+
+		EnsureCityBLDCenterlineSplineTag(Actor);
 
 		bool bCreated = false;
 		FRoadFamilyInfo* FamilyInfo = Registry->FindOrCreateFamilyForActor(Actor, &bCreated);
@@ -656,6 +845,12 @@ void UTrafficSystemEditorSubsystem::Editor_PrepareMapForTraffic()
 
 	UE_LOG(LogTraffic, Log, TEXT("[TrafficPrep] Summary: Actors=%d; FamiliesCreated=%d; MetadataAttached=%d"),
 		ActorsFound, FamiliesCreated, MetadataAttached);
+	if (CityBLDSplineTagsAdded > 0)
+	{
+		UE_LOG(LogTraffic, Log, TEXT("[TrafficPrep] CityBLD: Auto-tagged %d spline components with '%s'."),
+			CityBLDSplineTagsAdded,
+			*GetDefault<UTrafficCityBLDAdapterSettings>()->RoadSplineTag.ToString());
+	}
 #endif
 }
 
@@ -830,7 +1025,9 @@ void UTrafficSystemEditorSubsystem::DoCars()
 	}
 
 	UE_LOG(LogTraffic, Log, TEXT("[TrafficEditor] CARS: Spawning test vehicles."));
-	Manager->SpawnTestVehicles(3, 800.f);
+	const int32 VehiclesPerLane = FMath::Clamp(CVarTrafficEditorVehiclesPerLane.GetValueOnGameThread(), 1, 50);
+	const float SpeedCmPerSec = FMath::Clamp(CVarTrafficEditorVehicleSpeedCmPerSec.GetValueOnGameThread(), 10.f, 10000.f);
+	Manager->SpawnTestVehicles(VehiclesPerLane, SpeedCmPerSec);
 
 	ATrafficVehicleBase* FirstVehicle = nullptr;
 	for (TActorIterator<ATrafficVehicleBase> It(World); It; ++It)
@@ -1679,9 +1876,12 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 #if WITH_EDITOR
 	if (GEditor)
 	{
-		GEditor->SelectNone(/*NoteSelectionChange=*/false, /*DeselectBSPSurfs=*/true, /*WarnAboutManyActors=*/false);
-		GEditor->SelectActor(Overlay, /*InSelected=*/true, /*Notify=*/true);
-		FocusCameraOnActor(Overlay);
+		if (IsValid(Overlay) && !Overlay->IsActorBeingDestroyed())
+		{
+			GEditor->SelectNone(/*NoteSelectionChange=*/false, /*DeselectBSPSurfs=*/true, /*WarnAboutManyActors=*/false);
+			GEditor->SelectActor(Overlay, /*InSelected=*/true, /*Notify=*/true);
+			FocusCameraOnActor(Overlay);
+		}
 	}
 #endif
 	Overlay->SetActorHiddenInGame(false);

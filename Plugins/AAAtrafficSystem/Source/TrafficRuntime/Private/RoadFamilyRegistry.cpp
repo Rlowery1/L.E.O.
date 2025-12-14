@@ -392,6 +392,28 @@ FRoadFamilyInfo* URoadFamilyRegistry::FindOrCreateFamilyForActor(AActor* RoadAct
 	}
 
 	FTrafficLaneFamilyCalibration DefaultCalib;
+	if (!VariantKey.IsEmpty())
+	{
+		// Seed more helpful defaults based on common CityBLD preset/style names.
+		// Users can still calibrate/bake to override these.
+		if (VariantKey.Contains(TEXT("Four Lane"), ESearchCase::IgnoreCase))
+		{
+			DefaultCalib.NumLanesPerSideForward = 2;
+			DefaultCalib.NumLanesPerSideBackward = 2;
+		}
+		else if (VariantKey.Contains(TEXT("Two Lane"), ESearchCase::IgnoreCase))
+		{
+			DefaultCalib.NumLanesPerSideForward = 1;
+			DefaultCalib.NumLanesPerSideBackward = 1;
+		}
+		else if (VariantKey.Contains(TEXT("3 Lane"), ESearchCase::IgnoreCase) &&
+				 VariantKey.Contains(TEXT("One-Way"), ESearchCase::IgnoreCase))
+		{
+			DefaultCalib.NumLanesPerSideForward = 3;
+			DefaultCalib.NumLanesPerSideBackward = 0;
+		}
+	}
+
 	FRoadFamilyDefinition DefaultFamily;
 
 	const FString DisplayBase = VariantKey.IsEmpty() ? SanitizeDisplayName(RoadClass->GetName()) : VariantKey;
