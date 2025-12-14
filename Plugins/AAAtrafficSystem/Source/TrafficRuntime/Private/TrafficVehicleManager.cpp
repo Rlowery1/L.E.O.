@@ -205,9 +205,15 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 
 	TSubclassOf<ATrafficVehicleBase> LogicClass = ATrafficVehicleBase::StaticClass();
 	TSubclassOf<APawn> VisualClass = nullptr;
-	if (!bForceLogicOnlyForTests && Profile && Profile->VehicleClass.IsValid())
+	if (!bForceLogicOnlyForTests && Profile && !Profile->VehicleClass.IsNull())
 	{
 		VisualClass = Profile->VehicleClass.LoadSynchronous();
+		if (!VisualClass)
+		{
+			UE_LOG(LogTraffic, Warning,
+				TEXT("[VehicleManager] DefaultVehicleProfile VehicleClass failed to load: %s"),
+				*Profile->VehicleClass.ToString());
+		}
 	}
 	else if (!bForceLogicOnlyForTests && !VisualClass && GIsAutomationTesting)
 	{

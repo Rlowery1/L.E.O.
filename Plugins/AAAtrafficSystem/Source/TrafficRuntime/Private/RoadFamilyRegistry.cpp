@@ -2,7 +2,9 @@
 
 #include "GameFramework/Actor.h"
 #include "UObject/Package.h"
+#include "UObject/UnrealType.h"
 #include "TrafficRoadFamilySettings.h"
+#include "TrafficCityBLDAdapterSettings.h"
 
 URoadFamilyRegistry* URoadFamilyRegistry::Get()
 {
@@ -21,6 +23,7 @@ FString URoadFamilyRegistry::SanitizeDisplayName(const FString& InClassName) con
 void URoadFamilyRegistry::RebuildClassCache() const
 {
 	ClassToIndex.Empty();
+	KeyToIndex.Empty();
 	for (int32 Index = 0; Index < Families.Num(); ++Index)
 	{
 		const FRoadFamilyInfo& Info = Families[Index];
@@ -28,7 +31,14 @@ void URoadFamilyRegistry::RebuildClassCache() const
 		{
 			if (UClass* LoadedClass = Info.RoadClassPath.TryLoadClass<AActor>())
 			{
-				ClassToIndex.Add(LoadedClass, Index);
+				const FString Key = LoadedClass->GetPathName() + TEXT("|") + Info.VariantKey;
+				KeyToIndex.Add(Key, Index);
+
+				// Legacy lookup: only map class->index for the "default" (non-variant) entry.
+				if (Info.VariantKey.IsEmpty())
+				{
+					ClassToIndex.Add(LoadedClass, Index);
+				}
 			}
 		}
 	}
@@ -46,14 +56,30 @@ const FRoadFamilyInfo* URoadFamilyRegistry::FindFamilyByClass(UClass* RoadClass)
 		return nullptr;
 	}
 
-	if (ClassToIndex.Num() != Families.Num())
+	if (KeyToIndex.Num() != Families.Num())
 	{
 		RebuildClassCache();
 	}
 
+	// Prefer the legacy "default" family for this class (no variant key) if present.
 	if (const int32* FoundIndex = ClassToIndex.Find(RoadClass))
 	{
 		return Families.IsValidIndex(*FoundIndex) ? &Families[*FoundIndex] : nullptr;
+	}
+
+	// Fallback: return the first family that matches this class (any variant key).
+	for (const FRoadFamilyInfo& Info : Families)
+	{
+		if (!Info.RoadClassPath.IsNull())
+		{
+			if (UClass* LoadedClass = Info.RoadClassPath.TryLoadClass<AActor>())
+			{
+				if (LoadedClass == RoadClass)
+				{
+					return &Info;
+				}
+			}
+		}
 	}
 
 	return nullptr;
@@ -95,6 +121,18 @@ FRoadFamilyInfo* URoadFamilyRegistry::FindOrCreateFamilyForClass(UClass* RoadCla
 		return nullptr;
 	}
 
+	// Class-only calls map to the default (non-variant) family entry.
+	if (KeyToIndex.Num() != Families.Num())
+	{
+		RebuildClassCache();
+	}
+
+	const FString Key = RoadClass->GetPathName() + TEXT("|");
+	if (const int32* FoundIndex = KeyToIndex.Find(Key))
+	{
+		return Families.IsValidIndex(*FoundIndex) ? &Families[*FoundIndex] : nullptr;
+	}
+
 	if (FRoadFamilyInfo* Existing = const_cast<FRoadFamilyInfo*>(FindFamilyByClass(RoadClass)))
 	{
 		return Existing;
@@ -114,6 +152,262 @@ FRoadFamilyInfo* URoadFamilyRegistry::FindOrCreateFamilyForClass(UClass* RoadCla
 	NewInfo.FamilyId = FGuid::NewGuid();
 	NewInfo.DisplayName = SanitizeDisplayName(RoadClass->GetName());
 	NewInfo.RoadClassPath = RoadClass;
+	NewInfo.VariantKey = FString();
+	NewInfo.FamilyDefinition = DefaultFamily;
+	NewInfo.CalibrationData = DefaultCalib;
+	NewInfo.bIsCalibrated = false;
+
+	const int32 NewIndex = Families.Add(NewInfo);
+	if (bOutCreated)
+	{
+		*bOutCreated = true;
+	}
+
+	RebuildClassCache();
+	SaveConfig();
+	return Families.IsValidIndex(NewIndex) ? &Families[NewIndex] : nullptr;
+}
+
+namespace
+{
+	static bool TryReadStringLikePropertyValue(const FProperty* Prop, const void* ValuePtr, FString& OutValue)
+	{
+		if (!Prop || !ValuePtr)
+		{
+			return false;
+		}
+
+		if (const FStrProperty* StrProp = CastField<FStrProperty>(Prop))
+		{
+			OutValue = StrProp->GetPropertyValue(ValuePtr);
+			return !OutValue.IsEmpty();
+		}
+
+		if (const FNameProperty* NameProp = CastField<FNameProperty>(Prop))
+		{
+			const FName NameValue = NameProp->GetPropertyValue(ValuePtr);
+			if (!NameValue.IsNone())
+			{
+				OutValue = NameValue.ToString();
+				return !OutValue.IsEmpty();
+			}
+			return false;
+		}
+
+		if (const FTextProperty* TextProp = CastField<FTextProperty>(Prop))
+		{
+			OutValue = TextProp->GetPropertyValue(ValuePtr).ToString();
+			return !OutValue.IsEmpty();
+		}
+
+		return false;
+	}
+
+	static FString FindBestStyleOrPresetNameOnObject(UObject* Obj)
+	{
+		if (!Obj)
+		{
+			return FString();
+		}
+
+		// First try a small set of common property names.
+		static const TArray<FName> DirectCandidates = {
+			FName(TEXT("StyleName")),
+			FName(TEXT("StreetStyleName")),
+			FName(TEXT("PresetName")),
+			FName(TEXT("RoadPresetName")),
+			FName(TEXT("StreetPresetName")),
+			FName(TEXT("RoadStyleName")),
+			FName(TEXT("CityBLDPresetName")),
+		};
+
+		for (const FName& PropName : DirectCandidates)
+		{
+			if (const FProperty* Prop = Obj->GetClass()->FindPropertyByName(PropName))
+			{
+				const void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Obj);
+				FString Value;
+				if (TryReadStringLikePropertyValue(Prop, ValuePtr, Value) && !Value.IsEmpty())
+				{
+					return Value;
+				}
+			}
+		}
+
+		// Then scan for anything that looks like "Style Name" via metadata/display name, and handle common structs.
+		FString Best;
+		for (TFieldIterator<FProperty> It(Obj->GetClass()); It; ++It)
+		{
+			const FProperty* Prop = *It;
+			if (!Prop)
+			{
+				continue;
+			}
+
+			const FString DisplayName = Prop->HasMetaData(TEXT("DisplayName")) ? Prop->GetMetaData(TEXT("DisplayName")) : FString();
+			const FString PropNameStr = Prop->GetName();
+			const bool bLooksLikeStyle =
+				PropNameStr.Contains(TEXT("Style"), ESearchCase::IgnoreCase) ||
+				PropNameStr.Contains(TEXT("Preset"), ESearchCase::IgnoreCase) ||
+				DisplayName.Contains(TEXT("Style"), ESearchCase::IgnoreCase) ||
+				DisplayName.Contains(TEXT("Preset"), ESearchCase::IgnoreCase);
+
+			if (!bLooksLikeStyle)
+			{
+				continue;
+			}
+
+			// Direct string-like property.
+			{
+				const void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Obj);
+				FString Value;
+				if (TryReadStringLikePropertyValue(Prop, ValuePtr, Value))
+				{
+					if (Value.Len() > Best.Len())
+					{
+						Best = Value;
+					}
+				}
+			}
+
+			// Struct property: try to find an inner "StyleName"/"PresetName".
+			if (const FStructProperty* StructProp = CastField<FStructProperty>(Prop))
+			{
+				const void* StructPtr = StructProp->ContainerPtrToValuePtr<void>(Obj);
+				for (TFieldIterator<FProperty> Sit(StructProp->Struct); Sit; ++Sit)
+				{
+					const FProperty* Inner = *Sit;
+					if (!Inner)
+					{
+						continue;
+					}
+					const FString InnerDisplayName = Inner->HasMetaData(TEXT("DisplayName")) ? Inner->GetMetaData(TEXT("DisplayName")) : FString();
+					const FString InnerNameStr = Inner->GetName();
+					const bool bLooksLikeStyleLeaf =
+						InnerNameStr.Equals(TEXT("StyleName"), ESearchCase::IgnoreCase) ||
+						InnerNameStr.Equals(TEXT("PresetName"), ESearchCase::IgnoreCase) ||
+						InnerDisplayName.Equals(TEXT("Style Name"), ESearchCase::IgnoreCase) ||
+						InnerDisplayName.Equals(TEXT("Preset Name"), ESearchCase::IgnoreCase);
+
+					if (!bLooksLikeStyleLeaf)
+					{
+						continue;
+					}
+
+					const void* InnerPtr = Inner->ContainerPtrToValuePtr<void>(StructPtr);
+					FString Value;
+					if (TryReadStringLikePropertyValue(Inner, InnerPtr, Value))
+					{
+						if (Value.Len() > Best.Len())
+						{
+							Best = Value;
+						}
+					}
+				}
+			}
+		}
+
+		return Best;
+	}
+
+	static FString TryGetCityBLDVariantKeyFromActor(const AActor* RoadActor)
+	{
+		if (!RoadActor)
+		{
+			return FString();
+		}
+
+		// Prefer the City Kit Element Component when present (it's where CityBLD exposes "Street Style -> Style Name").
+		FString Best;
+
+		TArray<UActorComponent*> Comps;
+		RoadActor->GetComponents(Comps);
+		for (UActorComponent* C : Comps)
+		{
+			if (!C)
+			{
+				continue;
+			}
+
+			const FString ClassName = C->GetClass()->GetName();
+			if (!ClassName.Contains(TEXT("CityKit"), ESearchCase::IgnoreCase) &&
+				!ClassName.Contains(TEXT("Element"), ESearchCase::IgnoreCase))
+			{
+				continue;
+			}
+
+			const FString Candidate = FindBestStyleOrPresetNameOnObject(C);
+			if (Candidate.Len() > Best.Len())
+			{
+				Best = Candidate;
+			}
+		}
+
+		// Fallback: scan the actor itself.
+		if (Best.IsEmpty())
+		{
+			Best = FindBestStyleOrPresetNameOnObject(const_cast<AActor*>(RoadActor));
+		}
+
+		return Best;
+	}
+}
+
+FRoadFamilyInfo* URoadFamilyRegistry::FindOrCreateFamilyForActor(AActor* RoadActor, bool* bOutCreated)
+{
+	if (bOutCreated)
+	{
+		*bOutCreated = false;
+	}
+
+	if (!RoadActor)
+	{
+		return nullptr;
+	}
+
+	UClass* RoadClass = RoadActor->GetClass();
+	if (!RoadClass)
+	{
+		return nullptr;
+	}
+
+	FString VariantKey;
+	const FString RoadClassName = RoadClass->GetName();
+	if (RoadClassName.Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase))
+	{
+		VariantKey = TryGetCityBLDVariantKeyFromActor(RoadActor);
+	}
+
+	VariantKey.TrimStartAndEndInline();
+
+	if (KeyToIndex.Num() != Families.Num())
+	{
+		RebuildClassCache();
+	}
+
+	const FString Key = RoadClass->GetPathName() + TEXT("|") + VariantKey;
+	if (const int32* FoundIndex = KeyToIndex.Find(Key))
+	{
+		return Families.IsValidIndex(*FoundIndex) ? &Families[*FoundIndex] : nullptr;
+	}
+
+	FTrafficLaneFamilyCalibration DefaultCalib;
+	FRoadFamilyDefinition DefaultFamily;
+
+	const FString DisplayBase = VariantKey.IsEmpty() ? SanitizeDisplayName(RoadClass->GetName()) : VariantKey;
+	DefaultFamily.FamilyName = FName(*DisplayBase);
+	DefaultFamily.Forward.NumLanes = DefaultCalib.NumLanesPerSideForward;
+	DefaultFamily.Forward.LaneWidthCm = DefaultCalib.LaneWidthCm;
+	DefaultFamily.Forward.InnerLaneCenterOffsetCm = DefaultCalib.CenterlineOffsetCm;
+	DefaultFamily.Backward.NumLanes = DefaultCalib.NumLanesPerSideBackward;
+	DefaultFamily.Backward.LaneWidthCm = DefaultCalib.LaneWidthCm;
+	DefaultFamily.Backward.InnerLaneCenterOffsetCm = DefaultCalib.CenterlineOffsetCm;
+
+	FRoadFamilyInfo NewInfo;
+	NewInfo.FamilyId = FGuid::NewGuid();
+	NewInfo.DisplayName = VariantKey.IsEmpty() ? SanitizeDisplayName(RoadClass->GetName()) : VariantKey;
+	NewInfo.RoadClassPath = RoadClass;
+	NewInfo.VariantKey = VariantKey;
 	NewInfo.FamilyDefinition = DefaultFamily;
 	NewInfo.CalibrationData = DefaultCalib;
 	NewInfo.bIsCalibrated = false;

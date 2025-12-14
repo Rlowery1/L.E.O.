@@ -20,6 +20,13 @@ struct TRAFFICRUNTIME_API FRoadFamilyInfo
 	UPROPERTY(EditAnywhere, Config, Category="Traffic")
 	FSoftClassPath RoadClassPath;
 
+	/**
+	 * Optional variant key used to distinguish multiple "families" that share the same actor class.
+	 * (CityBLD roads are commonly all BP_MeshRoad but have different presets/styles.)
+	 */
+	UPROPERTY(EditAnywhere, Config, Category="Traffic")
+	FString VariantKey;
+
 	UPROPERTY(EditAnywhere, Config, Category="Traffic")
 	FRoadFamilyDefinition FamilyDefinition;
 
@@ -52,6 +59,9 @@ public:
 	/** Returns existing family or creates a new one for the provided road class. */
 	FRoadFamilyInfo* FindOrCreateFamilyForClass(UClass* RoadClass, bool* bOutCreated = nullptr);
 
+	/** Returns existing family or creates a new one for the provided road actor (may use a variant key). */
+	FRoadFamilyInfo* FindOrCreateFamilyForActor(AActor* RoadActor, bool* bOutCreated = nullptr);
+
 	/** Finds family by id. */
 	FRoadFamilyInfo* FindFamilyById(const FGuid& FamilyId);
 	const FRoadFamilyInfo* FindFamilyById(const FGuid& FamilyId) const;
@@ -83,6 +93,7 @@ private:
 	TArray<FRoadFamilyInfo> Families;
 
 	mutable TMap<UClass*, int32> ClassToIndex;
+	mutable TMap<FString, int32> KeyToIndex;
 
 	void RebuildClassCache() const;
 	FString SanitizeDisplayName(const FString& InClassName) const;

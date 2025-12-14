@@ -560,7 +560,7 @@ void UTrafficSystemEditorSubsystem::Editor_PrepareMapForTraffic()
 		UE_LOG(LogTraffic, Log, TEXT("[TrafficPrep] Found road actor: %s"), *ClassName);
 
 		bool bCreated = false;
-		FRoadFamilyInfo* FamilyInfo = Registry->FindOrCreateFamilyForClass(Actor->GetClass(), &bCreated);
+		FRoadFamilyInfo* FamilyInfo = Registry->FindOrCreateFamilyForActor(Actor, &bCreated);
 		if (bCreated && FamilyInfo)
 		{
 			++FamiliesCreated;
@@ -1797,10 +1797,24 @@ void UTrafficSystemEditorSubsystem::Editor_BakeCalibrationForActiveFamily()
 	};
 
 	FTrafficLaneFamilyCalibration NewCalib;
-	NewCalib.NumLanesPerSideForward = FMath::Clamp(CalibrationOverlayActor->NumLanesPerSideForward, 1, 5);
-	NewCalib.NumLanesPerSideBackward = FMath::Clamp(CalibrationOverlayActor->NumLanesPerSideBackward, 1, 5);
+	NewCalib.NumLanesPerSideForward = FMath::Clamp(CalibrationOverlayActor->NumLanesPerSideForward, 0, 5);
+	NewCalib.NumLanesPerSideBackward = FMath::Clamp(CalibrationOverlayActor->NumLanesPerSideBackward, 0, 5);
 	NewCalib.LaneWidthCm = FMath::Clamp(CalibrationOverlayActor->LaneWidthCm, 200.f, 500.f);
 	NewCalib.CenterlineOffsetCm = CalibrationOverlayActor->CenterlineOffsetCm;
+
+	if (NewCalib.NumLanesPerSideForward == 0 && NewCalib.NumLanesPerSideBackward == 0)
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[TrafficCalib] Invalid calibration: both forward and backward lanes are 0."));
+		if (!bAutomationOrCmdlet)
+		{
+			FMessageDialog::Open(
+				EAppMsgType::Ok,
+				NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_CalibrationZeroLanes",
+					"Invalid calibration: total lanes cannot be 0.\n\n"
+					"Set at least one lane on either the forward or backward side."));
+		}
+		return;
+	}
 
 	if (NewCalib.NumLanesPerSideForward != CalibrationOverlayActor->NumLanesPerSideForward ||
 		NewCalib.NumLanesPerSideBackward != CalibrationOverlayActor->NumLanesPerSideBackward ||
@@ -1819,12 +1833,12 @@ void UTrafficSystemEditorSubsystem::Editor_BakeCalibrationForActiveFamily()
 				NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_CalibrationClamped",
 					"Calibration values were out of the supported range and were clamped.\n\n"
 					"Supported ranges:\n"
-					"  - Lanes per side: 1 to 5\n"
+					"  - Lanes per side: 0 to 5 (total lanes must be > 0)\n"
 					"  - Lane width: 200cm to 500cm"));
-		}
-		else
-		{
-			UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor][Automation] Calibration clamped; dialog suppressed."));
+			}
+			else
+			{
+				UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor][Automation] Calibration clamped; dialog suppressed."));
 		}
 	}
 
@@ -1843,9 +1857,69 @@ void UTrafficSystemEditorSubsystem::Editor_BakeCalibrationForActiveFamily()
 				return Def.FamilyName == CalibFamilyName;
 			});
 
-		if (RoadSettings->Families.IsValidIndex(FoundIndex))
+		// Detect duplicates (same FamilyName) and offer a one-click cleanup.
+		TArray<int32> MatchingIndices;
+		for (int32 i = 0; i < RoadSettings->Families.Num(); ++i)
 		{
-			FRoadFamilyDefinition& Def = RoadSettings->Families[FoundIndex];
+			if (RoadSettings->Families[i].FamilyName == CalibFamilyName)
+			{
+				MatchingIndices.Add(i);
+			}
+		}
+
+		int32 EffectiveIndex = FoundIndex;
+		if (MatchingIndices.Num() > 1)
+		{
+			UE_LOG(LogTraffic, Warning,
+				TEXT("[TrafficCalib] TrafficRoadFamilySettings contains %d duplicate entries for FamilyName='%s'. Using first index %d."),
+				MatchingIndices.Num(),
+				*CalibFamilyName.ToString(),
+				MatchingIndices[0]);
+
+			if (!bAutomationOrCmdlet)
+			{
+				const EAppReturnType::Type Choice = FMessageDialog::Open(
+					EAppMsgType::YesNoCancel,
+					FText::FromString(FString::Printf(
+						TEXT("TrafficRoadFamilySettings contains %d duplicate entries named '%s'.\n\n")
+						TEXT("Yes: delete duplicates (recommended)\n")
+						TEXT("No: keep duplicates and continue\n")
+						TEXT("Cancel: abort bake\n"),
+						MatchingIndices.Num(),
+						*CalibFamilyName.ToString())));
+
+				if (Choice == EAppReturnType::Cancel)
+				{
+					return;
+				}
+
+				if (Choice == EAppReturnType::Yes)
+				{
+					// Remove duplicates, keeping the first match.
+					for (int32 k = MatchingIndices.Num() - 1; k >= 1; --k)
+					{
+						const int32 RemoveIndex = MatchingIndices[k];
+						if (RoadSettings->Families.IsValidIndex(RemoveIndex))
+						{
+							RoadSettings->Families.RemoveAt(RemoveIndex);
+						}
+					}
+					RoadSettings->SaveConfig();
+					UE_LOG(LogTraffic, Log, TEXT("[TrafficCalib] Deleted duplicate family entries for '%s' (kept index %d)."), *CalibFamilyName.ToString(), MatchingIndices[0]);
+				}
+			}
+
+			// Recompute the effective index after any cleanup.
+			EffectiveIndex = RoadSettings->Families.IndexOfByPredicate(
+				[CalibFamilyName](const FRoadFamilyDefinition& Def)
+				{
+					return Def.FamilyName == CalibFamilyName;
+				});
+		}
+
+		if (RoadSettings->Families.IsValidIndex(EffectiveIndex))
+		{
+			FRoadFamilyDefinition& Def = RoadSettings->Families[EffectiveIndex];
 			Def.Forward.NumLanes = NewCalib.NumLanesPerSideForward;
 			Def.Backward.NumLanes = NewCalib.NumLanesPerSideBackward;
 			Def.Forward.LaneWidthCm = NewCalib.LaneWidthCm;
@@ -1854,7 +1928,7 @@ void UTrafficSystemEditorSubsystem::Editor_BakeCalibrationForActiveFamily()
 			Def.Backward.InnerLaneCenterOffsetCm = NewCalib.CenterlineOffsetCm;
 
 			RoadSettings->SaveConfig();
-			UE_LOG(LogTraffic, Log, TEXT("[TrafficCalib] Saved calibrated layout into TrafficRoadFamilySettings for '%s' (Index=%d)."), *CalibFamilyName.ToString(), FoundIndex);
+			UE_LOG(LogTraffic, Log, TEXT("[TrafficCalib] Saved calibrated layout into TrafficRoadFamilySettings for '%s' (Index=%d)."), *CalibFamilyName.ToString(), EffectiveIndex);
 		}
 		else
 		{
@@ -2111,7 +2185,7 @@ void UTrafficSystemEditorSubsystem::CalibrateSelectedRoad()
 
     if (!FamilyInfo && Registry)
     {
-        FamilyInfo = Registry->FindOrCreateFamilyForClass(RoadActor->GetClass(), nullptr);
+        FamilyInfo = Registry->FindOrCreateFamilyForActor(RoadActor, nullptr);
     }
 
     if (!FamilyInfo)
