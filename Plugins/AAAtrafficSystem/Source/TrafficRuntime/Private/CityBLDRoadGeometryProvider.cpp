@@ -9,6 +9,8 @@
 #include "EngineUtils.h"
 #include "TrafficGeometrySmoothing.h"
 #include "TrafficCityBLDAdapterSettings.h"
+#include "TrafficRoadFamilySettings.h"
+#include "TrafficRoadMetadataComponent.h"
 #include "TrafficRuntimeModule.h"
 #include "TrafficRoadTypes.h"
 
@@ -120,6 +122,10 @@ void UCityBLDRoadGeometryProvider::CollectRoads(UWorld* World, TArray<FTrafficRo
 		return;
 	}
 
+	const UTrafficRoadFamilySettings* FamSettings = GetDefault<UTrafficRoadFamilySettings>();
+	const TArray<FRoadFamilyDefinition>* FamiliesPtr = FamSettings ? &FamSettings->Families : nullptr;
+	const int32 FamilyCount = FamiliesPtr ? FamiliesPtr->Num() : 0;
+
 	int32 NextRoadId = 0;
 
 	for (TActorIterator<AActor> It(World); It; ++It)
@@ -135,15 +141,33 @@ void UCityBLDRoadGeometryProvider::CollectRoads(UWorld* World, TArray<FTrafficRo
 			continue;
 		}
 
+		UTrafficRoadMetadataComponent* Meta = Actor->FindComponentByClass<UTrafficRoadMetadataComponent>();
+		if (Meta && !Meta->bIncludeInTraffic)
+		{
+			continue;
+		}
+
 		TArray<FVector> Centerline;
 		if (!BuildCenterlineFromCityBLDRoad(Actor, Centerline) || Centerline.Num() < 2)
 		{
 			continue;
 		}
 
+		int32 FamilyId = 0;
+		if (FamSettings && FamilyCount > 0 && Meta && !Meta->FamilyName.IsNone())
+		{
+			const FRoadFamilyDefinition* Found = FamSettings->FindFamilyByName(Meta->FamilyName);
+			if (Found)
+			{
+				const FRoadFamilyDefinition* Base = FamiliesPtr->GetData();
+				const ptrdiff_t Offset = Found - Base;
+				FamilyId = (Offset >= 0 && Offset < FamilyCount) ? static_cast<int32>(Offset) : 0;
+			}
+		}
+
 		FTrafficRoad Road;
 		Road.RoadId = NextRoadId++;
-		Road.FamilyId = 0;
+		Road.FamilyId = (FamilyCount > 0) ? FMath::Clamp(FamilyId, 0, FamilyCount - 1) : 0;
 		Road.SourceActor = Actor;
 		Road.CenterlinePoints = MoveTemp(Centerline);
 

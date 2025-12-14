@@ -527,6 +527,11 @@ void UTrafficSystemEditorSubsystem::Editor_PrepareMapForTraffic()
 		return;
 	}
 
+	UTrafficRoadFamilySettings* RoadSettings = GetMutableDefault<UTrafficRoadFamilySettings>();
+	bool bRoadSettingsModified = false;
+	static const FSoftObjectPath DefaultVehicleProfilePath(TEXT("/AAAtrafficSystem/ZoneProfiles/CityBLDUrbanTwoLane.CityBLDUrbanTwoLane"));
+	static const FSoftObjectPath DefaultFootpathProfilePath(TEXT("/AAAtrafficSystem/ZoneProfiles/CityBLDFootpath.CityBLDFootpath"));
+
 	int32 ActorsFound = 0;
 	int32 FamiliesCreated = 0;
 	int32 MetadataAttached = 0;
@@ -586,11 +591,46 @@ void UTrafficSystemEditorSubsystem::Editor_PrepareMapForTraffic()
 			}
 			Meta->FamilyName = FamilyInfo->FamilyDefinition.FamilyName;
 			Meta->bIncludeInTraffic = true;
+
+			// Ensure the runtime build settings contain a matching family entry by name.
+			// The runtime traffic build uses UTrafficRoadFamilySettings, while the editor uses URoadFamilyRegistry.
+			if (RoadSettings && !Meta->FamilyName.IsNone())
+			{
+				const FRoadFamilyDefinition* Existing = RoadSettings->FindFamilyByName(Meta->FamilyName);
+				if (!Existing)
+				{
+					FRoadFamilyDefinition NewDef = FamilyInfo->FamilyDefinition;
+					NewDef.FamilyName = Meta->FamilyName;
+					if (NewDef.VehicleLaneProfile.IsNull())
+					{
+						NewDef.VehicleLaneProfile = DefaultVehicleProfilePath;
+					}
+					if (NewDef.FootpathLaneProfile.IsNull())
+					{
+						NewDef.FootpathLaneProfile = DefaultFootpathProfilePath;
+					}
+
+					RoadSettings->Families.Add(NewDef);
+					bRoadSettingsModified = true;
+					UE_LOG(LogTraffic, Log,
+						TEXT("[TrafficPrep] Added family '%s' to TrafficRoadFamilySettings (Forward=%d Backward=%d Width=%.1f Offset=%.1f)."),
+						*NewDef.FamilyName.ToString(),
+						NewDef.Forward.NumLanes,
+						NewDef.Backward.NumLanes,
+						NewDef.Forward.LaneWidthCm,
+						NewDef.Forward.InnerLaneCenterOffsetCm);
+				}
+			}
 		}
 	}
 
 	Registry->RefreshCache();
 	Registry->SaveConfig();
+
+	if (bRoadSettingsModified && RoadSettings)
+	{
+		RoadSettings->SaveConfig();
+	}
 
 	if (ActorsFound == 0)
 	{
@@ -1818,8 +1858,31 @@ void UTrafficSystemEditorSubsystem::Editor_BakeCalibrationForActiveFamily()
 		}
 		else
 		{
-			UE_LOG(LogTraffic, Warning,
-				TEXT("[TrafficCalib] Could not find matching family '%s' in TrafficRoadFamilySettings; calibration will not affect builds until you add it."),
+			// If the family isn't present yet, create it so the build can immediately use the calibrated layout.
+			static const FSoftObjectPath DefaultVehicleProfilePath(TEXT("/AAAtrafficSystem/ZoneProfiles/CityBLDUrbanTwoLane.CityBLDUrbanTwoLane"));
+			static const FSoftObjectPath DefaultFootpathProfilePath(TEXT("/AAAtrafficSystem/ZoneProfiles/CityBLDFootpath.CityBLDFootpath"));
+
+			FRoadFamilyDefinition NewDef = FamilyInfo->FamilyDefinition;
+			NewDef.FamilyName = CalibFamilyName;
+			NewDef.Forward.NumLanes = NewCalib.NumLanesPerSideForward;
+			NewDef.Backward.NumLanes = NewCalib.NumLanesPerSideBackward;
+			NewDef.Forward.LaneWidthCm = NewCalib.LaneWidthCm;
+			NewDef.Backward.LaneWidthCm = NewCalib.LaneWidthCm;
+			NewDef.Forward.InnerLaneCenterOffsetCm = NewCalib.CenterlineOffsetCm;
+			NewDef.Backward.InnerLaneCenterOffsetCm = NewCalib.CenterlineOffsetCm;
+			if (NewDef.VehicleLaneProfile.IsNull())
+			{
+				NewDef.VehicleLaneProfile = DefaultVehicleProfilePath;
+			}
+			if (NewDef.FootpathLaneProfile.IsNull())
+			{
+				NewDef.FootpathLaneProfile = DefaultFootpathProfilePath;
+			}
+
+			RoadSettings->Families.Add(NewDef);
+			RoadSettings->SaveConfig();
+			UE_LOG(LogTraffic, Log,
+				TEXT("[TrafficCalib] Added missing family '%s' to TrafficRoadFamilySettings and saved calibrated layout."),
 				*CalibFamilyName.ToString());
 		}
 	}

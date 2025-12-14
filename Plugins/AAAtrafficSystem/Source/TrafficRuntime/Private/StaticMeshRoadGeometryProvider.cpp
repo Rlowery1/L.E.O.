@@ -3,6 +3,8 @@
 #include "RoadKitProfile.h"
 #include "TrafficGeometryProvider.h"
 #include "TrafficDrivableSurfaceComponent.h"
+#include "TrafficRoadFamilySettings.h"
+#include "TrafficRoadMetadataComponent.h"
 #include "Components/SplineComponent.h"
 #include "Components/SplineMeshComponent.h"
 #include "TrafficRuntimeModule.h"
@@ -264,6 +266,10 @@ void UStaticMeshRoadGeometryProvider::CollectRoads(UWorld* World, TArray<FTraffi
 		return;
 	}
 
+	const UTrafficRoadFamilySettings* FamSettings = GetDefault<UTrafficRoadFamilySettings>();
+	const TArray<FRoadFamilyDefinition>* FamiliesPtr = FamSettings ? &FamSettings->Families : nullptr;
+	const int32 FamilyCount = FamiliesPtr ? FamiliesPtr->Num() : 0;
+
 	int32 NextRoadId = 0;
 
 	for (TActorIterator<AActor> It(World); It; ++It)
@@ -274,15 +280,42 @@ void UStaticMeshRoadGeometryProvider::CollectRoads(UWorld* World, TArray<FTraffi
 			continue;
 		}
 
+		// Only include prepared/marked road actors; otherwise this provider will happily treat any spline actor
+		// (or drivable-looking mesh) as a road, which commonly includes sidewalks/curbs and yields "extra lanes".
+		UTrafficRoadMetadataComponent* Meta = Actor->FindComponentByClass<UTrafficRoadMetadataComponent>();
+		if (!Meta || !Meta->bIncludeInTraffic)
+		{
+			continue;
+		}
+
 		TArray<FVector> Centerline;
 		if (!BuildCenterlineFromActor(Actor, Centerline) || Centerline.Num() < 2)
 		{
 			continue;
 		}
 
+		int32 FamilyId = 0;
+		if (FamSettings && FamilyCount > 0 && !Meta->FamilyName.IsNone())
+		{
+			const FRoadFamilyDefinition* Found = FamSettings->FindFamilyByName(Meta->FamilyName);
+			if (Found)
+			{
+				const FRoadFamilyDefinition* Base = FamiliesPtr->GetData();
+				const ptrdiff_t Offset = Found - Base;
+				FamilyId = (Offset >= 0 && Offset < FamilyCount) ? static_cast<int32>(Offset) : 0;
+			}
+			else
+			{
+				UE_LOG(LogTraffic, Warning,
+					TEXT("[StaticMeshRoadGeometryProvider] Actor %s has unknown FamilyName '%s'. Using index 0."),
+					*Actor->GetName(),
+					*Meta->FamilyName.ToString());
+			}
+		}
+
 		FTrafficRoad Road;
 		Road.RoadId = NextRoadId++;
-		Road.FamilyId = 0;
+		Road.FamilyId = (FamilyCount > 0) ? FMath::Clamp(FamilyId, 0, FamilyCount - 1) : 0;
 		Road.SourceActor = Actor;
 		Road.CenterlinePoints = MoveTemp(Centerline);
 
