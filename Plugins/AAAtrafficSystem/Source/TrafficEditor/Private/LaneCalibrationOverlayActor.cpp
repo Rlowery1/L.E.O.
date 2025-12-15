@@ -673,4 +673,26 @@ void ALaneCalibrationOverlayActor::PostEditChangeProperty(FPropertyChangedEvent&
 		Editor_RebuildFromCachedCenterline();
 	}
 }
+
+void ALaneCalibrationOverlayActor::PostEditMove(bool bFinished)
+{
+	Super::PostEditMove(bFinished);
+
+	if (!bFinished)
+	{
+		return;
+	}
+
+	// Users frequently try to "move the arrows" in the viewport, but the calibration is data-driven
+	// (CenterlineOffsetCm / LaneWidthCm / per-lane adjustments). Moving this overlay actor is not baked.
+	//
+	// Snap it back to the road transform to avoid accidental misleading previews.
+	if (!CachedRoadTransform.Equals(GetActorTransform(), 0.1f))
+	{
+		SetActorTransform(CachedRoadTransform);
+		UE_LOG(LogTraffic, Warning,
+			TEXT("[LaneCalibrationOverlay] Overlay movement is not supported (it is not baked). ")
+			TEXT("Use CenterlineOffsetCm / LaneWidthCm / LaneCenterOffsetAdjustmentsCm instead."));
+	}
+}
 #endif

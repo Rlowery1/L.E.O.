@@ -611,6 +611,29 @@ FRoadFamilyInfo* URoadFamilyRegistry::FindOrCreateFamilyForActorWithVariantKey(A
 		}
 	}
 
+	// Improve default centering for one-way presets:
+	// - Two-way roads: inner lane center is half a lane from centerline.
+	// - One-way roads: center the lane group around the centerline.
+	//
+	// Examples (LaneWidth=W):
+	// - 1 lane one-way: offset=0
+	// - 2 lanes one-way: offset=-W/2  (lane centers at -W/2, +W/2)
+	// - 3 lanes one-way: offset=-W    (lane centers at -W, 0, +W)
+	{
+		const int32 Fwd = DefaultCalib.NumLanesPerSideForward;
+		const int32 Back = DefaultCalib.NumLanesPerSideBackward;
+		const float W = DefaultCalib.LaneWidthCm;
+
+		if (Back > 0)
+		{
+			DefaultCalib.CenterlineOffsetCm = W * 0.5f;
+		}
+		else if (Fwd > 0)
+		{
+			DefaultCalib.CenterlineOffsetCm = -W * 0.5f * static_cast<float>(Fwd - 1);
+		}
+	}
+
 	FRoadFamilyDefinition DefaultFamily;
 
 	const FString DisplayBase = VariantKey.IsEmpty() ? SanitizeDisplayName(RoadClass->GetName()) : VariantKey;

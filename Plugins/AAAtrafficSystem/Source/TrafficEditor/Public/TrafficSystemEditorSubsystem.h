@@ -41,6 +41,7 @@ public:
 	void DoPrepare();
 	void DoBuild();
 	void DoCars();
+	void DoClearCars();
 	void DoDrawIntersectionDebug();
 
 	/** Scans the current level for spline-based roads and prepares families/metadata. */
@@ -89,6 +90,10 @@ public:
 	int32 GetNumActorsForFamily(const FGuid& FamilyId) const;
 	void GetActorsForFamily(const FGuid& FamilyId, TArray<AActor*>& OutActors) const;
 
+	/** True if the map has likely changed since the last PREPARE MAP (e.g. Undo/Redo, road actor added/removed). */
+	bool IsPrepareDirty() const { return bPrepareDirty; }
+	FText GetPrepareDirtyReason() const { return PrepareDirtyReason; }
+
 private:
 	void TagAsRoadLab(AActor* Actor);
 	void FocusCameraOnActor(AActor* Actor);
@@ -96,6 +101,7 @@ private:
 	void Editor_DrawCenterlineDebug(UWorld* World, const TArray<FVector>& CenterlinePoints, bool bColorByCurvature = true) const;
 	float TraceGroundHeight(UWorld* World, float X, float Y, float FallbackZ);
 	bool EnsureDetectedFamilies(const TCHAR* Context) const;
+	bool EnsurePreparedForAction(const TCHAR* Context);
 
 	UPROPERTY()
 	TWeakObjectPtr<ALaneCalibrationOverlayActor> CalibrationOverlayActor;
@@ -108,6 +114,19 @@ private:
 
 	UPROPERTY()
 	TArray<UProceduralMeshComponent*> RoadLabRibbonMeshes;
+
+	void MarkPrepareDirty(const FText& Reason);
+	void ClearPrepareDirty();
+
+	UPROPERTY()
+	bool bPrepareDirty = false;
+
+	UPROPERTY()
+	FText PrepareDirtyReason;
+
+	FDelegateHandle PostUndoRedoHandle;
+	FDelegateHandle ActorAddedHandle;
+	FDelegateHandle ActorDeletedHandle;
 
 	static const FName RoadLabTag;
 	static constexpr float SnippetMinLength = 4000.f;

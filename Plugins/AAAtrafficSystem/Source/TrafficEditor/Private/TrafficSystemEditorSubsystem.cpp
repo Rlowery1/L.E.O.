@@ -8,6 +8,7 @@
 #include "TrafficNetworkAsset.h"
 #include "TrafficVehicleManager.h"
 #include "TrafficVehicleBase.h"
+#include "TrafficVehicleAdapter.h"
 #include "TrafficCityBLDAdapterSettings.h"
 #include "TrafficRoadMetadataComponent.h"
 #include "TrafficVisualSettings.h"
@@ -93,7 +94,77 @@ static TAutoConsoleVariable<int32> CVarTrafficCityBLDSplitRampFamiliesByRole(
 	TEXT("If non-zero, PREPARE MAP will split generic CityBLD ramp families into separate '(On)' and '(Off)' families based on which end is nearest the freeway and the ramp's current driving direction (bReverseCenterlineDirection)."),
 	ECVF_Default);
 
+static TAutoConsoleVariable<int32> CVarTrafficEditorAutoPrepareOnActions(
+	TEXT("aaa.Traffic.Editor.AutoPrepareOnActions"),
+	1,
+	TEXT("If non-zero, BEGIN CALIBRATION / BUILD / FLIP will auto-run PREPARE MAP when roads changed (Undo/Redo, road actor add/remove)."),
+	ECVF_Default);
+
 const FName UTrafficSystemEditorSubsystem::RoadLabTag = FName(TEXT("AAA_RoadLab"));
+
+static bool IsLikelyRoadActorForPrepareDirty(AActor* Actor)
+{
+	if (!Actor)
+	{
+		return false;
+	}
+
+	// Ignore AAA helpers.
+	static const FName RoadLabTagLocal(TEXT("AAA_RoadLab"));
+	if (Actor->Tags.Contains(RoadLabTagLocal))
+	{
+		return false;
+	}
+
+	// If the actor already has traffic metadata, treat it as a road relevant to PREPARE.
+	if (Actor->FindComponentByClass<UTrafficRoadMetadataComponent>())
+	{
+		return true;
+	}
+
+	// Must have a spline to be road-like.
+	if (!Actor->FindComponentByClass<USplineComponent>())
+	{
+		return false;
+	}
+
+	const UTrafficCityBLDAdapterSettings* AdapterSettings = GetDefault<UTrafficCityBLDAdapterSettings>();
+	if (AdapterSettings && !AdapterSettings->RoadActorTag.IsNone() && Actor->ActorHasTag(AdapterSettings->RoadActorTag))
+	{
+		return true;
+	}
+
+	const FString ClassName = Actor->GetClass() ? Actor->GetClass()->GetName() : FString();
+
+	// CityBLD special cases.
+	if (ClassName.Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase) ||
+		ClassName.Contains(TEXT("BP_ModularRoad"), ESearchCase::IgnoreCase))
+	{
+		return true;
+	}
+
+	// Generic "road-ish" heuristics to avoid flagging arbitrary spline actors.
+	if (ClassName.Contains(TEXT("Road"), ESearchCase::IgnoreCase) ||
+		ClassName.Contains(TEXT("Street"), ESearchCase::IgnoreCase) ||
+		ClassName.Contains(TEXT("Highway"), ESearchCase::IgnoreCase) ||
+		ClassName.Contains(TEXT("Lane"), ESearchCase::IgnoreCase))
+	{
+		return true;
+	}
+
+#if WITH_EDITOR
+	// Editor-only label hint.
+	const FString Label = Actor->GetActorLabel();
+	if (Label.Contains(TEXT("Road"), ESearchCase::IgnoreCase) ||
+		Label.Contains(TEXT("Street"), ESearchCase::IgnoreCase) ||
+		Label.Contains(TEXT("Highway"), ESearchCase::IgnoreCase))
+	{
+		return true;
+	}
+#endif
+
+	return false;
+}
 
 void UTrafficSystemEditorSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -101,6 +172,56 @@ void UTrafficSystemEditorSubsystem::Initialize(FSubsystemCollectionBase& Collect
 	CalibrationOverlayActor = nullptr;
 	ActiveCalibrationRoadActor = nullptr;
 	ActiveFamilyId.Invalidate();
+	bPrepareDirty = false;
+	PrepareDirtyReason = FText::GetEmpty();
+
+#if WITH_EDITOR
+	// Mark PREPARE as dirty after Undo/Redo or when spline-road actors are added/removed.
+	// CityBLD frequently re-creates BP_ModularRoad actors on Undo, which can drop metadata components.
+	if (!PostUndoRedoHandle.IsValid())
+	{
+		// UE delegate signature is void(); (no params).
+		PostUndoRedoHandle = FEditorDelegates::PostUndoRedo.AddLambda([this]()
+		{
+			MarkPrepareDirty(NSLOCTEXT("TrafficEditor", "PrepareDirty_UndoRedo", "Roads changed (Undo/Redo). Run PREPARE MAP."));
+		});
+	}
+
+	if (GEngine)
+	{
+		if (!ActorAddedHandle.IsValid())
+		{
+			ActorAddedHandle = GEngine->OnLevelActorAdded().AddLambda([this](AActor* Actor)
+			{
+				if (!Actor || Actor->Tags.Contains(RoadLabTag))
+				{
+					return;
+				}
+
+				// Avoid nuisance warnings from unrelated spline actors (cables, camera rails, etc).
+				if (IsLikelyRoadActorForPrepareDirty(Actor))
+				{
+					MarkPrepareDirty(NSLOCTEXT("TrafficEditor", "PrepareDirty_ActorAdded", "Road actor added/edited. Run PREPARE MAP."));
+				}
+			});
+		}
+		if (!ActorDeletedHandle.IsValid())
+		{
+			ActorDeletedHandle = GEngine->OnLevelActorDeleted().AddLambda([this](AActor* Actor)
+			{
+				if (!Actor || Actor->Tags.Contains(RoadLabTag))
+				{
+					return;
+				}
+
+				if (IsLikelyRoadActorForPrepareDirty(Actor))
+				{
+					MarkPrepareDirty(NSLOCTEXT("TrafficEditor", "PrepareDirty_ActorDeleted", "Road actor removed. Run PREPARE MAP."));
+				}
+			});
+		}
+	}
+#endif
 	UE_LOG(LogTraffic, Log, TEXT("UTrafficSystemEditorSubsystem initialized."));
 }
 
@@ -113,7 +234,28 @@ void UTrafficSystemEditorSubsystem::Deinitialize()
 	}
 	ActiveCalibrationRoadActor.Reset();
 	ActiveFamilyId.Invalidate();
-	
+
+#if WITH_EDITOR
+	if (PostUndoRedoHandle.IsValid())
+	{
+		FEditorDelegates::PostUndoRedo.Remove(PostUndoRedoHandle);
+		PostUndoRedoHandle.Reset();
+	}
+	if (GEngine)
+	{
+		if (ActorAddedHandle.IsValid())
+		{
+			GEngine->OnLevelActorAdded().Remove(ActorAddedHandle);
+			ActorAddedHandle.Reset();
+		}
+		if (ActorDeletedHandle.IsValid())
+		{
+			GEngine->OnLevelActorDeleted().Remove(ActorDeletedHandle);
+			ActorDeletedHandle.Reset();
+		}
+	}
+#endif
+
 	for (UProceduralMeshComponent* Mesh : RoadLabRibbonMeshes)
 	{
 		if (Mesh && Mesh->IsValidLowLevel())
@@ -125,6 +267,60 @@ void UTrafficSystemEditorSubsystem::Deinitialize()
 	
 	UE_LOG(LogTraffic, Log, TEXT("UTrafficSystemEditorSubsystem deinitialized."));
 	Super::Deinitialize();
+}
+
+void UTrafficSystemEditorSubsystem::MarkPrepareDirty(const FText& Reason)
+{
+#if WITH_EDITOR
+	bPrepareDirty = true;
+	PrepareDirtyReason = Reason;
+#endif
+}
+
+void UTrafficSystemEditorSubsystem::ClearPrepareDirty()
+{
+#if WITH_EDITOR
+	bPrepareDirty = false;
+	PrepareDirtyReason = FText::GetEmpty();
+#endif
+}
+
+bool UTrafficSystemEditorSubsystem::EnsurePreparedForAction(const TCHAR* Context)
+{
+#if WITH_EDITOR
+	if (!bPrepareDirty)
+	{
+		return true;
+	}
+
+	const bool bAuto = (CVarTrafficEditorAutoPrepareOnActions.GetValueOnGameThread() != 0);
+	if (!bAuto)
+	{
+		const bool bAutomationOrCmdlet = IsRunningCommandlet() || GIsAutomationTesting;
+		if (!bAutomationOrCmdlet)
+		{
+			FMessageDialog::Open(
+				EAppMsgType::Ok,
+				FText::Format(
+					NSLOCTEXT("TrafficEditor", "PrepareDirty_Blocking",
+						"{0}\n\n"
+						"Run PREPARE MAP before using this action to avoid stale/missing road metadata."),
+					PrepareDirtyReason.IsEmpty()
+						? NSLOCTEXT("TrafficEditor", "PrepareDirty_Generic", "Roads changed. Run PREPARE MAP.")
+						: PrepareDirtyReason));
+		}
+		return false;
+	}
+
+	UE_LOG(LogTraffic, Log, TEXT("[TrafficEditor] AutoPrepareOnActions: PREPARE MAP before '%s' (dirty reason: %s)"),
+		Context ? Context : TEXT("Action"),
+		*PrepareDirtyReason.ToString());
+
+	Editor_PrepareMapForTraffic();
+	return true;
+#else
+	return true;
+#endif
 }
 
 UWorld* UTrafficSystemEditorSubsystem::GetEditorWorld() const
@@ -458,15 +654,18 @@ void UTrafficSystemEditorSubsystem::Editor_ResetRoadLabHard(bool bIncludeTaggedU
 		const FName RoadTagFromSettings = AdapterSettings ? AdapterSettings->RoadActorTag : NAME_None;
 
 		const bool bIsAAARoadLabTagged = Actor->Tags.Contains(RoadLabTag);
+		static const FName TrafficSpawnedVehicleTag(TEXT("AAA_TrafficVehicle"));
+		const bool bIsSpawnedTrafficVehicleTagged = Actor->Tags.Contains(TrafficSpawnedVehicleTag);
 		const bool bIsPreview = Actor->IsA(ARoadLanePreviewActor::StaticClass());
 		const bool bIsOverlay = Actor->IsA(ALaneCalibrationOverlayActor::StaticClass());
 		const bool bIsVehicle = Actor->IsA(ATrafficVehicleBase::StaticClass());
+		const bool bIsVehicleAdapter = Actor->IsA(ATrafficVehicleAdapter::StaticClass());
 		const bool bIsVehicleMgr = Actor->IsA(ATrafficVehicleManager::StaticClass());
 		const bool bIsController = Actor->IsA(ATrafficSystemController::StaticClass());
 
 		const bool bIsUserRoadTagged = bIncludeTaggedUserRoads && (!RoadTagFromSettings.IsNone() && Actor->ActorHasTag(RoadTagFromSettings));
 
-		if (bIsAAARoadLabTagged || bIsPreview || bIsOverlay || bIsVehicle || bIsVehicleMgr || bIsController || bIsUserRoadTagged)
+		if (bIsAAARoadLabTagged || bIsSpawnedTrafficVehicleTagged || bIsPreview || bIsOverlay || bIsVehicle || bIsVehicleAdapter || bIsVehicleMgr || bIsController || bIsUserRoadTagged)
 		{
 			ActorsToDestroy.Add(Actor);
 		}
@@ -1092,6 +1291,8 @@ void UTrafficSystemEditorSubsystem::Editor_PrepareMapForTraffic()
 		{
 			int32 CityBLDRampRoleFamiliesCreated = 0;
 			int32 CityBLDRampRoleActorsRemapped = 0;
+			int32 CityBLDRampsClassifiedOn = 0;
+			int32 CityBLDRampsClassifiedOff = 0;
 
 			TArray<TObjectPtr<UObject>> ProviderObjects;
 			TArray<ITrafficRoadGeometryProvider*> Providers;
@@ -1246,6 +1447,14 @@ void UTrafficSystemEditorSubsystem::Editor_PrepareMapForTraffic()
 					// when not reversed, else EndRaw->StartRaw. On-ramp means destination is at freeway endpoint,
 					// Off-ramp means source is at freeway endpoint.
 					const bool bIsOnRamp = (Meta->bReverseCenterlineDirection == bHighwayAtStart);
+					if (bIsOnRamp)
+					{
+						++CityBLDRampsClassifiedOn;
+					}
+					else
+					{
+						++CityBLDRampsClassifiedOff;
+					}
 
 					const FString VariantKey = BaseFamilyName + (bIsOnRamp ? TEXT(" (On)") : TEXT(" (Off)"));
 					const FGuid OldFamilyId = Meta->RoadFamilyId;
@@ -1316,6 +1525,16 @@ void UTrafficSystemEditorSubsystem::Editor_PrepareMapForTraffic()
 					CityBLDRampRoleFamiliesCreated,
 					CityBLDRampRoleActorsRemapped);
 			}
+
+			// UX guard: after Undo/Redo or re-drawing, users often end up with all ramps defaulting to one direction
+			// (Reverse=false). If we see multiple ramps but none classified as Off, warn clearly.
+			if (bCityBLDSplitRampFamiliesByRole && RampActors.Num() >= 2 && CityBLDRampsClassifiedOn > 0 && CityBLDRampsClassifiedOff == 0)
+			{
+				UE_LOG(LogTraffic, Warning,
+					TEXT("[TrafficPrep][CityBLD] All %d ramp actors were classified as '(On)' and none as '(Off)'. ")
+					TEXT("If you placed an off-ramp, select that ramp actor and click 'Flip Selected Road Direction', then run PREPARE MAP again."),
+					RampActors.Num());
+			}
 		}
 	}
 
@@ -1326,6 +1545,9 @@ void UTrafficSystemEditorSubsystem::Editor_PrepareMapForTraffic()
 	{
 		RoadSettings->SaveConfig();
 	}
+
+	// Successful PREPARE clears the dirty flag.
+	ClearPrepareDirty();
 
 	if (ActorsFound == 0)
 	{
@@ -1379,37 +1601,12 @@ void UTrafficSystemEditorSubsystem::DoPrepare()
 		return;
 	}
 
-	if (UTrafficCalibrationSubsystem* Calib = GEditor->GetEditorSubsystem<UTrafficCalibrationSubsystem>())
-	{
-		UE_LOG(LogTraffic, Log, TEXT("[TrafficEditor] PREPARE: Running PrepareAllRoads()."));
-		Calib->PrepareAllRoads();
-
-		if (!HasAnyPreparedRoads())
-		{
-			UE_LOG(LogTraffic, Warning,
-				TEXT("[TrafficEditor] PrepareAllRoads: Found 0 spline roads. If this level uses World Partition or CityBLD streaming, ensure regions containing roads are loaded."));
-			const bool bAutomationOrCmdlet = IsRunningCommandlet() || GIsAutomationTesting;
-			if (!bAutomationOrCmdlet)
-			{
-				FMessageDialog::Open(
-					EAppMsgType::Ok,
-					NSLOCTEXT("TrafficSystemEditorSubsystem", "Traffic_Prepare_NoSplineRoads",
-						"AAA Traffic did not find any spline-based roads in this level.\n\n"
-						"This usually means:\n"
-						"  - Road actors have not been placed yet, or\n"
-						"  - Your World Partition / CityBLD regions that contain roads are not loaded.\n\n"
-						"If this map uses World Partition or CityBLD streaming, load the regions containing your roads and run PREPARE MAP again."));
-			}
-			else
-			{
-				UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor][Automation] Prepare found no spline roads; dialog suppressed."));
-			}
-		}
-	}
-	else
-	{
-		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] PREPARE: Calibration subsystem not available."));
-	}
+	// Important: use the full AAA PREPARE MAP flow here (not the legacy calibration subsystem PrepareAllRoads).
+	//
+	// The legacy PrepareAllRoads assigns a default family like 'Urban_2x2' to any spline actor with metadata,
+	// which can overwrite CityBLD preset-based families and cause incorrect lane counts (e.g. 4 lanes on 2-lane roads).
+	UE_LOG(LogTraffic, Log, TEXT("[TrafficEditor] PREPARE: Running Editor_PrepareMapForTraffic()."));
+	Editor_PrepareMapForTraffic();
 #endif
 }
 
@@ -1421,6 +1618,11 @@ void UTrafficSystemEditorSubsystem::DoBuild()
 	if (!World)
 	{
 		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] DoBuild: No editor world."));
+		return;
+	}
+
+	if (!EnsurePreparedForAction(TEXT("Build")))
+	{
 		return;
 	}
 
@@ -1467,6 +1669,11 @@ void UTrafficSystemEditorSubsystem::DoCars()
 	if (!World)
 	{
 		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] DoCars: No editor world."));
+		return;
+	}
+
+	if (!EnsurePreparedForAction(TEXT("Cars")))
+	{
 		return;
 	}
 
@@ -1561,6 +1768,96 @@ void UTrafficSystemEditorSubsystem::DoCars()
 #endif
 }
 
+void UTrafficSystemEditorSubsystem::DoClearCars()
+{
+#if WITH_EDITOR
+	static const FName TrafficSpawnedVehicleTag(TEXT("AAA_TrafficVehicle"));
+
+	UE_LOG(LogTraffic, Log, TEXT("[AAA Traffic] Version=%s"), TEXT(AAA_TRAFFIC_PLUGIN_VERSION));
+	UWorld* World = GetEditorWorld();
+	if (!World)
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] DoClearCars: No editor world."));
+		return;
+	}
+
+	int32 NumDestroyed = 0;
+	TArray<AActor*> ToDestroy;
+
+	// Clear via managers first (they know about adapters + spawned visual pawns).
+	for (TActorIterator<ATrafficVehicleManager> It(World); It; ++It)
+	{
+		if (ATrafficVehicleManager* Manager = *It)
+		{
+			Manager->ClearVehicles();
+			ToDestroy.AddUnique(Manager);
+		}
+	}
+
+	// Also catch adapters explicitly (in case a manager was deleted).
+	for (TActorIterator<ATrafficVehicleAdapter> It(World); It; ++It)
+	{
+		if (ATrafficVehicleAdapter* Adapter = *It)
+		{
+			ToDestroy.AddUnique(Adapter);
+			if (APawn* VisualPawn = Adapter->ChaosVehicle.Get())
+			{
+				ToDestroy.AddUnique(VisualPawn);
+			}
+			if (ATrafficVehicleBase* Logic = Adapter->LogicVehicle.Get())
+			{
+				ToDestroy.AddUnique(Logic);
+			}
+		}
+	}
+
+	// Destroy any tagged spawned vehicles (covers Chaos pawns + any future spawned types).
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* Actor = *It;
+		if (Actor && Actor->Tags.Contains(TrafficSpawnedVehicleTag))
+		{
+			ToDestroy.AddUnique(Actor);
+		}
+	}
+
+	// Best-effort legacy cleanup: any pawn owned by a TrafficVehicleManager.
+	for (TActorIterator<APawn> It(World); It; ++It)
+	{
+		APawn* Pawn = *It;
+		if (!Pawn)
+		{
+			continue;
+		}
+		if (ATrafficVehicleManager* OwnerMgr = Cast<ATrafficVehicleManager>(Pawn->GetOwner()))
+		{
+			if (!OwnerMgr->IsActorBeingDestroyed())
+			{
+				ToDestroy.AddUnique(Pawn);
+			}
+		}
+	}
+
+	for (AActor* Actor : ToDestroy)
+	{
+		if (Actor && Actor->IsValidLowLevel() && !Actor->IsActorBeingDestroyed())
+		{
+			World->DestroyActor(Actor);
+			++NumDestroyed;
+		}
+	}
+
+	if (NumDestroyed == 0)
+	{
+		UE_LOG(LogTraffic, Log, TEXT("[TrafficEditor] CLEAR CARS: No traffic vehicles to clear."));
+	}
+	else
+	{
+		UE_LOG(LogTraffic, Log, TEXT("[TrafficEditor] CLEAR CARS: Destroyed %d actors."), NumDestroyed);
+	}
+#endif
+}
+
 void UTrafficSystemEditorSubsystem::DoDrawIntersectionDebug()
 {
 #if WITH_EDITOR
@@ -1569,6 +1866,11 @@ void UTrafficSystemEditorSubsystem::DoDrawIntersectionDebug()
 	if (!World)
 	{
 		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] DoDrawIntersectionDebug: No editor world."));
+		return;
+	}
+
+	if (!EnsurePreparedForAction(TEXT("IntersectionDebug")))
+	{
 		return;
 	}
 
@@ -2116,6 +2418,11 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 	if (!World)
 	{
 		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] BeginCalibrationForFamily: No editor world."));
+		return;
+	}
+
+	if (!EnsurePreparedForAction(TEXT("BeginCalibration")))
+	{
 		return;
 	}
 
@@ -2946,6 +3253,11 @@ void UTrafficSystemEditorSubsystem::Editor_ToggleReverseDirectionForSelectedRoad
 #if WITH_EDITOR
 	UWorld* World = GetEditorWorld();
 	if (!World)
+	{
+		return;
+	}
+
+	if (!EnsurePreparedForAction(TEXT("FlipRoadDirection")))
 	{
 		return;
 	}

@@ -13,7 +13,7 @@
 
 namespace
 {
-	static bool IsCityBLDRoadCandidate(const AActor* Actor, const UTrafficCityBLDAdapterSettings* AdapterSettings)
+	static bool IsCityBLDRoadCandidate_Factory(const AActor* Actor, const UTrafficCityBLDAdapterSettings* AdapterSettings)
 	{
 		if (!Actor)
 		{
@@ -71,7 +71,7 @@ TObjectPtr<UObject> UTrafficGeometryProviderFactory::CreateProvider(
 	{
 		for (TActorIterator<AActor> It(World); It; ++It)
 		{
-			if (IsCityBLDRoadCandidate(*It, AdapterSettings) && It->FindComponentByClass<USplineComponent>())
+			if (IsCityBLDRoadCandidate_Factory(*It, AdapterSettings) && It->FindComponentByClass<USplineComponent>())
 			{
 				bHasCityBLDRoads = true;
 
@@ -161,7 +161,7 @@ void UTrafficGeometryProviderFactory::CreateProviderChainForEditorWorld(
 	{
 		for (TActorIterator<AActor> It(World); It; ++It)
 		{
-			if (IsCityBLDRoadCandidate(*It, AdapterSettings) && It->FindComponentByClass<USplineComponent>())
+			if (IsCityBLDRoadCandidate_Factory(*It, AdapterSettings) && It->FindComponentByClass<USplineComponent>())
 			{
 				bHasCityBLDRoads = true;
 				break;

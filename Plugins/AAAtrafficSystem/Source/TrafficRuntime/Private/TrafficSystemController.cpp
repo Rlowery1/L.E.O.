@@ -7,6 +7,7 @@
 #include "TrafficRuntimeModule.h"
 #include "TrafficVehicleManager.h"
 #include "TrafficZoneGraphAdapter.h"
+#include "TrafficRuntimeSettings.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
 
@@ -162,6 +163,19 @@ void ATrafficSystemController::Runtime_SpawnTraffic()
 	}
 }
 
+void ATrafficSystemController::SetRuntimeConfigFromProjectSettings()
+{
+	const UTrafficRuntimeSettings* Settings = GetDefault<UTrafficRuntimeSettings>();
+	if (!Settings)
+	{
+		return;
+	}
+
+	VehiclesPerLaneRuntime = FMath::Clamp(Settings->VehiclesPerLaneRuntime, 0, 50);
+	RuntimeSpeedCmPerSec = FMath::Clamp(Settings->RuntimeSpeedCmPerSec, 0.f, 100000.f);
+	bGenerateZoneGraph = Settings->bGenerateZoneGraph;
+}
+
 void ATrafficSystemController::BeginPlay()
 {
 	Super::BeginPlay();
@@ -181,11 +195,13 @@ void ATrafficSystemController::BeginPlay()
 
 	if (bAutoBuildOnBeginPlay)
 	{
+		SetRuntimeConfigFromProjectSettings();
 		Runtime_BuildTrafficNetwork();
 	}
 
 	if (bAutoSpawnOnBeginPlay)
 	{
+		SetRuntimeConfigFromProjectSettings();
 		Runtime_SpawnTraffic();
 	}
 }

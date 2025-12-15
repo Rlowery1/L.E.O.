@@ -29,6 +29,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Traffic|Runtime")
 	void Runtime_SpawnTraffic();
 
+	/** Apply runtime config (speed/vehicles-per-lane/ZoneGraph) from Project Settings -> AAA Traffic Settings. */
+	UFUNCTION(BlueprintCallable, Category="Traffic|Runtime")
+	void SetRuntimeConfigFromProjectSettings();
+
 	UTrafficNetworkAsset* GetBuiltNetworkAsset() const { return BuiltNetworkAsset; }
 	int32 GetNumRoads() const;
 	int32 GetNumLanes() const;

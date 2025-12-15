@@ -281,6 +281,52 @@ void STrafficSystemPanel::Construct(const FArguments& InArgs)
 					.AutoHeight()
 					.Padding(0.0f, 4.0f, 0.0f, 2.0f)
 					[
+						SNew(STextBlock)
+						.Text_Lambda([this]()
+						{
+							if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
+							{
+								if (Subsys->IsPrepareDirty())
+								{
+									return Subsys->GetPrepareDirtyReason();
+								}
+							}
+							return FText::GetEmpty();
+						})
+						.Visibility_Lambda([this]()
+						{
+							if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
+							{
+								return Subsys->IsPrepareDirty() ? EVisibility::Visible : EVisibility::Collapsed;
+							}
+							return EVisibility::Collapsed;
+						})
+						.Font(SubtitleFont)
+						.ColorAndOpacity(FLinearColor(1.0f, 0.75f, 0.25f))
+						.WrapTextAt(420.0f)
+					]
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0.0f, 2.0f, 0.0f, 6.0f)
+					[
+						SNew(SCheckBox)
+						.IsChecked_Lambda([this]() { return bShowEmptyFamilies ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+						.OnCheckStateChanged_Lambda([this](ECheckBoxState State)
+						{
+							bShowEmptyFamilies = (State == ECheckBoxState::Checked);
+							RefreshFamilyList();
+						})
+						[
+							SNew(STextBlock)
+							.Text(LOCTEXT("ShowEmptyFamilies", "Show empty families (0 actors)"))
+							.Font(SubtitleFont)
+							.ColorAndOpacity(FLinearColor(0.85f, 0.85f, 0.85f))
+						]
+					]
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0.0f, 4.0f, 0.0f, 2.0f)
+					[
 						SNew(SComboBox<TSharedPtr<FFamilyListItem>>)
 						.OptionsSource(&FamilyItems)
 						.OnGenerateWidget(this, &STrafficSystemPanel::OnGenerateFamilyItem)
@@ -402,6 +448,40 @@ void STrafficSystemPanel::Construct(const FArguments& InArgs)
 						[
 							SNew(STextBlock)
 							.Text(FText::FromString(TEXT("Prepare, build, and spawn vehicles in the editor world for quick testing.")))
+							.Font(SubtitleFont)
+							.ColorAndOpacity(FLinearColor(0.8f, 0.8f, 0.8f))
+							.WrapTextAt(420.0f)
+						]
+					]
+				]
+
+				// Clear Cars (keep roads/controllers/overlays)
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0.0f, 0.0f, 0.0f, 6.0f)
+				[
+					SNew(SButton)
+					.ButtonStyle(&FAppStyle::Get().GetWidgetStyle<FButtonStyle>("Button"))
+					.HAlign(HAlign_Left)
+					.ContentPadding(FMargin(16.0f, 8.0f))
+					.OnClicked(this, &STrafficSystemPanel::OnClearCarsClicked)
+					.ToolTipText(LOCTEXT("Tooltip_ClearCars", "Destroy spawned test vehicles in the EDITOR world.\nDoes not delete roads, calibration, or the built network."))
+					[
+						SNew(SVerticalBox)
+						+ SVerticalBox::Slot()
+						.AutoHeight()
+						[
+							SNew(STextBlock)
+							.Text(FText::FromString(TEXT("CLEAR CARS (Editor Test)")))
+							.Font(TitleFont)
+							.ColorAndOpacity(FLinearColor::White)
+						]
+						+ SVerticalBox::Slot()
+						.AutoHeight()
+						.Padding(0.0f, 2.0f, 0.0f, 0.0f)
+						[
+							SNew(STextBlock)
+							.Text(FText::FromString(TEXT("Remove spawned vehicles without resetting roads/overlays.")))
 							.Font(SubtitleFont)
 							.ColorAndOpacity(FLinearColor(0.8f, 0.8f, 0.8f))
 							.WrapTextAt(420.0f)
@@ -785,6 +865,15 @@ FReply STrafficSystemPanel::OnCarsClicked()
 	return FReply::Handled();
 }
 
+FReply STrafficSystemPanel::OnClearCarsClicked()
+{
+	if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
+	{
+		Subsys->DoClearCars();
+	}
+	return FReply::Handled();
+}
+
 FReply STrafficSystemPanel::OnDrawIntersectionDebugClicked()
 {
 	const bool bAutomationOrCmdlet = IsRunningCommandlet() || GIsAutomationTesting;
@@ -966,6 +1055,10 @@ void STrafficSystemPanel::RefreshFamilyList()
 			if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
 			{
 				NumInstances = Subsys->GetNumActorsForFamily(Info.FamilyId);
+			}
+			if (!bShowEmptyFamilies && NumInstances <= 0)
+			{
+				continue;
 			}
 			Item->DisplayName = NumInstances > 0 ? Info.DisplayName : FString::Printf(TEXT("%s (0 actors)"), *Info.DisplayName);
 			Item->ClassDisplay = Info.RoadClassPath.GetAssetName();

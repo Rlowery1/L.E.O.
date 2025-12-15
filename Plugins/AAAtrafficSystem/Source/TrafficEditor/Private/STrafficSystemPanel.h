@@ -35,6 +35,7 @@ private:
 	FReply OnPrepareClicked();
 	FReply OnBuildClicked();
 	FReply OnCarsClicked();
+	FReply OnClearCarsClicked();
 	FReply OnDrawIntersectionDebugClicked();
 	FReply OnPrepareMapForTrafficClicked();
 	FReply OnCopyRoadFamilyDefaultsIniClicked();
@@ -57,4 +58,5 @@ private:
 	TArray<TSharedPtr<FFamilyListItem>> FamilyItems;
 	TSharedPtr<FFamilyListItem> SelectedFamily;
 	TSharedPtr<SEditableTextBox> FamilyNameEdit;
+	bool bShowEmptyFamilies = false;
 };

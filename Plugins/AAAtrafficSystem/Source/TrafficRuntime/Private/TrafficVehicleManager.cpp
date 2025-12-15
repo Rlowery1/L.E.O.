@@ -23,6 +23,8 @@ static TAutoConsoleVariable<int32> CVarShowLogicDebugMesh(
 	TEXT("Default: 0 (hide cube when Chaos pawn is spawned)."),
 	ECVF_Default);
 
+static const FName TrafficSpawnedVehicleTag(TEXT("AAA_TrafficVehicle"));
+
 // Helper to compute safe spawn positions along a lane.
 static void ComputeSpawnPositionsForLane(
 	const FTrafficLane& Lane,
@@ -65,6 +67,7 @@ ATrafficVehicleManager::ATrafficVehicleManager()
 {
 	PrimaryActorTick.bCanEverTick = false;
 	NetworkAsset = nullptr;
+	Tags.AddUnique(TrafficSpawnedVehicleTag);
 }
 
 void ATrafficVehicleManager::BeginPlay()
@@ -310,6 +313,7 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 				UE_LOG(LogTraffic, Warning, TEXT("[VehicleManager] Failed to spawn vehicle for lane %d (class %s)."), LaneIndex, *LogicClass->GetName());
 				continue;
 			}
+			Vehicle->Tags.AddUnique(TrafficSpawnedVehicleTag);
 
 			const int32 LaneKey = (Lane.LaneId >= 0) ? Lane.LaneId : LaneIndex;
 			const float Now = World->GetTimeSeconds();
@@ -339,10 +343,11 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 				APawn* VisualPawn = World->SpawnActor<APawn>(VisualClass, SpawnXform, Params);
 				if (VisualPawn)
 				{
-					VisualPawn->SetActorEnableCollision(false);
+					VisualPawn->Tags.AddUnique(TrafficSpawnedVehicleTag);
 					ATrafficVehicleAdapter* Adapter = World->SpawnActor<ATrafficVehicleAdapter>(Params);
 					if (Adapter)
 					{
+						Adapter->Tags.AddUnique(TrafficSpawnedVehicleTag);
 						Adapter->Initialize(Vehicle, VisualPawn);
 						Adapters.Add(Adapter);
 					}
@@ -430,6 +435,8 @@ void ATrafficVehicleManager::SpawnZoneGraphVehicles(int32 VehiclesPerLane, float
 			UE_LOG(LogTraffic, Warning, TEXT("[VehicleManager] ZoneGraph Automation: Using dev Chaos class %s"), DevChaosClassPath);
 		}
 	}
+
+	// Note: vehicles spawned here are also tagged with AAA_TrafficVehicle for editor cleanup tooling.
 
 	if (!bForceLogicOnlyForTests && !VisualClass && !GIsAutomationTesting)
 	{
@@ -534,6 +541,7 @@ void ATrafficVehicleManager::SpawnZoneGraphVehicles(int32 VehiclesPerLane, float
 				{
 					continue;
 				}
+				Vehicle->Tags.AddUnique(TrafficSpawnedVehicleTag);
 
 				Vehicle->InitializeOnZoneGraphLane(ZGS, LaneHandle, Dist, SpeedCmPerSec);
 				Vehicles.Add(Vehicle);
@@ -552,11 +560,12 @@ void ATrafficVehicleManager::SpawnZoneGraphVehicles(int32 VehiclesPerLane, float
 					APawn* VisualPawn = World->SpawnActor<APawn>(VisualClass, SpawnXform, Params);
 					if (VisualPawn)
 					{
-						VisualPawn->SetActorEnableCollision(false);
+						VisualPawn->Tags.AddUnique(TrafficSpawnedVehicleTag);
 
 						ATrafficVehicleAdapter* Adapter = World->SpawnActor<ATrafficVehicleAdapter>(Params);
 						if (Adapter)
 						{
+							Adapter->Tags.AddUnique(TrafficSpawnedVehicleTag);
 							Adapter->Initialize(Vehicle, VisualPawn);
 							Adapters.Add(Adapter);
 						}
