@@ -180,6 +180,13 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 		return;
 	}
 
+	ATrafficSystemController* Controller = nullptr;
+	for (TActorIterator<ATrafficSystemController> It(World); It; ++It)
+	{
+		Controller = *It;
+		break;
+	}
+
 	if (NetworkAsset)
 	{
 		UE_LOG(LogTraffic, Log, TEXT("[VehicleManager] Spawning test vehicles on %d lanes."), NetworkAsset->Network.Lanes.Num());
@@ -328,6 +335,7 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 
 			Vehicle->InitializeOnLane(&Lane, S, SpeedCmPerSec);
 			Vehicle->SetNetworkAsset(NetworkAsset);
+			Vehicle->SetTrafficSystemController(Controller);
 			Vehicles.Add(Vehicle);
 			SpawnedPerLane.FindOrAdd(LaneKey) += 1;
 			if (ActiveMetrics)
@@ -396,6 +404,13 @@ void ATrafficVehicleManager::SpawnZoneGraphVehicles(int32 VehiclesPerLane, float
 	}
 
 	ClearVehicles();
+
+	ATrafficSystemController* Controller = nullptr;
+	for (TActorIterator<ATrafficSystemController> It(World); It; ++It)
+	{
+		Controller = *It;
+		break;
+	}
 
 	const UTrafficVehicleProfile* Profile = ResolveDefaultVehicleProfile();
 	if (Profile && !bForceLogicOnlyForTests)
@@ -542,6 +557,7 @@ void ATrafficVehicleManager::SpawnZoneGraphVehicles(int32 VehiclesPerLane, float
 					continue;
 				}
 				Vehicle->Tags.AddUnique(TrafficSpawnedVehicleTag);
+				Vehicle->SetTrafficSystemController(Controller);
 
 				Vehicle->InitializeOnZoneGraphLane(ZGS, LaneHandle, Dist, SpeedCmPerSec);
 				Vehicles.Add(Vehicle);

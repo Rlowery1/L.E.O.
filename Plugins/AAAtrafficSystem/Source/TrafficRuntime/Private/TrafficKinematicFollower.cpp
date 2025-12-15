@@ -60,6 +60,24 @@ void UTrafficKinematicFollower::Step(float DeltaTime)
 	}
 }
 
+void UTrafficKinematicFollower::SetDistanceAlongTarget(float InS)
+{
+	State.S = FMath::Max(0.0f, InS);
+
+	if (State.TargetType == EPathFollowTargetType::Lane && LanePtr)
+	{
+		const float LaneLength = TrafficLaneGeometry::ComputeLaneLengthCm(*LanePtr);
+		State.S = FMath::Clamp(State.S, 0.0f, LaneLength);
+	}
+	else if (State.TargetType == EPathFollowTargetType::Movement && MovementPtr)
+	{
+		TArray<FMovementSample> Samples;
+		TrafficMovementGeometry::AnalyzeMovementPath(*MovementPtr, Samples);
+		const float MovementLength = (Samples.Num() > 0) ? Samples.Last().S : 0.0f;
+		State.S = FMath::Clamp(State.S, 0.0f, MovementLength);
+	}
+}
+
 bool UTrafficKinematicFollower::GetCurrentPose(FVector& OutPosition, FVector& OutTangent) const
 {
 	if (State.TargetType == EPathFollowTargetType::Lane && LanePtr)
@@ -72,4 +90,3 @@ bool UTrafficKinematicFollower::GetCurrentPose(FVector& OutPosition, FVector& Ou
 	}
 	return false;
 }
-

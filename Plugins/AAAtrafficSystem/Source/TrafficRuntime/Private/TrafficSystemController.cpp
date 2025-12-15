@@ -10,6 +10,7 @@
 #include "TrafficRuntimeSettings.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
+#include "TrafficVehicleBase.h"
 
 #if WITH_EDITOR
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -62,6 +63,7 @@ bool ATrafficSystemController::BuildNetworkInternal(UWorld* World)
 		BuiltNetworkAsset = NewObject<UTrafficNetworkAsset>(this, TEXT("TrafficNetwork_Transient"));
 	}
 	BuiltNetworkAsset->Network = Network;
+	IntersectionReservations.Reset();
 
 	UE_LOG(LogTraffic, Log,
 		TEXT("[TrafficSystemController] Built transient network: Roads=%d Lanes=%d Intersections=%d Movements=%d"),
@@ -214,4 +216,56 @@ int32 ATrafficSystemController::GetNumRoads() const
 int32 ATrafficSystemController::GetNumLanes() const
 {
 	return BuiltNetworkAsset ? BuiltNetworkAsset->Network.Lanes.Num() : 0;
+}
+
+bool ATrafficSystemController::TryReserveIntersection(int32 IntersectionId, ATrafficVehicleBase* Vehicle, int32 MovementId, float HoldSeconds)
+{
+	if (IntersectionId < 0 || !Vehicle)
+	{
+		return false;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	const float Now = World->GetTimeSeconds();
+	const float ExpireAt = Now + FMath::Max(0.1f, HoldSeconds);
+
+	FIntersectionReservation& Res = IntersectionReservations.FindOrAdd(IntersectionId);
+
+	// If current holder is gone/expired, allow takeover.
+	const bool bExpired = (Res.ExpireTimeSeconds > 0.f && Now > Res.ExpireTimeSeconds);
+	const bool bInvalid = !Res.Vehicle.IsValid();
+
+	if (bExpired || bInvalid || Res.Vehicle.Get() == Vehicle)
+	{
+		Res.Vehicle = Vehicle;
+		Res.MovementId = MovementId;
+		Res.ExpireTimeSeconds = ExpireAt;
+		return true;
+	}
+
+	return false;
+}
+
+void ATrafficSystemController::ReleaseIntersection(int32 IntersectionId, ATrafficVehicleBase* Vehicle)
+{
+	if (IntersectionId < 0 || !Vehicle)
+	{
+		return;
+	}
+
+	FIntersectionReservation* Res = IntersectionReservations.Find(IntersectionId);
+	if (!Res)
+	{
+		return;
+	}
+
+	if (!Res->Vehicle.IsValid() || Res->Vehicle.Get() == Vehicle)
+	{
+		IntersectionReservations.Remove(IntersectionId);
+	}
 }

@@ -43,6 +43,12 @@ public:
 
 	void Step(float DeltaTime);
 
+	/** Sets speed for the current target (lane or movement). */
+	void SetSpeedCmPerSec(float InSpeedCmPerSec) { State.SpeedCmPerSec = FMath::Max(0.0f, InSpeedCmPerSec); }
+
+	/** Sets distance along the current target (clamped to its length when available). */
+	void SetDistanceAlongTarget(float InS);
+
 	bool GetCurrentPose(FVector& OutPosition, FVector& OutTangent) const;
 
 	const FPathFollowState& GetState() const { return State; }

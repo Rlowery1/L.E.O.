@@ -6,6 +6,7 @@
 
 class UTrafficNetworkAsset;
 class UWorld;
+class ATrafficVehicleBase;
 
 UCLASS()
 class TRAFFICRUNTIME_API ATrafficSystemController : public AActor
@@ -37,6 +38,10 @@ public:
 	int32 GetNumRoads() const;
 	int32 GetNumLanes() const;
 
+	// Intersection right-of-way (simple reservation system).
+	bool TryReserveIntersection(int32 IntersectionId, ATrafficVehicleBase* Vehicle, int32 MovementId, float HoldSeconds);
+	void ReleaseIntersection(int32 IntersectionId, ATrafficVehicleBase* Vehicle);
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -62,4 +67,13 @@ protected:
 
 private:
 	bool BuildNetworkInternal(UWorld* World);
+
+	struct FIntersectionReservation
+	{
+		TWeakObjectPtr<ATrafficVehicleBase> Vehicle;
+		int32 MovementId = INDEX_NONE;
+		float ExpireTimeSeconds = 0.f;
+	};
+
+	TMap<int32, FIntersectionReservation> IntersectionReservations;
 };

@@ -58,6 +58,12 @@ static TAutoConsoleVariable<int32> CVarTrafficDebugIntersectionId(
 	TEXT("If >=0, draws this intersection id (overrides closest/selected)."),
 	ECVF_Default);
 
+static TAutoConsoleVariable<int32> CVarTrafficLogAllIntersectionSummaries(
+	TEXT("aaa.Traffic.Debug.LogAllIntersectionSummaries"),
+	1,
+	TEXT("If non-zero and DrawAllIntersectionDebug=1, logs IntersectionId/In/Out/Mov summaries to the Output Log (helps when viewport labels are hard to read)."),
+	ECVF_Default);
+
 static TAutoConsoleVariable<int32> CVarTrafficEditorVehiclesPerLane(
 	TEXT("aaa.Traffic.EditorTest.VehiclesPerLane"),
 	1,
@@ -2156,6 +2162,19 @@ void UTrafficSystemEditorSubsystem::DoDrawIntersectionDebug()
 		{
 			return M.IntersectionId == Intersection.IntersectionId;
 		});
+
+		if (bDrawAll && CVarTrafficLogAllIntersectionSummaries.GetValueOnGameThread() != 0)
+		{
+			UE_LOG(LogTraffic, Log,
+				TEXT("[TrafficEditor] Intersection %d @ (%.0f, %.0f, %.0f) In=%d Out=%d Mov=%d"),
+				Intersection.IntersectionId,
+				Intersection.Center.X,
+				Intersection.Center.Y,
+				Intersection.Center.Z,
+				Intersection.IncomingLaneIds.Num(),
+				Intersection.OutgoingLaneIds.Num(),
+				MovementCount);
+		}
 
 		DrawDebugString(
 			World,

@@ -35,7 +35,7 @@ public:
 
 	/** Vehicles per lane to spawn at runtime (PIE/Game). */
 	UPROPERTY(EditAnywhere, Config, Category="Runtime", meta=(EditCondition="bAutoSpawnTrafficOnBeginPlay", ClampMin="0"))
-	int32 VehiclesPerLaneRuntime = 8;
+	int32 VehiclesPerLaneRuntime = 1;
 
 	/** Target cruising speed (cm/sec) for kinematic follower vehicles at runtime. */
 	UPROPERTY(EditAnywhere, Config, Category="Runtime", meta=(EditCondition="bAutoSpawnTrafficOnBeginPlay", ClampMin="0.0"))
@@ -43,5 +43,5 @@ public:
 
 	/** When auto-spawning, generate ZoneGraph and prefer ZoneGraph-based spawning. */
 	UPROPERTY(EditAnywhere, Config, Category="Runtime", meta=(EditCondition="bAutoSpawnTrafficOnBeginPlay"))
-	bool bGenerateZoneGraph = true;
+	bool bGenerateZoneGraph = false;
 };

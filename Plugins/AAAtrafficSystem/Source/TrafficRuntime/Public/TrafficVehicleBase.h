@@ -10,6 +10,7 @@ class UStaticMeshComponent;
 class UTrafficKinematicFollower;
 class UZoneGraphSubsystem;
 class UTrafficNetworkAsset;
+class ATrafficSystemController;
 struct FTrafficLane;
 struct FTrafficMovement;
 
@@ -26,6 +27,7 @@ public:
 	void InitializeOnLane(const FTrafficLane* Lane, float InitialS, float SpeedCmPerSec);
 	void InitializeOnMovement(const FTrafficMovement* Movement, float InitialS, float SpeedCmPerSec);
 	void SetNetworkAsset(UTrafficNetworkAsset* InNetworkAsset);
+	void SetTrafficSystemController(ATrafficSystemController* InController) { TrafficController = InController; }
 
 	/**
 	 * Initialize this logic vehicle to follow a ZoneGraph lane (instead of an AAA Traffic lane polyline).
@@ -41,6 +43,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 protected:
 	UPROPERTY(VisibleAnywhere, Category="Traffic|Vehicle")
@@ -52,8 +55,24 @@ protected:
 	UPROPERTY()
 	TObjectPtr<UTrafficNetworkAsset> NetworkAsset = nullptr;
 
+	UPROPERTY()
+	TWeakObjectPtr<ATrafficSystemController> TrafficController;
+
 	// When following a movement, remember where we're headed so we can re-enter lane following.
 	int32 PendingOutgoingLaneId = INDEX_NONE;
+
+	// Intersection reservation / yielding.
+	bool bWaitingForIntersection = false;
+	int32 WaitingIntersectionId = INDEX_NONE;
+	int32 WaitingMovementId = INDEX_NONE;
+	int32 WaitingOutgoingLaneId = INDEX_NONE;
+	bool bHasIntersectionReservation = false;
+	int32 ReservedIntersectionId = INDEX_NONE;
+	int32 ReservedMovementId = INDEX_NONE;
+	int32 ReservedOutgoingLaneId = INDEX_NONE;
+
+	int32 ActiveReservedIntersectionId = INDEX_NONE;
+	float CruiseSpeedCmPerSec = 800.f;
 
 	// ZoneGraph-following mode (alternative to UTrafficKinematicFollower).
 	bool bUseZoneGraphLane = false;

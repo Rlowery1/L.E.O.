@@ -228,6 +228,14 @@ void UCityBLDRoadGeometryProvider::CollectRoads(UWorld* World, TArray<FTrafficRo
 				const ptrdiff_t Offset = Found - Base;
 				FamilyId = (Offset >= 0 && Offset < FamilyCount) ? static_cast<int32>(Offset) : 0;
 			}
+			else if (ShouldWarnOncePerActor(Actor))
+			{
+				UE_LOG(LogTraffic, Warning,
+					TEXT("[CityBLDRoadGeometryProvider] Actor %s has unknown FamilyName '%s'. Using index 0 ('%s')."),
+					*Actor->GetName(),
+					*Meta->FamilyName.ToString(),
+					(FamilyCount > 0) ? *(*FamiliesPtr)[0].FamilyName.ToString() : TEXT("None"));
+			}
 		}
 
 		FTrafficRoad Road;
