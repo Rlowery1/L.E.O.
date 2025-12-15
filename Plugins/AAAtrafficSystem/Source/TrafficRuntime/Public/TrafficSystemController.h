@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "TrafficRoadTypes.h"
 #include "TrafficSystemController.generated.h"
 
 class UTrafficNetworkAsset;
@@ -15,6 +16,8 @@ class TRAFFICRUNTIME_API ATrafficSystemController : public AActor
 
 public:
 	ATrafficSystemController();
+
+	virtual void Tick(float DeltaSeconds) override;
 
 	// Editor test tools
 	UFUNCTION(CallInEditor, Category="Traffic")
@@ -75,5 +78,31 @@ private:
 		float ExpireTimeSeconds = 0.f;
 	};
 
-	TMap<int32, FIntersectionReservation> IntersectionReservations;
+	TMap<int32, TArray<FIntersectionReservation>> IntersectionReservations;
+
+	bool DoMovementsConflict2D(const FTrafficNetwork& Net, int32 IntersectionId, int32 MovementAId, int32 MovementBId, float ConflictDistanceCm) const;
+
+	enum class ETrafficSignalPhase : uint8
+	{
+		Green,
+		Yellow,
+		AllRed,
+	};
+
+	struct FIntersectionSignalState
+	{
+		int32 IntersectionId = INDEX_NONE;
+		TSet<int32> PhaseIncomingLaneIds[2];
+		FVector2D PhaseAxisDirs[2] = { FVector2D::ZeroVector, FVector2D::ZeroVector };
+		bool bHasTwoPhases = false;
+		int32 ActivePhaseIndex = 0;
+		ETrafficSignalPhase Phase = ETrafficSignalPhase::Green;
+		float PhaseEndTimeSeconds = 0.f;
+	};
+
+	TMap<int32, FIntersectionSignalState> IntersectionSignals;
+
+	void InitializeIntersectionSignals(const FTrafficNetwork& Net, float NowSeconds);
+	void UpdateIntersectionSignals(const FTrafficNetwork& Net, float NowSeconds);
+	bool IsMovementAllowedBySignals(const FTrafficNetwork& Net, int32 IntersectionId, int32 MovementId) const;
 };

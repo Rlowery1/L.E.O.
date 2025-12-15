@@ -7,6 +7,14 @@
 /**
  * Runtime settings for the AAA Traffic System.
  */
+UENUM(BlueprintType)
+enum class ETrafficIntersectionControlMode : uint8
+{
+	Uncontrolled UMETA(DisplayName="Uncontrolled (Yield Only)"),
+	FourWayStop UMETA(DisplayName="4-Way Stop"),
+	TrafficLightsFixedTime UMETA(DisplayName="Traffic Lights (Fixed Time)")
+};
+
 UCLASS(Config=Game, DefaultConfig, meta=(DisplayName="AAA Traffic Settings"))
 class TRAFFICRUNTIME_API UTrafficRuntimeSettings : public UDeveloperSettings
 {
@@ -44,4 +52,31 @@ public:
 	/** When auto-spawning, generate ZoneGraph and prefer ZoneGraph-based spawning. */
 	UPROPERTY(EditAnywhere, Config, Category="Runtime", meta=(EditCondition="bAutoSpawnTrafficOnBeginPlay"))
 	bool bGenerateZoneGraph = false;
+
+	/**
+	 * If enabled, overrides the default intersection stop-line offset (cm).
+	 * This is a global setting and applies to all road kits/providers.
+	 */
+	UPROPERTY(EditAnywhere, Config, Category="Intersections", meta=(DisplayName="Override Stop Line Offset"))
+	bool bOverrideIntersectionStopLineOffset = false;
+
+	/** Distance (cm) before an intersection boundary where vehicles stop while yielding (approximate stop line). */
+	UPROPERTY(EditAnywhere, Config, Category="Intersections", meta=(EditCondition="bOverrideIntersectionStopLineOffset", ClampMin="0.0"))
+	float IntersectionStopLineOffsetCm = 300.f;
+
+	/** Default intersection control mode used at runtime (PIE/Game). */
+	UPROPERTY(EditAnywhere, Config, Category="Intersections")
+	ETrafficIntersectionControlMode IntersectionControlMode = ETrafficIntersectionControlMode::Uncontrolled;
+
+	/** Fixed-time traffic light: green duration (seconds) per phase. */
+	UPROPERTY(EditAnywhere, Config, Category="Intersections|Traffic Lights", meta=(ClampMin="0.1"))
+	float TrafficLightGreenSeconds = 10.0f;
+
+	/** Fixed-time traffic light: yellow duration (seconds) per phase. */
+	UPROPERTY(EditAnywhere, Config, Category="Intersections|Traffic Lights", meta=(ClampMin="0.0"))
+	float TrafficLightYellowSeconds = 2.0f;
+
+	/** Fixed-time traffic light: all-red clearance duration (seconds) between phases. */
+	UPROPERTY(EditAnywhere, Config, Category="Intersections|Traffic Lights", meta=(ClampMin="0.0"))
+	float TrafficLightAllRedSeconds = 1.0f;
 };

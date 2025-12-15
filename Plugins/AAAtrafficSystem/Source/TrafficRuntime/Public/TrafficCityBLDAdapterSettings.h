@@ -67,5 +67,13 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category="ZoneGraph")
 	FSoftObjectPath DefaultCityBLDVehicleLaneProfile;
 
+	/** If enabled, applies CityBLD-tuned intersection stop-line defaults at runtime (recommended). */
+	UPROPERTY(EditAnywhere, Config, Category="Intersections")
+	bool bApplyRecommendedIntersectionStopLineOffset = true;
+
+	/** CityBLD-tuned distance (cm) before intersection boundary used as stop line (recommended default). */
+	UPROPERTY(EditAnywhere, Config, Category="Intersections", meta=(EditCondition="bApplyRecommendedIntersectionStopLineOffset", ClampMin="0.0"))
+	float RecommendedIntersectionStopLineOffsetCm = 1115.f;
+
 	// NOTE: MinMeshAspectRatio filter has been removed to avoid excluding valid road meshes.
 };

@@ -31,9 +31,133 @@ static TAutoConsoleVariable<float> CVarTrafficIntersectionReservationHoldSeconds
 static TAutoConsoleVariable<float> CVarTrafficIntersectionStopLineOffsetCm(
 	TEXT("aaa.Traffic.Intersections.StopLineOffsetCm"),
 	300.0f,
-	TEXT("Distance (cm) before the lane end where vehicles stop while yielding."),
+	TEXT("Distance (cm) before the intersection boundary where vehicles stop while yielding (approximate stop line)."),
 	ECVF_Default);
 
+static TAutoConsoleVariable<int32> CVarTrafficIntersectionDebugReservation(
+	TEXT("aaa.Traffic.Intersections.DebugReservation"),
+	0,
+	TEXT("If non-zero, logs reservation/wait events for vehicles at intersections."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarTrafficIntersectionDebugStopLine(
+	TEXT("aaa.Traffic.Intersections.DebugStopLine"),
+	0,
+	TEXT("If non-zero, logs computed stop line distances for vehicles near intersections."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarTrafficIntersectionRequireFullStop(
+	TEXT("aaa.Traffic.Intersections.RequireFullStop"),
+	0,
+	TEXT("If non-zero, vehicles will come to a full stop at the stop line even when they successfully reserve the intersection (4-way-stop style)."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficIntersectionFullStopSeconds(
+	TEXT("aaa.Traffic.Intersections.FullStopSeconds"),
+	0.75f,
+	TEXT("Seconds to remain fully stopped at the stop line when RequireFullStop=1."),
+	ECVF_Default);
+
+static bool TryComputeStopSFromIntersectionBoundary(
+	const FTrafficNetwork& Net,
+	const FTrafficLane& Lane,
+	const int32 IntersectionId,
+	const float StopLineOffsetCm,
+	float& OutStopS)
+{
+	const FTrafficIntersection* Intersection = Net.Intersections.FindByPredicate(
+		[&](const FTrafficIntersection& I) { return I.IntersectionId == IntersectionId; });
+	if (!Intersection)
+	{
+		return false;
+	}
+
+	const float Radius = Intersection->Radius;
+	if (Radius <= KINDA_SMALL_NUMBER || Lane.CenterlinePoints.Num() < 2)
+	{
+		return false;
+	}
+
+	const float EffectiveRadius = Radius + FMath::Max(0.f, StopLineOffsetCm);
+	const float EffectiveRadiusSq = EffectiveRadius * EffectiveRadius;
+
+	TArray<float> CumulativeS;
+	CumulativeS.SetNum(Lane.CenterlinePoints.Num());
+	CumulativeS[0] = 0.f;
+	for (int32 i = 1; i < Lane.CenterlinePoints.Num(); ++i)
+	{
+		CumulativeS[i] = CumulativeS[i - 1] + FVector::Distance(Lane.CenterlinePoints[i - 1], Lane.CenterlinePoints[i]);
+	}
+
+	const FVector Center = Intersection->Center;
+
+	// Find the entry point where the lane crosses from outside -> inside an expanded intersection sphere.
+	// We expand by StopLineOffsetCm so the stop happens *before* the intersection proper, even if the stored
+	// intersection radius is tight.
+	for (int32 i = Lane.CenterlinePoints.Num() - 2; i >= 0; --i)
+	{
+		const FVector P0 = Lane.CenterlinePoints[i];
+		const FVector P1 = Lane.CenterlinePoints[i + 1];
+		const float D0Sq = FVector::DistSquared(P0, Center);
+		const float D1Sq = FVector::DistSquared(P1, Center);
+
+		const bool bP0Outside = (D0Sq > EffectiveRadiusSq);
+		const bool bP1InsideOrOn = (D1Sq <= EffectiveRadiusSq);
+		if (!(bP0Outside && bP1InsideOrOn))
+		{
+			continue;
+		}
+
+		const FVector Segment = (P1 - P0);
+		const float SegmentLen = Segment.Size();
+		if (SegmentLen <= KINDA_SMALL_NUMBER)
+		{
+			continue;
+		}
+
+		// Segment-sphere intersection: |(P0 + t*D) - C|^2 = R^2, t in [0, 1]
+		const FVector D = Segment / SegmentLen;
+		const FVector M = P0 - Center;
+		const float A = FVector::DotProduct(D, D); // ~1
+		const float B = 2.0f * FVector::DotProduct(D, M);
+		const float CCoef = FVector::DotProduct(M, M) - EffectiveRadiusSq;
+		const float Discriminant = (B * B) - (4.0f * A * CCoef);
+
+		float T = -1.f;
+		if (Discriminant >= 0.f && A > KINDA_SMALL_NUMBER)
+		{
+			const float SqrtDisc = FMath::Sqrt(Discriminant);
+			const float T0 = (-B - SqrtDisc) / (2.0f * A);
+			const float T1 = (-B + SqrtDisc) / (2.0f * A);
+
+			// Pick the first intersection along the segment direction.
+			if (T0 >= 0.f && T0 <= SegmentLen)
+			{
+				T = T0;
+			}
+			else if (T1 >= 0.f && T1 <= SegmentLen)
+			{
+				T = T1;
+			}
+		}
+
+		if (T < 0.f)
+		{
+			// Fallback: distance-based interpolation.
+			const float D0 = FMath::Sqrt(D0Sq);
+			const float D1 = FMath::Sqrt(D1Sq);
+			const float Denom = (D0 - D1);
+			const float Alpha = (FMath::Abs(Denom) > KINDA_SMALL_NUMBER) ? (D0 - EffectiveRadius) / Denom : 1.f;
+			T = FMath::Clamp(Alpha * SegmentLen, 0.f, SegmentLen);
+		}
+
+		const float EntryS = CumulativeS[i] + T;
+		OutStopS = FMath::Max(0.f, EntryS);
+		return true;
+	}
+
+	return false;
+}
 ATrafficVehicleBase::ATrafficVehicleBase()
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -96,6 +220,7 @@ void ATrafficVehicleBase::InitializeOnLane(const FTrafficLane* Lane, float Initi
 	ReservedOutgoingLaneId = INDEX_NONE;
 	ActiveReservedIntersectionId = INDEX_NONE;
 	CruiseSpeedCmPerSec = SpeedCmPerSec;
+	StopUntilTimeSeconds = -1.f;
 
 	if (UTrafficKinematicFollower* F = EnsureFollower())
 	{
@@ -110,6 +235,7 @@ void ATrafficVehicleBase::InitializeOnMovement(const FTrafficMovement* Movement,
 	ZoneSpeedCmPerSec = 0.f;
 	ZoneLaneLocation = FZoneGraphLaneLocation();
 	CruiseSpeedCmPerSec = SpeedCmPerSec;
+	StopUntilTimeSeconds = -1.f;
 
 	if (UTrafficKinematicFollower* F = EnsureFollower())
 	{
@@ -208,7 +334,80 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 			{
 				const float LaneLen = TrafficLaneGeometry::ComputeLaneLengthCm(*Lane);
 				const float StopLineOffset = FMath::Max(0.f, CVarTrafficIntersectionStopLineOffsetCm.GetValueOnGameThread());
-				const float StopS = FMath::Max(0.f, LaneLen - StopLineOffset);
+				const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+
+				int32 StopLineIntersectionId = INDEX_NONE;
+				const FTrafficMovement* NextMovement = nullptr;
+				if (bWaitingForIntersection)
+				{
+					StopLineIntersectionId = WaitingIntersectionId;
+				}
+				else if (bHasIntersectionReservation)
+				{
+					StopLineIntersectionId = ReservedIntersectionId;
+				}
+				else
+				{
+					NextMovement = TrafficRouting::ChooseDefaultMovementForIncomingLane(Net, Lane->LaneId);
+					StopLineIntersectionId = NextMovement ? NextMovement->IntersectionId : INDEX_NONE;
+				}
+
+				float StopS = FMath::Max(0.f, LaneLen - StopLineOffset);
+				bool bUsedBoundaryStopS = false;
+				float IntersectionRadiusCm = 0.f;
+				if (StopLineIntersectionId != INDEX_NONE)
+				{
+					float BoundaryStopS = 0.f;
+					if (TryComputeStopSFromIntersectionBoundary(Net, *Lane, StopLineIntersectionId, StopLineOffset, BoundaryStopS))
+					{
+						StopS = FMath::Clamp(BoundaryStopS, 0.f, LaneLen);
+						bUsedBoundaryStopS = true;
+					}
+
+					if (const FTrafficIntersection* I = Net.Intersections.FindByPredicate([&](const FTrafficIntersection& X) { return X.IntersectionId == StopLineIntersectionId; }))
+					{
+						IntersectionRadiusCm = I->Radius;
+					}
+				}
+
+				if (CVarTrafficIntersectionDebugStopLine.GetValueOnGameThread() != 0)
+				{
+					const float DebugNow = Now;
+					const float DebugCooldown = 0.75f;
+					if (DebugNow - LastStopLineDebugTimeSeconds > DebugCooldown && PreState.S >= FMath::Max(0.f, StopS - 2000.f))
+					{
+						LastStopLineDebugTimeSeconds = DebugNow;
+						UE_LOG(LogTraffic, Log, TEXT("[TrafficVehicle] StopLine %s lane=%d S=%.1f StopS=%.1f (method=%s) int=%d radius=%.1f effRadius=%.1f offset=%.1f laneLen=%.1f"),
+							*GetName(),
+							Lane->LaneId,
+							PreState.S,
+							StopS,
+							bUsedBoundaryStopS ? TEXT("boundary") : TEXT("laneEnd"),
+							StopLineIntersectionId,
+							IntersectionRadiusCm,
+							IntersectionRadiusCm + StopLineOffset,
+							StopLineOffset,
+							LaneLen);
+					}
+				}
+
+				// Optional 4-way-stop style full stop even when reservation succeeds.
+				if (StopUntilTimeSeconds > Now && StopLineOffset > 0.f)
+				{
+					Follower->SetSpeedCmPerSec(0.f);
+					if (PreState.S > StopS)
+					{
+						Follower->SetDistanceAlongTarget(StopS);
+					}
+				}
+				else if (StopUntilTimeSeconds > 0.f && StopUntilTimeSeconds <= Now)
+				{
+					StopUntilTimeSeconds = -1.f;
+					if (!bWaitingForIntersection)
+					{
+						Follower->SetSpeedCmPerSec(CruiseSpeedCmPerSec);
+					}
+				}
 
 				// If we're waiting, hold position and retry reservation.
 				if (bWaitingForIntersection)
@@ -224,6 +423,12 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 					{
 						if (TrafficController->TryReserveIntersection(WaitingIntersectionId, this, WaitingMove->MovementId, HoldSeconds))
 						{
+							if (CVarTrafficIntersectionDebugReservation.GetValueOnGameThread() != 0)
+							{
+								UE_LOG(LogTraffic, Log, TEXT("[TrafficVehicle] %s reserved intersection %d (movement=%d) after waiting."),
+									*GetName(), WaitingIntersectionId, WaitingMove->MovementId);
+							}
+
 							bWaitingForIntersection = false;
 							bHasIntersectionReservation = true;
 							ReservedIntersectionId = WaitingIntersectionId;
@@ -234,25 +439,60 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 							WaitingMovementId = INDEX_NONE;
 							WaitingOutgoingLaneId = INDEX_NONE;
 
-							Follower->SetSpeedCmPerSec(CruiseSpeedCmPerSec);
+							if (CVarTrafficIntersectionRequireFullStop.GetValueOnGameThread() != 0 && StopLineOffset > 0.f)
+							{
+								const float StopSeconds = FMath::Max(0.f, CVarTrafficIntersectionFullStopSeconds.GetValueOnGameThread());
+								StopUntilTimeSeconds = Now + StopSeconds;
+								Follower->SetSpeedCmPerSec(0.f);
+								Follower->SetDistanceAlongTarget(StopS);
+							}
+							else
+							{
+								Follower->SetSpeedCmPerSec(CruiseSpeedCmPerSec);
+							}
 						}
 					}
 				}
 				else if (!bHasIntersectionReservation && StopLineOffset > 0.f && PreState.S >= StopS)
 				{
 					// We're at the stop line: attempt to reserve. If we can't, stop and wait.
-					if (const FTrafficMovement* NextMovement = TrafficRouting::ChooseDefaultMovementForIncomingLane(Net, Lane->LaneId))
+					if (!NextMovement)
+					{
+						NextMovement = TrafficRouting::ChooseDefaultMovementForIncomingLane(Net, Lane->LaneId);
+					}
+
+					if (NextMovement)
 					{
 						const float HoldSeconds = CVarTrafficIntersectionReservationHoldSeconds.GetValueOnGameThread();
 						if (TrafficController->TryReserveIntersection(NextMovement->IntersectionId, this, NextMovement->MovementId, HoldSeconds))
 						{
+							if (CVarTrafficIntersectionDebugReservation.GetValueOnGameThread() != 0)
+							{
+								UE_LOG(LogTraffic, Log, TEXT("[TrafficVehicle] %s reserved intersection %d (movement=%d)."),
+									*GetName(), NextMovement->IntersectionId, NextMovement->MovementId);
+							}
+
 							bHasIntersectionReservation = true;
 							ReservedIntersectionId = NextMovement->IntersectionId;
 							ReservedMovementId = NextMovement->MovementId;
 							ReservedOutgoingLaneId = NextMovement->OutgoingLaneId;
+
+							if (CVarTrafficIntersectionRequireFullStop.GetValueOnGameThread() != 0)
+							{
+								const float StopSeconds = FMath::Max(0.f, CVarTrafficIntersectionFullStopSeconds.GetValueOnGameThread());
+								StopUntilTimeSeconds = Now + StopSeconds;
+								Follower->SetSpeedCmPerSec(0.f);
+								Follower->SetDistanceAlongTarget(StopS);
+							}
 						}
 						else
 						{
+							if (CVarTrafficIntersectionDebugReservation.GetValueOnGameThread() != 0)
+							{
+								UE_LOG(LogTraffic, Log, TEXT("[TrafficVehicle] %s waiting for intersection %d (movement=%d)."),
+									*GetName(), NextMovement->IntersectionId, NextMovement->MovementId);
+							}
+
 							bWaitingForIntersection = true;
 							WaitingIntersectionId = NextMovement->IntersectionId;
 							WaitingMovementId = NextMovement->MovementId;
@@ -320,7 +560,13 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 							// We reached lane end without having a reservation; stop and wait.
 							if (const FTrafficMovement* NextMovement = TrafficRouting::ChooseDefaultMovementForIncomingLane(Net, Lane->LaneId))
 							{
-								const float StopS = FMath::Max(0.f, LaneLen - StopLineOffset);
+								float StopS = FMath::Max(0.f, LaneLen - StopLineOffset);
+								float BoundaryStopS = 0.f;
+								if (TryComputeStopSFromIntersectionBoundary(Net, *Lane, NextMovement->IntersectionId, StopLineOffset, BoundaryStopS))
+								{
+									StopS = FMath::Clamp(BoundaryStopS, 0.f, LaneLen);
+								}
+
 								bWaitingForIntersection = true;
 								WaitingIntersectionId = NextMovement->IntersectionId;
 								WaitingMovementId = NextMovement->MovementId;

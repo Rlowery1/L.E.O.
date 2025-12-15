@@ -73,6 +73,8 @@ protected:
 
 	int32 ActiveReservedIntersectionId = INDEX_NONE;
 	float CruiseSpeedCmPerSec = 800.f;
+	float StopUntilTimeSeconds = -1.f;
+	float LastStopLineDebugTimeSeconds = -1.f;
 
 	// ZoneGraph-following mode (alternative to UTrafficKinematicFollower).
 	bool bUseZoneGraphLane = false;

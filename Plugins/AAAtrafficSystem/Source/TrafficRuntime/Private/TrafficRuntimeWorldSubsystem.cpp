@@ -13,9 +13,113 @@
 #include "EngineUtils.h"
 #include "Algo/Reverse.h"
 #include "UObject/UnrealType.h"
+#include "HAL/IConsoleManager.h"
 
 namespace
 {
+	static bool IsCityBLDRoadCandidate_Runtime(const AActor* Actor, const UTrafficCityBLDAdapterSettings* AdapterSettings);
+
+	static bool IsCVarExplicitlySet(const IConsoleVariable* Var)
+	{
+		if (!Var)
+		{
+			return false;
+		}
+
+		const uint32 SetBy = (Var->GetFlags() & ECVF_SetByMask);
+		return
+			(SetBy == ECVF_SetByConsole) ||
+			(SetBy == ECVF_SetByCommandline) ||
+			(SetBy == ECVF_SetByCode);
+	}
+
+	static void ApplyIntersectionStopLineDefaultsForWorld(UWorld& World)
+	{
+		IConsoleVariable* StopLineVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm"));
+		if (!StopLineVar)
+		{
+			return;
+		}
+
+		// Respect explicit user overrides (console/commandline/code). Project settings are intended as defaults.
+		if (IsCVarExplicitlySet(StopLineVar))
+		{
+			return;
+		}
+
+		const UTrafficRuntimeSettings* RuntimeSettings = GetDefault<UTrafficRuntimeSettings>();
+		const UTrafficCityBLDAdapterSettings* CitySettings = GetDefault<UTrafficCityBLDAdapterSettings>();
+
+		float DesiredStopLineOffsetCm = StopLineVar->GetFloat();
+		bool bShouldApply = false;
+
+		if (RuntimeSettings && RuntimeSettings->bOverrideIntersectionStopLineOffset)
+		{
+			DesiredStopLineOffsetCm = FMath::Max(0.f, RuntimeSettings->IntersectionStopLineOffsetCm);
+			bShouldApply = true;
+		}
+		else if (RuntimeSettings && RuntimeSettings->bEnableCityBLDAdapter && CitySettings && CitySettings->bApplyRecommendedIntersectionStopLineOffset)
+		{
+			const float CityValue = FMath::Max(0.f, CitySettings->RecommendedIntersectionStopLineOffsetCm);
+
+			// Only apply the CityBLD-tuned default when this world actually contains CityBLD-style roads.
+			bool bHasCityBLDRoads = false;
+			for (TActorIterator<AActor> It(&World); It; ++It)
+			{
+				if (IsCityBLDRoadCandidate_Runtime(*It, CitySettings))
+				{
+					bHasCityBLDRoads = true;
+					break;
+				}
+			}
+
+			if (bHasCityBLDRoads)
+			{
+				DesiredStopLineOffsetCm = CityValue;
+				bShouldApply = true;
+			}
+		}
+
+		if (bShouldApply)
+		{
+			StopLineVar->Set(DesiredStopLineOffsetCm, ECVF_SetByProjectSetting);
+			UE_LOG(LogTraffic, Log, TEXT("[TrafficRuntimeWorldSubsystem] Stop line offset default: %.1fcm (source=%s)"),
+				DesiredStopLineOffsetCm,
+				(RuntimeSettings && RuntimeSettings->bOverrideIntersectionStopLineOffset) ? TEXT("ProjectOverride") : TEXT("CityBLDRecommended"));
+		}
+	}
+
+	static void ApplyIntersectionControlDefaultsForWorld(UWorld& World)
+	{
+		const UTrafficRuntimeSettings* RuntimeSettings = GetDefault<UTrafficRuntimeSettings>();
+		if (!RuntimeSettings)
+		{
+			return;
+		}
+
+		IConsoleVariable* ControlModeVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.ControlMode"));
+		IConsoleVariable* GreenVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.GreenSeconds"));
+		IConsoleVariable* YellowVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.YellowSeconds"));
+		IConsoleVariable* AllRedVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.AllRedSeconds"));
+
+		if (ControlModeVar && !IsCVarExplicitlySet(ControlModeVar))
+		{
+			ControlModeVar->Set(static_cast<int32>(RuntimeSettings->IntersectionControlMode), ECVF_SetByProjectSetting);
+		}
+		if (GreenVar && !IsCVarExplicitlySet(GreenVar))
+		{
+			GreenVar->Set(FMath::Max(0.1f, RuntimeSettings->TrafficLightGreenSeconds), ECVF_SetByProjectSetting);
+		}
+		if (YellowVar && !IsCVarExplicitlySet(YellowVar))
+		{
+			YellowVar->Set(FMath::Max(0.f, RuntimeSettings->TrafficLightYellowSeconds), ECVF_SetByProjectSetting);
+		}
+		if (AllRedVar && !IsCVarExplicitlySet(AllRedVar))
+		{
+			AllRedVar->Set(FMath::Max(0.f, RuntimeSettings->TrafficLightAllRedSeconds), ECVF_SetByProjectSetting);
+		}
+	}
+
 	static bool IsCityBLDRoadCandidate_Runtime(const AActor* Actor, const UTrafficCityBLDAdapterSettings* AdapterSettings)
 	{
 		if (!Actor)
@@ -519,6 +623,10 @@ void UTrafficRuntimeWorldSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	{
 		return;
 	}
+
+	// Apply kit-tuned traffic rule defaults (unless the user explicitly overrode the CVars).
+	ApplyIntersectionStopLineDefaultsForWorld(InWorld);
+	ApplyIntersectionControlDefaultsForWorld(InWorld);
 
 	UE_LOG(LogTraffic, Log,
 		TEXT("[TrafficRuntimeWorldSubsystem] OnWorldBeginPlay: World=%s Type=%d AutoBuild=%s AutoSpawn=%s VehiclesPerLane=%d Speed=%.1f ZoneGraph=%s"),
