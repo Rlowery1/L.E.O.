@@ -18,6 +18,8 @@
 #include "HAL/IConsoleManager.h"
 #include "Misc/App.h"
 #include "Misc/AutomationTest.h"
+#include "HAL/PlatformApplicationMisc.h"
+#include "TrafficRoadFamilySettings.h"
 
 #define LOCTEXT_NAMESPACE "STrafficSystemPanel"
 
@@ -300,6 +302,26 @@ void STrafficSystemPanel::Construct(const FArguments& InArgs)
 						.IsEnabled_Lambda([this]() { return SelectedFamily.IsValid(); })
 						.MinDesiredWidth(260.f)
 					]
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0.0f, 6.0f, 0.0f, 0.0f)
+					[
+						SNew(SButton)
+						.ButtonStyle(&FAppStyle::Get().GetWidgetStyle<FButtonStyle>("SecondaryButton"))
+						.HAlign(HAlign_Left)
+						.ContentPadding(FMargin(16.0f, 8.0f))
+						.OnClicked(this, &STrafficSystemPanel::OnDeleteFamilyClicked)
+						.IsEnabled_Lambda([this]() { return SelectedFamily.IsValid(); })
+						.ToolTipText(LOCTEXT("DeleteFamily_Tooltip",
+							"Delete the selected road family from AAA Traffic.\n"
+							"Optionally, you can also exclude any matching actors from traffic so the family won't be recreated on the next Prepare Map."))
+						[
+							SNew(STextBlock)
+							.Text(LOCTEXT("DeleteFamily_Label", "Delete Selected Family"))
+							.Font(SubtitleFont)
+							.ColorAndOpacity(FLinearColor::White)
+						]
+					]
 				]
 
 				// Reset AAA only
@@ -429,6 +451,48 @@ void STrafficSystemPanel::Construct(const FArguments& InArgs)
 								.ColorAndOpacity(FLinearColor(0.8f, 0.8f, 0.8f))
 								.WrapTextAt(420.0f)
 							]
+						]
+					]
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0.0f, 0.0f, 0.0f, 6.0f)
+					[
+						SNew(SButton)
+						.ButtonStyle(&FAppStyle::Get().GetWidgetStyle<FButtonStyle>("SecondaryButton"))
+						.HAlign(HAlign_Left)
+						.ContentPadding(FMargin(16.0f, 8.0f))
+						.OnClicked(this, &STrafficSystemPanel::OnToggleReverseDirectionForSelectionClicked)
+						.ToolTipText(LOCTEXT("ToggleReverseDir_Tooltip",
+							"Flips the travel direction for the selected prepared road actor(s).\n"
+							"Use this for one-way ramps where on-ramps and off-ramps share the same 'Ramp - 1 Lane' family."))
+						[
+							SNew(STextBlock)
+							.Text(LOCTEXT("ToggleReverseDir_Label", "Flip Selected Road Direction"))
+							.Font(SubtitleFont)
+							.ColorAndOpacity(FLinearColor::White)
+							.WrapTextAt(420.0f)
+						]
+					]
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0.0f, 0.0f, 0.0f, 6.0f)
+					[
+						SNew(SButton)
+						.ButtonStyle(&FAppStyle::Get().GetWidgetStyle<FButtonStyle>("SecondaryButton"))
+						.HAlign(HAlign_Left)
+						.ContentPadding(FMargin(16.0f, 8.0f))
+						.OnClicked(this, &STrafficSystemPanel::OnCopyRoadFamilyDefaultsIniClicked)
+						.ToolTipText(LOCTEXT("CopyDefaultsIni_Tooltip",
+							"Copies an INI snippet for TrafficRoadFamilySettings (lane counts/widths/offsets) to your clipboard.\n"
+							"Use this to ship calibrated defaults in a plugin/project DefaultGame.ini."))
+						[
+							SNew(STextBlock)
+							.Text(LOCTEXT("CopyDefaultsIni_Label", "DEV: Copy Road Family Defaults (INI)"))
+							.Font(SubtitleFont)
+							.ColorAndOpacity(FLinearColor::White)
+							.WrapTextAt(420.0f)
 						]
 					]
 
@@ -754,6 +818,133 @@ FReply STrafficSystemPanel::OnPrepareMapForTrafficClicked()
 	return FReply::Handled();
 }
 
+FReply STrafficSystemPanel::OnToggleReverseDirectionForSelectionClicked()
+{
+	if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
+	{
+		Subsys->Editor_ToggleReverseDirectionForSelectedRoads();
+	}
+	return FReply::Handled();
+}
+
+FString STrafficSystemPanel::BuildRoadFamilySettingsIniSnippet() const
+{
+	const UTrafficRoadFamilySettings* RoadSettings = GetDefault<UTrafficRoadFamilySettings>();
+	const URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get();
+	if (!RoadSettings || !Registry)
+	{
+		return FString();
+	}
+
+	TSet<FName> RelevantFamilyNames;
+	for (const FRoadFamilyInfo& Info : Registry->GetAllFamilies())
+	{
+		if (!Info.FamilyDefinition.FamilyName.IsNone())
+		{
+			RelevantFamilyNames.Add(Info.FamilyDefinition.FamilyName);
+		}
+		else
+		{
+			RelevantFamilyNames.Add(FName(*Info.DisplayName));
+		}
+	}
+
+	auto FormatFloat = [](float Value) -> FString
+	{
+		return FString::SanitizeFloat(Value);
+	};
+
+	auto FormatFloatArray = [&](const TArray<float>& Values) -> FString
+	{
+		if (Values.Num() == 0)
+		{
+			return TEXT("()");
+		}
+
+		TArray<FString> Parts;
+		Parts.Reserve(Values.Num());
+		for (float V : Values)
+		{
+			Parts.Add(FormatFloat(V));
+		}
+		return FString::Printf(TEXT("(%s)"), *FString::Join(Parts, TEXT(",")));
+	};
+
+	auto FormatSide = [&](const FTrafficLaneLayoutSide& Side) -> FString
+	{
+		return FString::Printf(
+			TEXT("(NumLanes=%d,LaneWidthCm=%s,InnerLaneCenterOffsetCm=%s,LaneCenterOffsetAdjustmentsCm=%s)"),
+			Side.NumLanes,
+			*FormatFloat(Side.LaneWidthCm),
+			*FormatFloat(Side.InnerLaneCenterOffsetCm),
+			*FormatFloatArray(Side.LaneCenterOffsetAdjustmentsCm));
+	};
+
+	const FString Section = UTrafficRoadFamilySettings::StaticClass()->GetPathName();
+	FString Out;
+	Out += FString::Printf(TEXT("[%s]\n"), *Section);
+	Out += TEXT("!Families=ClearArray\n");
+
+	int32 NumWritten = 0;
+	for (const FRoadFamilyDefinition& Family : RoadSettings->Families)
+	{
+		if (Family.FamilyName.IsNone() || !RelevantFamilyNames.Contains(Family.FamilyName))
+		{
+			continue;
+		}
+
+		FString Line = FString::Printf(
+			TEXT("+Families=(FamilyName=\"%s\",Forward=%s,Backward=%s,DefaultSpeedLimitKmh=%s"),
+			*Family.FamilyName.ToString(),
+			*FormatSide(Family.Forward),
+			*FormatSide(Family.Backward),
+			*FormatFloat(Family.DefaultSpeedLimitKmh));
+
+		if (!Family.VehicleLaneProfile.IsNull())
+		{
+			Line += FString::Printf(TEXT(",VehicleLaneProfile=\"%s\""), *Family.VehicleLaneProfile.ToString());
+		}
+		if (!Family.FootpathLaneProfile.IsNull())
+		{
+			Line += FString::Printf(TEXT(",FootpathLaneProfile=\"%s\""), *Family.FootpathLaneProfile.ToString());
+		}
+
+		Line += TEXT(")\n");
+		Out += Line;
+		++NumWritten;
+	}
+
+	if (NumWritten == 0)
+	{
+		return FString();
+	}
+
+	return Out;
+}
+
+FReply STrafficSystemPanel::OnCopyRoadFamilyDefaultsIniClicked()
+{
+	const bool bAutomationOrCmdlet = IsRunningCommandlet() || GIsAutomationTesting;
+	const FString Snippet = BuildRoadFamilySettingsIniSnippet();
+	if (Snippet.IsEmpty())
+	{
+		if (!bAutomationOrCmdlet)
+		{
+			FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("CopyDefaultsIni_None", "No road family defaults were available to export.\nRun PREPARE MAP first."));
+		}
+		return FReply::Handled();
+	}
+
+	FPlatformApplicationMisc::ClipboardCopy(*Snippet);
+
+	if (!bAutomationOrCmdlet)
+	{
+		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("CopyDefaultsIni_Done", "Copied road family defaults INI snippet to clipboard."));
+	}
+
+	return FReply::Handled();
+}
+
 void STrafficSystemPanel::RefreshFamilyList()
 {
 	const FGuid PreviousSelection = SelectedFamily.IsValid() ? SelectedFamily->FamilyId : FGuid();
@@ -856,6 +1047,42 @@ void STrafficSystemPanel::OnFamilyNameCommitted(const FText& NewText, ETextCommi
 			RefreshFamilyList();
 		}
 	}
+}
+
+FReply STrafficSystemPanel::OnDeleteFamilyClicked()
+{
+	const bool bAutomationOrCmdlet = IsRunningCommandlet() || GIsAutomationTesting;
+	if (!SelectedFamily.IsValid())
+	{
+		return FReply::Handled();
+	}
+
+	if (UTrafficSystemEditorSubsystem* Subsys = GetSubsystem())
+	{
+		bool bExcludeActors = false;
+		if (!bAutomationOrCmdlet)
+		{
+			const EAppReturnType::Type Choice = FMessageDialog::Open(
+				EAppMsgType::YesNoCancel,
+				FText::FromString(FString::Printf(
+					TEXT("Delete road family '%s'?\n\n")
+					TEXT("Yes: delete and EXCLUDE matching actors from traffic (recommended for accidental families)\n")
+					TEXT("No: delete only (family may be recreated by Prepare Map if actors still match)\n")
+					TEXT("Cancel: do nothing"),
+					*SelectedFamily->DisplayName)));
+
+			if (Choice == EAppReturnType::Cancel)
+			{
+				return FReply::Handled();
+			}
+			bExcludeActors = (Choice == EAppReturnType::Yes);
+		}
+
+		Subsys->Editor_DeleteFamily(SelectedFamily->FamilyId, bExcludeActors);
+		RefreshFamilyList();
+	}
+
+	return FReply::Handled();
 }
 
 bool STrafficSystemPanel::HasDetectedFamilies() const

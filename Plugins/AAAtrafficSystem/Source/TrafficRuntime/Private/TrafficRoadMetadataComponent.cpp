@@ -7,4 +7,6 @@ UTrafficRoadMetadataComponent::UTrafficRoadMetadataComponent()
 	FamilyName = NAME_None;
 	bIncludeInTraffic = true;
 	RoadFamilyId.Invalidate();
+	bReverseCenterlineDirection = false;
+	bLockReverseDirection = false;
 }

@@ -22,6 +22,7 @@
 #include "CollisionQueryParams.h"
 #include "UObject/SoftObjectPath.h"
 #include "Misc/ScopeExit.h"
+#include "ScopedTransaction.h"
 #include "FileHelpers.h"
 #include "HAL/FileManager.h"
 #include "Misc/MessageDialog.h"
@@ -42,6 +43,7 @@
 #include "CityBLDZoneShapeBuilder.h"
 #include "ZoneGraphCalibrationUtils.h"
 #include "ZoneGraphLaneOverlayUtils.h"
+#include "Algo/Reverse.h"
 
 static TAutoConsoleVariable<int32> CVarTrafficDrawAllIntersectionDebug(
 	TEXT("aaa.Traffic.Debug.DrawAllIntersectionDebug"),
@@ -71,6 +73,24 @@ static TAutoConsoleVariable<int32> CVarTrafficCityBLDAutoTagCenterlineSpline(
 	TEXT("aaa.Traffic.CityBLD.AutoTagCenterlineSpline"),
 	1,
 	TEXT("If non-zero, PREPARE MAP will auto-tag the chosen CityBLD centerline spline component with the configured RoadSplineTag (e.g. CityBLD_Centerline) when missing."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarTrafficCityBLDAutoDetectRampDirection(
+	TEXT("aaa.Traffic.CityBLD.AutoDetectRampDirection"),
+	1,
+	TEXT("If non-zero, PREPARE MAP will try to auto-detect on- vs off-ramps and set bReverseCenterlineDirection on their metadata."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficCityBLDRampDetectMaxFreewayDistanceCm(
+	TEXT("aaa.Traffic.CityBLD.RampDetectMaxFreewayDistanceCm"),
+	1500.f,
+	TEXT("Max distance (cm) from a ramp endpoint to a freeway/highway centerline to consider it a merge/diverge endpoint. Default: 1500."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarTrafficCityBLDSplitRampFamiliesByRole(
+	TEXT("aaa.Traffic.CityBLD.SplitRampFamiliesByRole"),
+	1,
+	TEXT("If non-zero, PREPARE MAP will split generic CityBLD ramp families into separate '(On)' and '(Off)' families based on which end is nearest the freeway and the ramp's current driving direction (bReverseCenterlineDirection)."),
 	ECVF_Default);
 
 const FName UTrafficSystemEditorSubsystem::RoadLabTag = FName(TEXT("AAA_RoadLab"));
@@ -187,18 +207,15 @@ int32 UTrafficSystemEditorSubsystem::GetNumActorsForFamily(const FGuid& FamilyId
 		return 0;
 	}
 
-	UClass* RoadClass = Info->RoadClassPath.TryLoadClass<AActor>();
-	if (!RoadClass)
-	{
-		return 0;
-	}
-
 	int32 Count = 0;
 	for (TActorIterator<AActor> It(World); It; ++It)
 	{
-		if (It->IsA(RoadClass))
+		if (UTrafficRoadMetadataComponent* Meta = It->FindComponentByClass<UTrafficRoadMetadataComponent>())
 		{
-			++Count;
+			if (Meta->RoadFamilyId == FamilyId && Meta->bIncludeInTraffic)
+			{
+				++Count;
+			}
 		}
 	}
 	return Count;
@@ -226,17 +243,14 @@ void UTrafficSystemEditorSubsystem::GetActorsForFamily(const FGuid& FamilyId, TA
 		return;
 	}
 
-	UClass* RoadClass = Info->RoadClassPath.TryLoadClass<AActor>();
-	if (!RoadClass)
-	{
-		return;
-	}
-
 	for (TActorIterator<AActor> It(World); It; ++It)
 	{
-		if (It->IsA(RoadClass))
+		if (UTrafficRoadMetadataComponent* Meta = It->FindComponentByClass<UTrafficRoadMetadataComponent>())
 		{
-			OutActors.Add(*It);
+			if (Meta->RoadFamilyId == FamilyId && Meta->bIncludeInTraffic)
+			{
+				OutActors.Add(*It);
+			}
 		}
 	}
 }
@@ -421,6 +435,14 @@ void UTrafficSystemEditorSubsystem::Editor_ResetRoadLabHard(bool bIncludeTaggedU
 		return;
 	}
 
+#if WITH_EDITOR
+	if (GEditor)
+	{
+		// Avoid "SelectActor invalid flags" warnings when destroying selected preview actors (e.g. calibration overlay).
+		GEditor->SelectNone(/*NoteSelectionChange=*/false, /*DeselectBSPSurfs=*/true, /*WarnAboutManyActors=*/false);
+	}
+#endif
+
 	int32 NumDestroyed = 0;
 
 	TArray<AActor*> ActorsToDestroy;
@@ -553,6 +575,38 @@ void UTrafficSystemEditorSubsystem::Editor_PrepareMapForTraffic()
 	const UTrafficCityBLDAdapterSettings* AdapterSettings = GetDefault<UTrafficCityBLDAdapterSettings>();
 	const FName RoadTagFromSettings = AdapterSettings ? AdapterSettings->RoadActorTag : NAME_None;
 
+	auto IsCityBLDRoadCandidate = [&](const AActor* Actor) -> bool
+	{
+		if (!Actor)
+		{
+			return false;
+		}
+
+		if (AdapterSettings && !AdapterSettings->RoadActorTag.IsNone() && Actor->ActorHasTag(AdapterSettings->RoadActorTag))
+		{
+			return true;
+		}
+
+		const FString ClassName = Actor->GetClass()->GetName();
+		if (ClassName.Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+
+		if (AdapterSettings)
+		{
+			for (const FString& Contains : AdapterSettings->RoadClassNameContains)
+			{
+				if (!Contains.IsEmpty() && ClassName.Contains(Contains, ESearchCase::IgnoreCase))
+				{
+					return true;
+				}
+			}
+		}
+
+		return false;
+	};
+
 	// If this level contains CityBLD BP_MeshRoad actors, be stricter about what counts as a "road"
 	// to avoid picking up sidewalk/support spline actors that confuse users.
 	bool bHasCityBLDRoads = false;
@@ -560,7 +614,7 @@ void UTrafficSystemEditorSubsystem::Editor_PrepareMapForTraffic()
 	{
 		if (AActor* Actor = *It)
 		{
-			if (Actor->GetClass()->GetName().Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase))
+			if (IsCityBLDRoadCandidate(Actor))
 			{
 				bHasCityBLDRoads = true;
 				break;
@@ -572,12 +626,20 @@ void UTrafficSystemEditorSubsystem::Editor_PrepareMapForTraffic()
 	int32 FamiliesCreated = 0;
 	int32 MetadataAttached = 0;
 	int32 CityBLDSplineTagsAdded = 0;
+	int32 CityBLDRampAutoDirectionApplied = 0;
+	int32 CityBLDRampAutoDirectionLocked = 0;
+	int32 CityBLDRampAutoDirectionUnknown = 0;
 
 	TUniquePtr<FScopedTransaction> AutoTagTransaction;
 
 	auto EnsureCityBLDCenterlineSplineTag = [&](AActor* Actor)
 	{
 		if (!Actor)
+		{
+			return;
+		}
+
+		if (!IsCityBLDRoadCandidate(Actor))
 		{
 			return;
 		}
@@ -589,12 +651,6 @@ void UTrafficSystemEditorSubsystem::Editor_PrepareMapForTraffic()
 
 		const UTrafficCityBLDAdapterSettings* AdapterSettings = GetDefault<UTrafficCityBLDAdapterSettings>();
 		if (!AdapterSettings || AdapterSettings->RoadSplineTag.IsNone())
-		{
-			return;
-		}
-
-		// Only target CityBLD mesh roads (all share BP_MeshRoad class).
-		if (!Actor->GetClass()->GetName().Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase))
 		{
 			return;
 		}
@@ -724,19 +780,7 @@ void UTrafficSystemEditorSubsystem::Editor_PrepareMapForTraffic()
 			else
 			{
 				// Only accept classes that look like CityBLD road actors.
-				bool bCityBLDClassMatch = ClassName.Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase);
-				if (!bCityBLDClassMatch && AdapterSettings)
-				{
-					for (const FString& Contains : AdapterSettings->RoadClassNameContains)
-					{
-						if (!Contains.IsEmpty() && ClassName.Contains(Contains, ESearchCase::IgnoreCase))
-						{
-							bCityBLDClassMatch = true;
-							break;
-						}
-					}
-				}
-				if (!bCityBLDClassMatch)
+				if (!IsCityBLDRoadCandidate(Actor))
 				{
 					continue;
 				}
@@ -813,6 +857,468 @@ void UTrafficSystemEditorSubsystem::Editor_PrepareMapForTraffic()
 		}
 	}
 
+	// CityBLD ramps: optional auto-detect direction + optional family split into (On)/(Off).
+	const bool bCityBLDAutoDetectRampDirection = (CVarTrafficCityBLDAutoDetectRampDirection.GetValueOnGameThread() != 0);
+	const bool bCityBLDSplitRampFamiliesByRole = (CVarTrafficCityBLDSplitRampFamiliesByRole.GetValueOnGameThread() != 0);
+	if (bHasCityBLDRoads && (bCityBLDAutoDetectRampDirection || bCityBLDSplitRampFamiliesByRole))
+	{
+		// Collect "highway-like" centerlines once.
+		struct FPolylineCache
+		{
+			TArray<FVector> Points;
+		};
+
+		auto IsHighwayFamilyName = [](const FName& Name) -> bool
+		{
+			const FString S = Name.ToString();
+			return S.Contains(TEXT("Freeway"), ESearchCase::IgnoreCase) ||
+				S.Contains(TEXT("Highway"), ESearchCase::IgnoreCase);
+		};
+
+		auto IsRampFamilyName = [](const FName& Name) -> bool
+		{
+			const FString S = Name.ToString();
+			return S.Contains(TEXT("Ramp"), ESearchCase::IgnoreCase);
+		};
+
+		enum class ERampHint : uint8 { Unknown, OnRamp, OffRamp };
+
+		auto DetectRampHintFromText = [](const FString& InText) -> ERampHint
+		{
+			const FString T = InText;
+			if (T.Contains(TEXT("Off Ramp"), ESearchCase::IgnoreCase) ||
+				T.Contains(TEXT("Off-Ramp"), ESearchCase::IgnoreCase) ||
+				T.Contains(TEXT("Exit"), ESearchCase::IgnoreCase) ||
+				T.Contains(TEXT("Diverge"), ESearchCase::IgnoreCase) ||
+				T.Contains(TEXT("Out Ramp"), ESearchCase::IgnoreCase) ||
+				T.Contains(TEXT("Out-Ramp"), ESearchCase::IgnoreCase))
+			{
+				return ERampHint::OffRamp;
+			}
+
+			if (T.Contains(TEXT("On Ramp"), ESearchCase::IgnoreCase) ||
+				T.Contains(TEXT("On-Ramp"), ESearchCase::IgnoreCase) ||
+				T.Contains(TEXT("Entry"), ESearchCase::IgnoreCase) ||
+				T.Contains(TEXT("Merge"), ESearchCase::IgnoreCase) ||
+				T.Contains(TEXT("In Ramp"), ESearchCase::IgnoreCase) ||
+				T.Contains(TEXT("In-Ramp"), ESearchCase::IgnoreCase))
+			{
+				return ERampHint::OnRamp;
+			}
+
+			return ERampHint::Unknown;
+		};
+
+		auto DetectRampHintFromActor = [&](AActor* Actor, const FName& FamilyName) -> ERampHint
+		{
+			if (!Actor)
+			{
+				return ERampHint::Unknown;
+			}
+
+			ERampHint Hint = DetectRampHintFromText(FamilyName.ToString());
+			if (Hint != ERampHint::Unknown)
+			{
+				return Hint;
+			}
+
+			Hint = DetectRampHintFromText(Actor->GetActorLabel());
+			if (Hint != ERampHint::Unknown)
+			{
+				return Hint;
+			}
+
+			// Check actor tags as a cheap hint source.
+			for (const FName& Tag : Actor->Tags)
+			{
+				Hint = DetectRampHintFromText(Tag.ToString());
+				if (Hint != ERampHint::Unknown)
+				{
+					return Hint;
+				}
+			}
+
+			// Scan a small subset of actor/component properties for string-like values mentioning ramps/merge/exit.
+			static const TArray<FString> InterestingPropNameNeedles = {
+				TEXT("Ramp"),
+				TEXT("Merge"),
+				TEXT("Exit"),
+				TEXT("Entry"),
+				TEXT("Style"),
+				TEXT("Preset"),
+				TEXT("Module"),
+			};
+
+			auto ScanObjectForHint = [&](UObject* Obj) -> ERampHint
+			{
+				if (!Obj)
+				{
+					return ERampHint::Unknown;
+				}
+
+				for (TFieldIterator<FProperty> ItP(Obj->GetClass()); ItP; ++ItP)
+				{
+					const FProperty* Prop = *ItP;
+					if (!Prop)
+					{
+						continue;
+					}
+
+					const FString PropName = Prop->GetName();
+					bool bInteresting = false;
+					for (const FString& Needle : InterestingPropNameNeedles)
+					{
+						if (PropName.Contains(Needle, ESearchCase::IgnoreCase))
+						{
+							bInteresting = true;
+							break;
+						}
+					}
+					if (!bInteresting)
+					{
+						continue;
+					}
+
+					const void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Obj);
+					FString Value;
+					if (const FStrProperty* StrProp = CastField<FStrProperty>(Prop))
+					{
+						Value = StrProp->GetPropertyValue(ValuePtr);
+					}
+					else if (const FNameProperty* NameProp = CastField<FNameProperty>(Prop))
+					{
+						const FName NameValue = NameProp->GetPropertyValue(ValuePtr);
+						Value = NameValue.ToString();
+					}
+					else if (const FTextProperty* TextProp = CastField<FTextProperty>(Prop))
+					{
+						Value = TextProp->GetPropertyValue(ValuePtr).ToString();
+					}
+					else if (const FObjectPropertyBase* ObjProp = CastField<FObjectPropertyBase>(Prop))
+					{
+						if (UObject* Ref = ObjProp->GetObjectPropertyValue(ValuePtr))
+						{
+							Value = Ref->GetName();
+							ERampHint Inner = DetectRampHintFromText(Value);
+							if (Inner != ERampHint::Unknown)
+							{
+								return Inner;
+							}
+						}
+					}
+
+					Hint = DetectRampHintFromText(Value);
+					if (Hint != ERampHint::Unknown)
+					{
+						return Hint;
+					}
+				}
+
+				return ERampHint::Unknown;
+			};
+
+			Hint = ScanObjectForHint(Actor);
+			if (Hint != ERampHint::Unknown)
+			{
+				return Hint;
+			}
+
+			TArray<UActorComponent*> Comps;
+			Actor->GetComponents(Comps);
+			for (UActorComponent* C : Comps)
+			{
+				Hint = ScanObjectForHint(C);
+				if (Hint != ERampHint::Unknown)
+				{
+					return Hint;
+				}
+			}
+
+			return ERampHint::Unknown;
+		};
+
+		auto ClosestPointDistanceSqToPolyline = [](const TArray<FVector>& Points, const FVector& Query) -> float
+		{
+			if (Points.Num() < 2)
+			{
+				return TNumericLimits<float>::Max();
+			}
+
+			float Best = TNumericLimits<float>::Max();
+			for (int32 i = 0; i < Points.Num() - 1; ++i)
+			{
+				const FVector A = Points[i];
+				const FVector B = Points[i + 1];
+				const FVector AB = B - A;
+				const float Den = AB.SizeSquared();
+				if (Den <= KINDA_SMALL_NUMBER)
+				{
+					continue;
+				}
+
+				const float T = FMath::Clamp(FVector::DotProduct(Query - A, AB) / Den, 0.f, 1.f);
+				const FVector Closest = A + AB * T;
+				Best = FMath::Min(Best, FVector::DistSquared(Query, Closest));
+			}
+			return Best;
+		};
+
+		TArray<AActor*> HighwayActors;
+		TArray<AActor*> RampActors;
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			AActor* Actor = *It;
+			if (!Actor)
+			{
+				continue;
+			}
+			UTrafficRoadMetadataComponent* Meta = Actor->FindComponentByClass<UTrafficRoadMetadataComponent>();
+			if (!Meta || !Meta->bIncludeInTraffic || Meta->FamilyName.IsNone())
+			{
+				continue;
+			}
+
+			if (IsRampFamilyName(Meta->FamilyName))
+			{
+				RampActors.Add(Actor);
+			}
+			else if (IsHighwayFamilyName(Meta->FamilyName))
+			{
+				HighwayActors.Add(Actor);
+			}
+		}
+
+		if (RampActors.Num() > 0 && HighwayActors.Num() > 0)
+		{
+			int32 CityBLDRampRoleFamiliesCreated = 0;
+			int32 CityBLDRampRoleActorsRemapped = 0;
+
+			TArray<TObjectPtr<UObject>> ProviderObjects;
+			TArray<ITrafficRoadGeometryProvider*> Providers;
+			UTrafficGeometryProviderFactory::CreateProviderChainForEditorWorld(World, ProviderObjects, Providers);
+
+			TArray<TArray<FVector>> HighwayPolylines;
+			for (AActor* Highway : HighwayActors)
+			{
+				TArray<FVector> Centerline;
+				for (ITrafficRoadGeometryProvider* Provider : Providers)
+				{
+					if (Provider && Provider->GetDisplayCenterlineForActor(Highway, Centerline) && Centerline.Num() >= 2)
+					{
+						break;
+					}
+				}
+				if (Centerline.Num() >= 2)
+				{
+					HighwayPolylines.Add(MoveTemp(Centerline));
+				}
+			}
+
+			const float MaxDistCm = FMath::Max(0.f, CVarTrafficCityBLDRampDetectMaxFreewayDistanceCm.GetValueOnGameThread());
+			const float MaxDistSq = FMath::Square(MaxDistCm);
+
+			for (AActor* Ramp : RampActors)
+			{
+				if (!Ramp)
+				{
+					continue;
+				}
+
+				UTrafficRoadMetadataComponent* Meta = Ramp->FindComponentByClass<UTrafficRoadMetadataComponent>();
+				if (!Meta || !Meta->bIncludeInTraffic || Meta->FamilyName.IsNone())
+				{
+					continue;
+				}
+
+				const bool bLocked = Meta->bLockReverseDirection;
+				if (bLocked)
+				{
+					++CityBLDRampAutoDirectionLocked;
+				}
+
+				const ERampHint Hint = bCityBLDAutoDetectRampDirection ? DetectRampHintFromActor(Ramp, Meta->FamilyName) : ERampHint::Unknown;
+
+				TArray<FVector> RampCenterline;
+				for (ITrafficRoadGeometryProvider* Provider : Providers)
+				{
+					if (Provider && Provider->GetDisplayCenterlineForActor(Ramp, RampCenterline) && RampCenterline.Num() >= 2)
+					{
+						break;
+					}
+				}
+
+				if (RampCenterline.Num() < 2 || HighwayPolylines.Num() == 0)
+				{
+					++CityBLDRampAutoDirectionUnknown;
+					continue;
+				}
+
+				// IMPORTANT: providers may already reverse the returned centerline based on metadata
+				// (bReverseCenterlineDirection). For detecting which physical end is near the freeway and for
+				// classifying On vs Off, we want the *unreversed* (raw) endpoints.
+				TArray<FVector> RampCenterlineRaw = RampCenterline;
+				if (Meta->bReverseCenterlineDirection)
+				{
+					Algo::Reverse(RampCenterlineRaw);
+				}
+
+				const FVector StartRaw = RampCenterlineRaw[0];
+				const FVector EndRaw = RampCenterlineRaw.Last();
+
+				float BestStartSq = TNumericLimits<float>::Max();
+				float BestEndSq = TNumericLimits<float>::Max();
+				for (const TArray<FVector>& Hwy : HighwayPolylines)
+				{
+					BestStartSq = FMath::Min(BestStartSq, ClosestPointDistanceSqToPolyline(Hwy, StartRaw));
+					BestEndSq = FMath::Min(BestEndSq, ClosestPointDistanceSqToPolyline(Hwy, EndRaw));
+				}
+
+				const bool bStartNearHighway = BestStartSq <= MaxDistSq;
+				const bool bEndNearHighway = BestEndSq <= MaxDistSq;
+				if (!bStartNearHighway && !bEndNearHighway)
+				{
+					++CityBLDRampAutoDirectionUnknown;
+					continue;
+				}
+
+				// Which physical endpoint is closer to the freeway?
+				const bool bHighwayAtStart = (BestStartSq <= BestEndSq);
+
+				// Optional: auto-set ramp direction only when we have a reliable textual hint, and only if not locked.
+				if (bCityBLDAutoDetectRampDirection && !bLocked && Hint != ERampHint::Unknown)
+				{
+					// Desired behavior (in terms of *physical* endpoints):
+					// - On-ramp: traffic should END at the highway endpoint.
+					// - Off-ramp: traffic should START at the highway endpoint.
+					const bool bDesiredReverse = (Hint == ERampHint::OnRamp) ? bHighwayAtStart : !bHighwayAtStart;
+
+					if (Meta->bReverseCenterlineDirection != bDesiredReverse)
+					{
+						Meta->Modify();
+						Meta->bReverseCenterlineDirection = bDesiredReverse;
+						++CityBLDRampAutoDirectionApplied;
+
+						UE_LOG(LogTraffic, Log,
+							TEXT("[TrafficPrep][CityBLD] Auto-set ramp direction for %s (Family=%s Hint=%s HighwayAtStart=%s Reverse=%s)"),
+							*Ramp->GetName(),
+							*Meta->FamilyName.ToString(),
+							(Hint == ERampHint::OnRamp) ? TEXT("OnRamp") : TEXT("OffRamp"),
+							bHighwayAtStart ? TEXT("true") : TEXT("false"),
+							bDesiredReverse ? TEXT("true") : TEXT("false"));
+					}
+				}
+				else if (bCityBLDAutoDetectRampDirection && !bLocked && Hint == ERampHint::Unknown)
+				{
+					// We had freeway geometry but couldn't figure out whether the ramp is "on" or "off" from textual hints.
+					++CityBLDRampAutoDirectionUnknown;
+				}
+
+				// Optional: split generic ramp family into separate (On)/(Off) variants so users can bake different offsets.
+				// This is based on the *current* driving direction (bReverseCenterlineDirection) and which endpoint is nearest the freeway.
+				if (bCityBLDSplitRampFamiliesByRole)
+				{
+					enum class ERampRole : uint8 { Unknown, On, Off };
+
+					FString BaseFamilyName = Meta->FamilyName.ToString();
+					ERampRole ExistingRole = ERampRole::Unknown;
+
+					auto StripRoleSuffix = [&](const TCHAR* Suffix, ERampRole Role) -> bool
+					{
+						const FString S(Suffix);
+						if (BaseFamilyName.EndsWith(S, ESearchCase::IgnoreCase))
+						{
+							BaseFamilyName.LeftChopInline(S.Len());
+							BaseFamilyName.TrimEndInline();
+							ExistingRole = Role;
+							return true;
+						}
+						return false;
+					};
+
+					StripRoleSuffix(TEXT(" (On)"), ERampRole::On);
+					if (ExistingRole == ERampRole::Unknown)
+					{
+						StripRoleSuffix(TEXT(" (Off)"), ERampRole::Off);
+					}
+
+					const bool bTrafficFlowsStartToEnd = !Meta->bReverseCenterlineDirection;
+					// With our convention, StartRaw/EndRaw are physical endpoints. Traffic flow is StartRaw->EndRaw
+					// when not reversed, else EndRaw->StartRaw. On-ramp means destination is at freeway endpoint,
+					// Off-ramp means source is at freeway endpoint.
+					const bool bIsOnRamp = (Meta->bReverseCenterlineDirection == bHighwayAtStart);
+
+					const FString VariantKey = BaseFamilyName + (bIsOnRamp ? TEXT(" (On)") : TEXT(" (Off)"));
+					const FGuid OldFamilyId = Meta->RoadFamilyId;
+					const FRoadFamilyInfo* OldInfo = Registry->FindFamilyById(OldFamilyId);
+
+					bool bCreatedRoleFamily = false;
+					FRoadFamilyInfo* RoleInfo = Registry->FindOrCreateFamilyForActorWithVariantKey(Ramp, VariantKey, &bCreatedRoleFamily);
+					if (RoleInfo)
+					{
+						if (bCreatedRoleFamily)
+						{
+							++CityBLDRampRoleFamiliesCreated;
+
+							// Seed role family from the actor's previous family calibration if we have it (better first-run UX).
+							if (OldInfo)
+							{
+								RoleInfo->CalibrationData = OldInfo->CalibrationData;
+								RoleInfo->bIsCalibrated = OldInfo->bIsCalibrated;
+								RoleInfo->FamilyDefinition = OldInfo->FamilyDefinition;
+								RoleInfo->FamilyDefinition.FamilyName = FName(*VariantKey);
+							}
+						}
+
+						if (Meta->RoadFamilyId != RoleInfo->FamilyId)
+						{
+							Meta->Modify();
+							Meta->RoadFamilyId = RoleInfo->FamilyId;
+							Meta->FamilyName = RoleInfo->FamilyDefinition.FamilyName.IsNone() ? FName(*VariantKey) : RoleInfo->FamilyDefinition.FamilyName;
+							++CityBLDRampRoleActorsRemapped;
+
+							UE_LOG(LogTraffic, Log,
+								TEXT("[TrafficPrep][CityBLD] Ramp role family: %s -> %s (HighwayAtStart=%s Reverse=%s)"),
+								*Ramp->GetName(),
+								*VariantKey,
+								bHighwayAtStart ? TEXT("true") : TEXT("false"),
+								Meta->bReverseCenterlineDirection ? TEXT("true") : TEXT("false"));
+						}
+
+						// Ensure runtime build settings contain a matching family entry by name.
+						if (RoadSettings)
+						{
+							const FName VariantFamilyName(*VariantKey);
+							if (!RoadSettings->FindFamilyByName(VariantFamilyName))
+							{
+								FRoadFamilyDefinition NewDef = RoleInfo->FamilyDefinition;
+								NewDef.FamilyName = VariantFamilyName;
+								if (NewDef.VehicleLaneProfile.IsNull())
+								{
+									NewDef.VehicleLaneProfile = DefaultVehicleProfilePath;
+								}
+								if (NewDef.FootpathLaneProfile.IsNull())
+								{
+									NewDef.FootpathLaneProfile = DefaultFootpathProfilePath;
+								}
+
+								RoadSettings->Families.Add(NewDef);
+								bRoadSettingsModified = true;
+							}
+						}
+					}
+				}
+			}
+
+			if (bCityBLDSplitRampFamiliesByRole && (CityBLDRampRoleFamiliesCreated > 0 || CityBLDRampRoleActorsRemapped > 0))
+			{
+				UE_LOG(LogTraffic, Log,
+					TEXT("[TrafficPrep] CityBLD: Ramp role split: FamiliesCreated=%d ActorsRemapped=%d (set aaa.Traffic.CityBLD.SplitRampFamiliesByRole=0 to disable)."),
+					CityBLDRampRoleFamiliesCreated,
+					CityBLDRampRoleActorsRemapped);
+			}
+		}
+	}
+
 	Registry->RefreshCache();
 	Registry->SaveConfig();
 
@@ -850,6 +1356,14 @@ void UTrafficSystemEditorSubsystem::Editor_PrepareMapForTraffic()
 		UE_LOG(LogTraffic, Log, TEXT("[TrafficPrep] CityBLD: Auto-tagged %d spline components with '%s'."),
 			CityBLDSplineTagsAdded,
 			*GetDefault<UTrafficCityBLDAdapterSettings>()->RoadSplineTag.ToString());
+	}
+	if (CityBLDRampAutoDirectionApplied > 0 || CityBLDRampAutoDirectionLocked > 0 || CityBLDRampAutoDirectionUnknown > 0)
+	{
+		UE_LOG(LogTraffic, Log,
+			TEXT("[TrafficPrep] CityBLD: Auto-ramp direction: Applied=%d Locked=%d Unknown=%d (set aaa.Traffic.CityBLD.AutoDetectRampDirection=0 to disable)."),
+			CityBLDRampAutoDirectionApplied,
+			CityBLDRampAutoDirectionLocked,
+			CityBLDRampAutoDirectionUnknown);
 	}
 #endif
 }
@@ -1714,17 +2228,49 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 
 	// Try to use a selected actor of this family if present; otherwise spawn a preview instance.
 	AActor* RoadActor = nullptr;
+	AActor* PreferredRoadActor = nullptr;
+	AActor* PreviousActiveRoadActor = ActiveCalibrationRoadActor.IsValid() ? ActiveCalibrationRoadActor.Get() : nullptr;
 	if (GEditor && GEditor->GetSelectedActors())
 	{
 		for (FSelectionIterator It(*GEditor->GetSelectedActors()); It; ++It)
 		{
 			if (AActor* Candidate = Cast<AActor>(*It))
 			{
-				if (Candidate->IsA(RoadClass))
+				if (!Candidate->IsA(RoadClass))
 				{
-					RoadActor = Candidate;
-					break;
+					continue;
 				}
+
+				// IMPORTANT: some road kits (CityBLD BP_ModularRoad) use a single actor class for many road styles.
+				// Only accept the selected actor if it is actually mapped to this family id via metadata.
+				if (const UTrafficRoadMetadataComponent* Meta = Candidate->FindComponentByClass<UTrafficRoadMetadataComponent>())
+				{
+					if (Meta->RoadFamilyId != FamilyId || !Meta->bIncludeInTraffic)
+					{
+						continue;
+					}
+				}
+				else
+				{
+					continue;
+				}
+
+				RoadActor = Candidate;
+				break;
+			}
+		}
+	}
+
+	// Common UX case: we are refreshing the overlay for the *same* active family (e.g. user flipped road direction),
+	// but the selection is currently the overlay actor. Prefer staying locked to the previously active road actor
+	// so the camera doesn't jump to a different instance of the same family.
+	if (!RoadActor && PreviousActiveRoadActor && PreviousActiveRoadActor->IsA(RoadClass) && !PreviousActiveRoadActor->Tags.Contains(RoadLabTag))
+	{
+		if (const UTrafficRoadMetadataComponent* PrevMeta = PreviousActiveRoadActor->FindComponentByClass<UTrafficRoadMetadataComponent>())
+		{
+			if (PrevMeta->RoadFamilyId == FamilyId && PrevMeta->bIncludeInTraffic)
+			{
+				PreferredRoadActor = PreviousActiveRoadActor;
 			}
 		}
 	}
@@ -1748,21 +2294,58 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 		CalibrationOverlayActor.Reset();
 	}
 
+	const bool bIsCityBLDLikeRoadClass =
+		RoadClass->GetName().Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase) ||
+		RoadClass->GetName().Contains(TEXT("BP_ModularRoad"), ESearchCase::IgnoreCase);
+
+	if (!RoadActor)
+	{
+		if (PreferredRoadActor)
+		{
+			RoadActor = PreferredRoadActor;
+		}
+	}
+
 	if (!RoadActor)
 	{
 		// Prefer an existing road actor from the level (safer for procedural road kits that may rebuild on spawn).
 		for (AActor* Existing : ActorsBefore)
 		{
-			if (Existing && Existing->IsA(RoadClass))
+			if (!Existing || !Existing->IsA(RoadClass) || Existing->Tags.Contains(RoadLabTag))
 			{
-				RoadActor = Existing;
-				break;
+				continue;
 			}
+
+			// IMPORTANT: some road kits (CityBLD BP_ModularRoad/BP_MeshRoad) use a single actor class for many road styles.
+			// Only accept an existing actor if it is actually mapped to this family id via metadata.
+			if (const UTrafficRoadMetadataComponent* Meta = Existing->FindComponentByClass<UTrafficRoadMetadataComponent>())
+			{
+				if (Meta->RoadFamilyId != FamilyId || !Meta->bIncludeInTraffic)
+				{
+					continue;
+				}
+			}
+			else
+			{
+				continue;
+			}
+
+			RoadActor = Existing;
+			break;
 		}
 
 		if (!RoadActor)
 		{
-			// Fallback: spawn a preview instance if none exists (should be rare since NumInstances > 0).
+			// Fallback: spawn a preview instance only for non-CityBLD road classes.
+			// For CityBLD modular roads, the style/preset lives on the actor instance, so spawning a blank preview can be misleading.
+			if (bIsCityBLDLikeRoadClass)
+			{
+				UE_LOG(LogTraffic, Warning,
+					TEXT("[TrafficEditor] BeginCalibrationForFamily: No actor instance found for %s. Ensure the relevant CityBLD regions are loaded and run PREPARE MAP again."),
+					*FamilyInfo->DisplayName);
+				return;
+			}
+
 			RoadActor = World->SpawnActor<AActor>(RoadClass, FTransform::Identity, SpawnParams);
 			if (!RoadActor)
 			{
@@ -1806,7 +2389,9 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 		Editor_DrawCenterlineDebug(World, CenterlinePoints, /*bColorByCurvature=*/true);
 	}
 
-	const bool bIsCityBLD = RoadActor->GetClass()->GetName().Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase);
+	const bool bIsCityBLD =
+		RoadActor->GetClass()->GetName().Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase) ||
+		RoadActor->GetClass()->GetName().Contains(TEXT("BP_ModularRoad"), ESearchCase::IgnoreCase);
 	if (bIsCityBLD && AdapterSettings && AdapterSettings->bUseZoneGraphLanePolylinesForCalibrationOverlay)
 	{
 		// Ensure a lane profile is present so ZoneShapes can generate lanes deterministically.
@@ -1856,6 +2441,12 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 		Calib.LaneWidthCm,
 		Calib.CenterlineOffsetCm);
 
+	// Seed per-lane offset adjustments from the current family definition (useful for asymmetric layouts like bus lanes).
+	Overlay->ForwardLaneOffsetAdjustmentsCm = FamilyInfo->FamilyDefinition.Forward.LaneCenterOffsetAdjustmentsCm;
+	Overlay->BackwardLaneOffsetAdjustmentsCm = FamilyInfo->FamilyDefinition.Backward.LaneCenterOffsetAdjustmentsCm;
+	Overlay->ForwardLaneOffsetAdjustmentsCm.SetNum(FMath::Max(0, Overlay->NumLanesPerSideForward));
+	Overlay->BackwardLaneOffsetAdjustmentsCm.SetNum(FMath::Max(0, Overlay->NumLanesPerSideBackward));
+
 	bool bBuiltOverlayFromZoneGraph = false;
 	if (AdapterSettings &&
 		AdapterSettings->bUseZoneGraphLanePolylinesForCalibrationOverlay &&
@@ -1864,6 +2455,35 @@ void UTrafficSystemEditorSubsystem::Editor_BeginCalibrationForFamily(const FGuid
 		TArray<TArray<FVector>> LanePolylines;
 		if (ZoneGraphLaneOverlayUtils::GetZoneGraphLanePolylinesNearActor(World, RoadActor, LanePolylines))
 		{
+			// If the road direction was flipped via metadata, ZoneGraph data may be stale until the next network build.
+			// To keep calibration UX predictable, detect mismatched polyline direction and reverse polylines when needed.
+			//
+			// Only do this for one-way families; for two-way families ZoneGraph typically provides both directions and
+			// reversing everything can confuse which side is "forward" in the preview.
+			if ((Calib.NumLanesPerSideForward == 0) ^ (Calib.NumLanesPerSideBackward == 0))
+			{
+				const UTrafficRoadMetadataComponent* Meta = RoadActor->FindComponentByClass<UTrafficRoadMetadataComponent>();
+				const USplineComponent* Spline = RoadActor->FindComponentByClass<USplineComponent>();
+				if (Meta && Spline && LanePolylines.Num() > 0 && LanePolylines[0].Num() >= 2)
+				{
+					const FVector PolyDir = (LanePolylines[0][1] - LanePolylines[0][0]).GetSafeNormal();
+					const float Key = Spline->FindInputKeyClosestToWorldLocation(LanePolylines[0][0]);
+					FVector ExpectedDir = Spline->GetDirectionAtSplineInputKey(Key, ESplineCoordinateSpace::World).GetSafeNormal();
+					if (Meta->bReverseCenterlineDirection)
+					{
+						ExpectedDir *= -1.f;
+					}
+
+					if (FVector::DotProduct(PolyDir, ExpectedDir) < 0.f)
+					{
+						for (TArray<FVector>& Poly : LanePolylines)
+						{
+							Algo::Reverse(Poly);
+						}
+					}
+				}
+			}
+
 			Overlay->BuildFromLanePolylines(LanePolylines, RoadActor->GetActorTransform());
 			bBuiltOverlayFromZoneGraph = true;
 		}
@@ -2044,6 +2664,13 @@ void UTrafficSystemEditorSubsystem::Editor_BakeCalibrationForActiveFamily()
 
 	Registry->ApplyCalibration(ActiveFamilyId, NewCalib);
 
+	// Store per-lane offset adjustments in the editor registry so future calibration sessions can start from them.
+	FamilyInfo->FamilyDefinition.Forward.LaneCenterOffsetAdjustmentsCm = CalibrationOverlayActor->ForwardLaneOffsetAdjustmentsCm;
+	FamilyInfo->FamilyDefinition.Backward.LaneCenterOffsetAdjustmentsCm = CalibrationOverlayActor->BackwardLaneOffsetAdjustmentsCm;
+	FamilyInfo->FamilyDefinition.Forward.LaneCenterOffsetAdjustmentsCm.SetNum(FMath::Max(0, NewCalib.NumLanesPerSideForward));
+	FamilyInfo->FamilyDefinition.Backward.LaneCenterOffsetAdjustmentsCm.SetNum(FMath::Max(0, NewCalib.NumLanesPerSideBackward));
+	Registry->SaveConfig();
+
 	// Persist calibration into game-visible TrafficRoadFamilySettings so builds use the calibrated layout.
 	if (UTrafficRoadFamilySettings* RoadSettings = GetMutableDefault<UTrafficRoadFamilySettings>())
 	{
@@ -2127,6 +2754,12 @@ void UTrafficSystemEditorSubsystem::Editor_BakeCalibrationForActiveFamily()
 			Def.Forward.InnerLaneCenterOffsetCm = NewCalib.CenterlineOffsetCm;
 			Def.Backward.InnerLaneCenterOffsetCm = NewCalib.CenterlineOffsetCm;
 
+			// Persist optional per-lane adjustments (for asymmetric layouts, e.g. bus lanes).
+			Def.Forward.LaneCenterOffsetAdjustmentsCm = CalibrationOverlayActor->ForwardLaneOffsetAdjustmentsCm;
+			Def.Backward.LaneCenterOffsetAdjustmentsCm = CalibrationOverlayActor->BackwardLaneOffsetAdjustmentsCm;
+			Def.Forward.LaneCenterOffsetAdjustmentsCm.SetNum(FMath::Max(0, Def.Forward.NumLanes));
+			Def.Backward.LaneCenterOffsetAdjustmentsCm.SetNum(FMath::Max(0, Def.Backward.NumLanes));
+
 			RoadSettings->SaveConfig();
 			UE_LOG(LogTraffic, Log, TEXT("[TrafficCalib] Saved calibrated layout into TrafficRoadFamilySettings for '%s' (Index=%d)."), *CalibFamilyName.ToString(), EffectiveIndex);
 		}
@@ -2144,6 +2777,10 @@ void UTrafficSystemEditorSubsystem::Editor_BakeCalibrationForActiveFamily()
 			NewDef.Backward.LaneWidthCm = NewCalib.LaneWidthCm;
 			NewDef.Forward.InnerLaneCenterOffsetCm = NewCalib.CenterlineOffsetCm;
 			NewDef.Backward.InnerLaneCenterOffsetCm = NewCalib.CenterlineOffsetCm;
+			NewDef.Forward.LaneCenterOffsetAdjustmentsCm = CalibrationOverlayActor->ForwardLaneOffsetAdjustmentsCm;
+			NewDef.Backward.LaneCenterOffsetAdjustmentsCm = CalibrationOverlayActor->BackwardLaneOffsetAdjustmentsCm;
+			NewDef.Forward.LaneCenterOffsetAdjustmentsCm.SetNum(FMath::Max(0, NewDef.Forward.NumLanes));
+			NewDef.Backward.LaneCenterOffsetAdjustmentsCm.SetNum(FMath::Max(0, NewDef.Backward.NumLanes));
 			if (NewDef.VehicleLaneProfile.IsNull())
 			{
 				NewDef.VehicleLaneProfile = DefaultVehicleProfilePath;
@@ -2217,6 +2854,271 @@ void UTrafficSystemEditorSubsystem::Editor_RestoreCalibrationForFamily(const FGu
 	if (ActiveFamilyId == FamilyId && ActiveFamilyId.IsValid())
 	{
 		Editor_BeginCalibrationForFamily(FamilyId);
+	}
+#endif
+}
+
+void UTrafficSystemEditorSubsystem::Editor_DeleteFamily(const FGuid& FamilyId, bool bExcludeActorsFromTraffic)
+{
+#if WITH_EDITOR
+	URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get();
+	if (!Registry)
+	{
+		return;
+	}
+
+	FRoadFamilyInfo* FamilyInfo = Registry->FindFamilyById(FamilyId);
+	if (!FamilyInfo)
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] DeleteFamily: Family not found: %s"), *FamilyId.ToString());
+		return;
+	}
+
+	const FName FamilyName = FamilyInfo->FamilyDefinition.FamilyName.IsNone()
+		? FName(*FamilyInfo->DisplayName)
+		: FamilyInfo->FamilyDefinition.FamilyName;
+
+	if (!Registry->DeleteFamilyById(FamilyId))
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] DeleteFamily: Failed to delete family: %s"), *FamilyId.ToString());
+		return;
+	}
+
+	// Remove from runtime settings (by FamilyName), so builds don't keep using an orphaned entry.
+	if (UTrafficRoadFamilySettings* RoadSettings = GetMutableDefault<UTrafficRoadFamilySettings>())
+	{
+		const int32 Removed = RoadSettings->Families.RemoveAll([&](const FRoadFamilyDefinition& Def)
+		{
+			return Def.FamilyName == FamilyName;
+		});
+
+		if (Removed > 0)
+		{
+			RoadSettings->SaveConfig();
+			UE_LOG(LogTraffic, Log, TEXT("[TrafficEditor] DeleteFamily: Removed %d entries from TrafficRoadFamilySettings for '%s'."), Removed, *FamilyName.ToString());
+		}
+	}
+
+	if (bExcludeActorsFromTraffic)
+	{
+		UWorld* World = GetEditorWorld();
+		if (World)
+		{
+			const FScopedTransaction Tx(NSLOCTEXT("TrafficEditor", "DeleteFamilyExcludeActors", "AAA Traffic: Delete Family and Exclude Actors"));
+			int32 UpdatedActors = 0;
+			for (TActorIterator<AActor> It(World); It; ++It)
+			{
+				if (UTrafficRoadMetadataComponent* Meta = It->FindComponentByClass<UTrafficRoadMetadataComponent>())
+				{
+					if (Meta->RoadFamilyId == FamilyId)
+					{
+						Meta->Modify();
+						Meta->bIncludeInTraffic = false;
+						Meta->RoadFamilyId.Invalidate();
+						Meta->FamilyName = NAME_None;
+						++UpdatedActors;
+					}
+				}
+			}
+			if (UpdatedActors > 0)
+			{
+				UE_LOG(LogTraffic, Log, TEXT("[TrafficEditor] DeleteFamily: Excluded %d actors from traffic for '%s'."), UpdatedActors, *FamilyName.ToString());
+			}
+		}
+	}
+
+	// If deleting the active calibration family, clear calibration state and overlay.
+	if (ActiveFamilyId == FamilyId)
+	{
+		ActiveFamilyId.Invalidate();
+		ActiveCalibrationRoadActor.Reset();
+		if (CalibrationOverlayActor.IsValid())
+		{
+			CalibrationOverlayActor->Destroy();
+			CalibrationOverlayActor.Reset();
+		}
+	}
+#endif
+}
+
+void UTrafficSystemEditorSubsystem::Editor_ToggleReverseDirectionForSelectedRoads()
+{
+#if WITH_EDITOR
+	UWorld* World = GetEditorWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const bool bAutomationOrCmdlet = IsRunningCommandlet() || GIsAutomationTesting;
+
+	if (!GEditor || !GEditor->GetSelectedActors())
+	{
+		return;
+	}
+
+	URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get();
+	if (!Registry)
+	{
+		return;
+	}
+
+	auto IsEligibleRoadActor = [&](AActor* Actor) -> bool
+	{
+		if (!Actor)
+		{
+			return false;
+		}
+
+		// Never operate on AAA RoadLab helper actors.
+		const UClass* ActorClass = Actor->GetClass();
+		const FString ClassName = ActorClass ? ActorClass->GetName() : FString();
+		if (Actor->Tags.Contains(RoadLabTag) ||
+			Actor->IsA(ALaneCalibrationOverlayActor::StaticClass()) ||
+			Actor->IsA(ARoadLanePreviewActor::StaticClass()) ||
+			Actor->IsA(ATrafficVehicleBase::StaticClass()) ||
+			Actor->IsA(ATrafficVehicleManager::StaticClass()) ||
+			Actor->IsA(ATrafficSystemController::StaticClass()) ||
+			// Extra safety: if a blueprint or renamed class slips through, still avoid touching overlay actors.
+			ClassName.Contains(TEXT("LaneCalibrationOverlayActor"), ESearchCase::IgnoreCase))
+		{
+			return false;
+		}
+
+		// Only meaningful for spline-driven roads.
+		return Actor->FindComponentByClass<USplineComponent>() != nullptr;
+	};
+
+	TArray<AActor*> TargetActors;
+	for (FSelectionIterator It(*GEditor->GetSelectedActors()); It; ++It)
+	{
+		if (AActor* Actor = Cast<AActor>(*It))
+		{
+			if (IsEligibleRoadActor(Actor))
+			{
+				TargetActors.Add(Actor);
+			}
+		}
+	}
+
+	// Common UX pitfall: Begin Calibration selects the overlay actor. If no eligible actors are selected,
+	// fall back to the active calibration road actor (if available).
+	if (TargetActors.Num() == 0 && ActiveCalibrationRoadActor.IsValid())
+	{
+		if (AActor* ActiveRoad = ActiveCalibrationRoadActor.Get())
+		{
+			if (IsEligibleRoadActor(ActiveRoad))
+			{
+				TargetActors.Add(ActiveRoad);
+			}
+		}
+	}
+
+	if (TargetActors.Num() == 0)
+	{
+		if (!bAutomationOrCmdlet)
+		{
+			FMessageDialog::Open(
+				EAppMsgType::Ok,
+				NSLOCTEXT("TrafficEditor", "ToggleReverse_NoSelection",
+					"Select one or more spline road actors (e.g. CityBLD ramp pieces) first.\n\n"
+					"Tip: if you just clicked BEGIN CALIBRATION, the overlay actor is selected. Click the actual road actor and try again."));
+		}
+		return;
+	}
+
+	int32 Toggled = 0;
+	int32 MissingMeta = 0;
+	FGuid RefreshFamily;
+	bool bToggledActiveCalibrationRoad = false;
+
+	const FScopedTransaction Tx(NSLOCTEXT("TrafficEditor", "ToggleReverseDirection", "AAA Traffic: Toggle Road Direction"));
+	for (AActor* Actor : TargetActors)
+	{
+		if (!Actor)
+		{
+			continue;
+		}
+
+		UTrafficRoadMetadataComponent* Meta = Actor->FindComponentByClass<UTrafficRoadMetadataComponent>();
+		if (!Meta)
+		{
+			// Be user-proof: attach metadata on demand for selected roads, so users don't have to re-run PREPARE MAP
+			// after placing new CityBLD pieces.
+			Meta = NewObject<UTrafficRoadMetadataComponent>(Actor);
+			if (!Meta)
+			{
+				++MissingMeta;
+				continue;
+			}
+
+			Meta->RegisterComponent();
+			Actor->AddInstanceComponent(Meta);
+
+			bool bCreated = false;
+			FRoadFamilyInfo* FamilyInfo = Registry->FindOrCreateFamilyForActor(Actor, &bCreated);
+			if (FamilyInfo)
+			{
+				Meta->Modify();
+				Meta->RoadFamilyId = FamilyInfo->FamilyId;
+				Meta->FamilyName = FamilyInfo->FamilyDefinition.FamilyName.IsNone()
+					? FName(*FamilyInfo->DisplayName)
+					: FamilyInfo->FamilyDefinition.FamilyName;
+				Meta->bIncludeInTraffic = true;
+				Meta->bLockReverseDirection = true;
+
+				UE_LOG(LogTraffic, Log,
+					TEXT("[TrafficEditor] ToggleReverse: Attached metadata to %s (Family=%s)."),
+					*Actor->GetName(),
+					*Meta->FamilyName.ToString());
+			}
+			else
+			{
+				++MissingMeta;
+				continue;
+			}
+		}
+
+		Meta->Modify();
+		Meta->bReverseCenterlineDirection = !Meta->bReverseCenterlineDirection;
+		Meta->bLockReverseDirection = true;
+		++Toggled;
+
+		if (!RefreshFamily.IsValid() && Meta->RoadFamilyId.IsValid())
+		{
+			RefreshFamily = Meta->RoadFamilyId;
+		}
+
+		UE_LOG(LogTraffic, Log,
+			TEXT("[TrafficEditor] Toggled bReverseCenterlineDirection for %s -> %s"),
+			*Actor->GetName(),
+			Meta->bReverseCenterlineDirection ? TEXT("true") : TEXT("false"));
+
+		if (ActiveCalibrationRoadActor.IsValid() && Actor == ActiveCalibrationRoadActor.Get())
+		{
+			bToggledActiveCalibrationRoad = true;
+		}
+	}
+
+	if (MissingMeta > 0 && !bAutomationOrCmdlet)
+	{
+		FMessageDialog::Open(
+			EAppMsgType::Ok,
+			NSLOCTEXT("TrafficEditor", "ToggleReverse_MissingMeta",
+				"Some selected actors could not be updated.\n\n"
+				"AAA Traffic tried to attach metadata automatically, but a few actors still failed.\n"
+				"Try running PREPARE MAP and re-selecting the ramp actors."));
+	}
+
+	if (Toggled == 0)
+	{
+		return;
+	}
+
+	// Refresh overlay if the active calibration family is affected (so users immediately see arrow direction flip).
+	if (bToggledActiveCalibrationRoad || (ActiveFamilyId.IsValid() && (RefreshFamily == ActiveFamilyId)))
+	{
+		Editor_BeginCalibrationForFamily(ActiveFamilyId);
 	}
 #endif
 }

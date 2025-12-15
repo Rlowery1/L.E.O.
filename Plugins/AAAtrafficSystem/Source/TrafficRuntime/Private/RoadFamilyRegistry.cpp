@@ -203,6 +203,83 @@ namespace
 		return false;
 	}
 
+	static bool TryReadObjectReferencedStyleName(const FProperty* Prop, const void* ValuePtr, FString& OutValue)
+	{
+		if (!Prop || !ValuePtr)
+		{
+			return false;
+		}
+
+		const FObjectPropertyBase* ObjProp = CastField<FObjectPropertyBase>(Prop);
+		if (!ObjProp)
+		{
+			return false;
+		}
+
+		UObject* Referenced = ObjProp->GetObjectPropertyValue(ValuePtr);
+		if (!Referenced)
+		{
+			return false;
+		}
+
+		// Recurse a single hop into referenced objects (common in CityBLD where "Style" is a data asset/object).
+		static const TArray<FName> DirectCandidates = {
+			FName(TEXT("StyleName")),
+			FName(TEXT("StreetStyleName")),
+			FName(TEXT("PresetName")),
+			FName(TEXT("RoadPresetName")),
+			FName(TEXT("StreetPresetName")),
+			FName(TEXT("RoadStyleName")),
+			FName(TEXT("CityBLDPresetName")),
+		};
+
+		for (const FName& CandidateName : DirectCandidates)
+		{
+			if (const FProperty* InnerProp = Referenced->GetClass()->FindPropertyByName(CandidateName))
+			{
+				const void* InnerPtr = InnerProp->ContainerPtrToValuePtr<void>(Referenced);
+				FString Value;
+				if (TryReadStringLikePropertyValue(InnerProp, InnerPtr, Value) && !Value.IsEmpty())
+				{
+					OutValue = Value;
+					return true;
+				}
+			}
+		}
+
+		for (TFieldIterator<FProperty> It(Referenced->GetClass()); It; ++It)
+		{
+			const FProperty* Inner = *It;
+			if (!Inner)
+			{
+				continue;
+			}
+
+			const FString DisplayName = Inner->HasMetaData(TEXT("DisplayName")) ? Inner->GetMetaData(TEXT("DisplayName")) : FString();
+			const FString PropNameStr = Inner->GetName();
+			const bool bLooksLikeStyle =
+				PropNameStr.Contains(TEXT("Style"), ESearchCase::IgnoreCase) ||
+				PropNameStr.Contains(TEXT("Preset"), ESearchCase::IgnoreCase) ||
+				DisplayName.Contains(TEXT("Style"), ESearchCase::IgnoreCase) ||
+				DisplayName.Contains(TEXT("Preset"), ESearchCase::IgnoreCase);
+
+			if (!bLooksLikeStyle)
+			{
+				continue;
+			}
+
+			const void* InnerPtr = Inner->ContainerPtrToValuePtr<void>(Referenced);
+			FString Value;
+			if (TryReadStringLikePropertyValue(Inner, InnerPtr, Value) && !Value.IsEmpty())
+			{
+				OutValue = Value;
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	static FString FindBestStyleOrPresetNameOnObject(UObject* Obj)
 	{
 		if (!Obj)
@@ -270,6 +347,19 @@ namespace
 				}
 			}
 
+			// Object property: the style/preset may live on a referenced data asset/object.
+			{
+				const void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Obj);
+				FString Value;
+				if (TryReadObjectReferencedStyleName(Prop, ValuePtr, Value))
+				{
+					if (Value.Len() > Best.Len())
+					{
+						Best = Value;
+					}
+				}
+			}
+
 			// Struct property: try to find an inner "StyleName"/"PresetName".
 			if (const FStructProperty* StructProp = CastField<FStructProperty>(Prop))
 			{
@@ -317,8 +407,55 @@ namespace
 			return FString();
 		}
 
-		// Prefer the City Kit Element Component when present (it's where CityBLD exposes "Street Style -> Style Name").
+		auto ScoreVariantCandidate = [](const FString& Candidate, const FString& OwnerClassName) -> int32
+		{
+			if (Candidate.IsEmpty())
+			{
+				return 0;
+			}
+
+			int32 Score = Candidate.Len();
+
+			// Prefer human-readable preset-like strings.
+			if (Candidate.Contains(TEXT(" - "), ESearchCase::IgnoreCase))
+			{
+				Score += 20;
+			}
+
+			// Common road keywords.
+			static const TCHAR* Keywords[] = {
+				TEXT("Lane"),
+				TEXT("Road"),
+				TEXT("Street"),
+				TEXT("Highway"),
+				TEXT("Freeway"),
+				TEXT("Ramp"),
+				TEXT("One Way"),
+				TEXT("One-Way"),
+			};
+			for (const TCHAR* K : Keywords)
+			{
+				if (Candidate.Contains(K, ESearchCase::IgnoreCase))
+				{
+					Score += 10;
+				}
+			}
+
+			// Prefer values coming from road-kit components rather than generic engine components.
+			if (OwnerClassName.Contains(TEXT("City"), ESearchCase::IgnoreCase) ||
+				OwnerClassName.Contains(TEXT("Kit"), ESearchCase::IgnoreCase) ||
+				OwnerClassName.Contains(TEXT("BLD"), ESearchCase::IgnoreCase) ||
+				OwnerClassName.Contains(TEXT("Element"), ESearchCase::IgnoreCase) ||
+				OwnerClassName.Contains(TEXT("Modular"), ESearchCase::IgnoreCase))
+			{
+				Score += 15;
+			}
+
+			return Score;
+		};
+
 		FString Best;
+		int32 BestScore = 0;
 
 		TArray<UActorComponent*> Comps;
 		RoadActor->GetComponents(Comps);
@@ -329,25 +466,39 @@ namespace
 				continue;
 			}
 
-			const FString ClassName = C->GetClass()->GetName();
-			if (!ClassName.Contains(TEXT("CityKit"), ESearchCase::IgnoreCase) &&
-				!ClassName.Contains(TEXT("Element"), ESearchCase::IgnoreCase))
-			{
-				continue;
-			}
-
 			const FString Candidate = FindBestStyleOrPresetNameOnObject(C);
-			if (Candidate.Len() > Best.Len())
+			const int32 Score = ScoreVariantCandidate(Candidate, C->GetClass()->GetName());
+			if (Score > BestScore)
 			{
 				Best = Candidate;
+				BestScore = Score;
 			}
 		}
 
-		// Fallback: scan the actor itself.
+		// Also scan the actor itself (lower weight than components).
+		{
+			const FString Candidate = FindBestStyleOrPresetNameOnObject(const_cast<AActor*>(RoadActor));
+			const int32 Score = ScoreVariantCandidate(Candidate, RoadActor->GetClass()->GetName()) - 5;
+			if (Score > BestScore)
+			{
+				Best = Candidate;
+				BestScore = Score;
+			}
+		}
+
+#if WITH_EDITOR
+		// Final fallback (editor only): CityBLD often bakes the chosen style into the actor label, even when the style lives in nested objects.
 		if (Best.IsEmpty())
 		{
-			Best = FindBestStyleOrPresetNameOnObject(const_cast<AActor*>(RoadActor));
+			const FString Label = RoadActor->GetActorLabel();
+			const int32 Score = ScoreVariantCandidate(Label, RoadActor->GetClass()->GetName()) - 10;
+			if (Score > BestScore)
+			{
+				Best = Label;
+				BestScore = Score;
+			}
 		}
+#endif
 
 		return Best;
 	}
@@ -373,11 +524,35 @@ FRoadFamilyInfo* URoadFamilyRegistry::FindOrCreateFamilyForActor(AActor* RoadAct
 
 	FString VariantKey;
 	const FString RoadClassName = RoadClass->GetName();
-	if (RoadClassName.Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase))
+	if (RoadClassName.Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase) ||
+		RoadClassName.Contains(TEXT("BP_ModularRoad"), ESearchCase::IgnoreCase))
 	{
 		VariantKey = TryGetCityBLDVariantKeyFromActor(RoadActor);
 	}
 
+	VariantKey.TrimStartAndEndInline();
+	return FindOrCreateFamilyForActorWithVariantKey(RoadActor, VariantKey, bOutCreated);
+}
+
+FRoadFamilyInfo* URoadFamilyRegistry::FindOrCreateFamilyForActorWithVariantKey(AActor* RoadActor, const FString& VariantKeyOverride, bool* bOutCreated)
+{
+	if (bOutCreated)
+	{
+		*bOutCreated = false;
+	}
+
+	if (!RoadActor)
+	{
+		return nullptr;
+	}
+
+	UClass* RoadClass = RoadActor->GetClass();
+	if (!RoadClass)
+	{
+		return nullptr;
+	}
+
+	FString VariantKey = VariantKeyOverride;
 	VariantKey.TrimStartAndEndInline();
 
 	if (KeyToIndex.Num() != Families.Num())
@@ -407,10 +582,32 @@ FRoadFamilyInfo* URoadFamilyRegistry::FindOrCreateFamilyForActor(AActor* RoadAct
 			DefaultCalib.NumLanesPerSideBackward = 1;
 		}
 		else if (VariantKey.Contains(TEXT("3 Lane"), ESearchCase::IgnoreCase) &&
-				 VariantKey.Contains(TEXT("One-Way"), ESearchCase::IgnoreCase))
+				 (VariantKey.Contains(TEXT("One-Way"), ESearchCase::IgnoreCase) ||
+				  VariantKey.Contains(TEXT("One Way"), ESearchCase::IgnoreCase) ||
+				  VariantKey.Contains(TEXT("1 Way"), ESearchCase::IgnoreCase)))
 		{
 			DefaultCalib.NumLanesPerSideForward = 3;
 			DefaultCalib.NumLanesPerSideBackward = 0;
+		}
+		else if (VariantKey.Contains(TEXT("Ramp"), ESearchCase::IgnoreCase))
+		{
+			// Most modular ramps are one-way. Default to forward-only unless the style explicitly says otherwise.
+			DefaultCalib.NumLanesPerSideBackward = 0;
+
+			if (VariantKey.Contains(TEXT("2 Lane"), ESearchCase::IgnoreCase))
+			{
+				DefaultCalib.NumLanesPerSideForward = 2;
+			}
+			else
+			{
+				DefaultCalib.NumLanesPerSideForward = 1;
+			}
+		}
+		else if (VariantKey.Contains(TEXT("8 Lane"), ESearchCase::IgnoreCase))
+		{
+			// Common freeway preset: 4 lanes each direction.
+			DefaultCalib.NumLanesPerSideForward = 4;
+			DefaultCalib.NumLanesPerSideBackward = 4;
 		}
 	}
 
@@ -425,6 +622,22 @@ FRoadFamilyInfo* URoadFamilyRegistry::FindOrCreateFamilyForActor(AActor* RoadAct
 	DefaultFamily.Backward.LaneWidthCm = DefaultCalib.LaneWidthCm;
 	DefaultFamily.Backward.InnerLaneCenterOffsetCm = DefaultCalib.CenterlineOffsetCm;
 
+	// If the runtime settings already contain a family definition with this name (e.g. shipped presets),
+	// seed the registry from that so first-run behavior matches the shipped defaults.
+	bool bSeededFromRuntimeSettings = false;
+	if (const UTrafficRoadFamilySettings* RuntimeSettings = GetDefault<UTrafficRoadFamilySettings>())
+	{
+		if (const FRoadFamilyDefinition* Existing = RuntimeSettings->FindFamilyByName(DefaultFamily.FamilyName))
+		{
+			DefaultFamily = *Existing;
+			DefaultCalib.NumLanesPerSideForward = Existing->Forward.NumLanes;
+			DefaultCalib.NumLanesPerSideBackward = Existing->Backward.NumLanes;
+			DefaultCalib.LaneWidthCm = Existing->Forward.LaneWidthCm;
+			DefaultCalib.CenterlineOffsetCm = Existing->Forward.InnerLaneCenterOffsetCm;
+			bSeededFromRuntimeSettings = true;
+		}
+	}
+
 	FRoadFamilyInfo NewInfo;
 	NewInfo.FamilyId = FGuid::NewGuid();
 	NewInfo.DisplayName = VariantKey.IsEmpty() ? SanitizeDisplayName(RoadClass->GetName()) : VariantKey;
@@ -432,7 +645,7 @@ FRoadFamilyInfo* URoadFamilyRegistry::FindOrCreateFamilyForActor(AActor* RoadAct
 	NewInfo.VariantKey = VariantKey;
 	NewInfo.FamilyDefinition = DefaultFamily;
 	NewInfo.CalibrationData = DefaultCalib;
-	NewInfo.bIsCalibrated = false;
+	NewInfo.bIsCalibrated = bSeededFromRuntimeSettings;
 
 	const int32 NewIndex = Families.Add(NewInfo);
 	if (bOutCreated)
@@ -514,6 +727,21 @@ bool URoadFamilyRegistry::RestoreLastCalibration(const FGuid& FamilyId)
 			Info.FamilyDefinition.Forward.InnerLaneCenterOffsetCm = Info.CalibrationData.CenterlineOffsetCm;
 			Info.FamilyDefinition.Backward.InnerLaneCenterOffsetCm = Info.CalibrationData.CenterlineOffsetCm;
 
+			SaveConfig();
+			return true;
+		}
+	}
+	return false;
+}
+
+bool URoadFamilyRegistry::DeleteFamilyById(const FGuid& FamilyId)
+{
+	for (int32 Index = 0; Index < Families.Num(); ++Index)
+	{
+		if (Families[Index].FamilyId == FamilyId)
+		{
+			Families.RemoveAt(Index);
+			RebuildClassCache();
 			SaveConfig();
 			return true;
 		}

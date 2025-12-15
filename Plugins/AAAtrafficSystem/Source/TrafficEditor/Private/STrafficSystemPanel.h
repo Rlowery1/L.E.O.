@@ -27,6 +27,7 @@ private:
 	FReply OnBeginCalibrationClicked();
 	FReply OnBakeCalibrationClicked();
 	FReply OnRestoreCalibrationClicked();
+	FReply OnDeleteFamilyClicked();
 	FReply OnResetLabClicked();
 	FReply OnResetLabIncludingTaggedClicked();
 	FReply OnConvertSelectedClicked();
@@ -36,6 +37,8 @@ private:
 	FReply OnCarsClicked();
 	FReply OnDrawIntersectionDebugClicked();
 	FReply OnPrepareMapForTrafficClicked();
+	FReply OnCopyRoadFamilyDefaultsIniClicked();
+	FReply OnToggleReverseDirectionForSelectionClicked();
 
 	bool CanCalibrate() const;
 	bool CanBake() const;
@@ -49,6 +52,7 @@ private:
 	void OnFamilyNameCommitted(const FText& NewText, ETextCommit::Type CommitType);
 	bool HasDetectedFamilies() const;
 	bool HasBackupForSelected() const;
+	FString BuildRoadFamilySettingsIniSnippet() const;
 
 	TArray<TSharedPtr<FFamilyListItem>> FamilyItems;
 	TSharedPtr<FFamilyListItem> SelectedFamily;

@@ -72,6 +72,14 @@ public:
 	UFUNCTION(CallInEditor)
 	void Editor_RestoreCalibrationForFamily(const FGuid& FamilyId);
 
+	/** Deletes a detected road family from the registry (optionally excludes matching actors from traffic). */
+	UFUNCTION(CallInEditor)
+	void Editor_DeleteFamily(const FGuid& FamilyId, bool bExcludeActorsFromTraffic = false);
+
+	/** Toggle per-actor road travel direction for selected prepared road actors (useful for on- vs off-ramps that share one family). */
+	UFUNCTION(CallInEditor)
+	void Editor_ToggleReverseDirectionForSelectedRoads();
+
 	// True if any actor in the editor world has traffic road metadata (prepared).
 	bool HasAnyPreparedRoads() const;
 

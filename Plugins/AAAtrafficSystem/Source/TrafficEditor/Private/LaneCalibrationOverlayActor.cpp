@@ -6,6 +6,7 @@
 #include "TrafficLaneGeometry.h"
 #include "TrafficVisualSettings.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "Components/TextRenderComponent.h"
 #include "ProceduralMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/Material.h"
@@ -22,6 +23,8 @@ ALaneCalibrationOverlayActor::ALaneCalibrationOverlayActor()
 	NumLanesPerSideBackward = 1;
 	LaneWidthCm = 350.f;
 	CenterlineOffsetCm = 175.f;
+	ForwardLaneOffsetAdjustmentsCm = { 0.f };
+	BackwardLaneOffsetAdjustmentsCm = { 0.f };
 	CachedRoadTransform = FTransform::Identity;
 
 	FallbackArrowMesh = FTrafficCalibrationVisuals::GetOrCreateCalibrationArrowMesh();
@@ -72,6 +75,15 @@ void ALaneCalibrationOverlayActor::ClearOverlay()
 		}
 	}
 	ChevronArrowComponents.Empty();
+
+	for (UTextRenderComponent* Label : LaneIndexLabelComponents)
+	{
+		if (Label)
+		{
+			Label->DestroyComponent();
+		}
+	}
+	LaneIndexLabelComponents.Empty();
 }
 
 TArray<FVector> ALaneCalibrationOverlayActor::ComputeLaneCenterline(
@@ -89,6 +101,9 @@ void ALaneCalibrationOverlayActor::ApplyCalibrationSettings(int32 InNumForward, 
 	NumLanesPerSideBackward = FMath::Max(0, InNumBackward);
 	LaneWidthCm = FMath::Max(1.f, InLaneWidthCm);
 	CenterlineOffsetCm = InCenterOffsetCm;
+
+	ForwardLaneOffsetAdjustmentsCm.SetNum(FMath::Max(0, NumLanesPerSideForward));
+	BackwardLaneOffsetAdjustmentsCm.SetNum(FMath::Max(0, NumLanesPerSideBackward));
 }
 
 bool ALaneCalibrationOverlayActor::IsCalibrationValid(const FTrafficLaneFamilyCalibration& Calib) const
@@ -179,6 +194,26 @@ UMaterialInstanceDynamic* ALaneCalibrationOverlayActor::CreateArrowMaterialInsta
 	}
 
 	return DynMat;
+}
+
+void ALaneCalibrationOverlayActor::BuildLaneIndexLabel(const FString& LabelText, const FVector& LocalPosition, const FLinearColor& Color)
+{
+	UTextRenderComponent* TextComp = NewObject<UTextRenderComponent>(this);
+	TextComp->SetupAttachment(RootComponent);
+	TextComp->RegisterComponent();
+	TextComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	TextComp->SetCastShadow(false);
+	TextComp->SetHorizontalAlignment(EHTA_Center);
+	TextComp->SetVerticalAlignment(EVRTA_TextCenter);
+	TextComp->SetText(FText::FromString(LabelText));
+	TextComp->SetTextRenderColor(Color.ToFColor(true));
+	TextComp->SetWorldSize(FMath::Max(1.f, LaneIndexLabelWorldSize));
+
+	// Rotate so the text faces upward (readable in top-down view).
+	TextComp->SetRelativeRotation(FRotator(-90.f, 0.f, 0.f));
+	TextComp->SetRelativeLocation(LocalPosition);
+
+	LaneIndexLabelComponents.Add(TextComp);
 }
 
 void ALaneCalibrationOverlayActor::BuildLaneRibbon(
@@ -361,6 +396,10 @@ void ALaneCalibrationOverlayActor::BuildForRoad(
 	NumLanesPerSideBackward = Family.Backward.NumLanes;
 	LaneWidthCm = Family.Forward.LaneWidthCm;
 	CenterlineOffsetCm = Family.Forward.InnerLaneCenterOffsetCm;
+	ForwardLaneOffsetAdjustmentsCm = Family.Forward.LaneCenterOffsetAdjustmentsCm;
+	BackwardLaneOffsetAdjustmentsCm = Family.Backward.LaneCenterOffsetAdjustmentsCm;
+	ForwardLaneOffsetAdjustmentsCm.SetNum(FMath::Max(0, NumLanesPerSideForward));
+	BackwardLaneOffsetAdjustmentsCm.SetNum(FMath::Max(0, NumLanesPerSideBackward));
 
 	// Cache original world-space data and current calibration for live rebuild.
 	CachedCenterlinePoints = CenterlinePoints;
@@ -384,7 +423,8 @@ void ALaneCalibrationOverlayActor::BuildForRoad(
 
 	for (int32 i = 0; i < NumLanesPerSideForward; ++i)
 	{
-		float Offset = CenterlineOffsetCm + (i * LaneWidthCm);
+		const float Adjustment = ForwardLaneOffsetAdjustmentsCm.IsValidIndex(i) ? ForwardLaneOffsetAdjustmentsCm[i] : 0.f;
+		float Offset = CenterlineOffsetCm + (i * LaneWidthCm) + Adjustment;
 		TArray<FVector> LanePoints = ComputeLaneCenterline(LocalCenterlinePoints, Offset);
 
 		UStaticMesh* ArrowMesh = GetArrowMesh(true, VisualSettings);
@@ -402,12 +442,20 @@ void ALaneCalibrationOverlayActor::BuildForRoad(
 			BuildChevronArrows(ISM, LanePoints, true, VisualSettings);
 			ChevronArrowComponents.Add(ISM);
 		}
+
+		if (bShowLaneIndexLabels && LanePoints.Num() > 0)
+		{
+			const int32 SampleIndex = FMath::Clamp(LanePoints.Num() / 3, 0, LanePoints.Num() - 1);
+			const FVector LabelPos = LanePoints[SampleIndex] + FVector(0.f, 0.f, 120.f);
+			BuildLaneIndexLabel(FString::Printf(TEXT("F%d"), i), LabelPos, FLinearColor(0.2f, 0.95f, 0.3f, 1.0f));
+		}
 		++LaneIndex;
 	}
 
 	for (int32 i = 0; i < NumLanesPerSideBackward; ++i)
 	{
-		float Offset = -(CenterlineOffsetCm + (i * LaneWidthCm));
+		const float Adjustment = BackwardLaneOffsetAdjustmentsCm.IsValidIndex(i) ? BackwardLaneOffsetAdjustmentsCm[i] : 0.f;
+		float Offset = -(CenterlineOffsetCm + (i * LaneWidthCm) + Adjustment);
 		TArray<FVector> LanePoints = ComputeLaneCenterline(LocalCenterlinePoints, Offset);
 
 		UStaticMesh* ArrowMesh = GetArrowMesh(false, VisualSettings);
@@ -424,6 +472,13 @@ void ALaneCalibrationOverlayActor::BuildForRoad(
 
 			BuildChevronArrows(ISM, LanePoints, false, VisualSettings);
 			ChevronArrowComponents.Add(ISM);
+		}
+
+		if (bShowLaneIndexLabels && LanePoints.Num() > 0)
+		{
+			const int32 SampleIndex = FMath::Clamp(LanePoints.Num() / 3, 0, LanePoints.Num() - 1);
+			const FVector LabelPos = LanePoints[SampleIndex] + FVector(0.f, 0.f, 120.f);
+			BuildLaneIndexLabel(FString::Printf(TEXT("B%d"), i), LabelPos, FLinearColor(0.95f, 0.3f, 0.2f, 1.0f));
 		}
 		++LaneIndex;
 	}
@@ -462,6 +517,8 @@ void ALaneCalibrationOverlayActor::BuildFromCenterline(const TArray<FVector>& Ce
 	TempFamily.Backward.LaneWidthCm = CachedCalibration.LaneWidthCm;
 	TempFamily.Forward.InnerLaneCenterOffsetCm = CachedCalibration.CenterlineOffsetCm;
 	TempFamily.Backward.InnerLaneCenterOffsetCm = CachedCalibration.CenterlineOffsetCm;
+	TempFamily.Forward.LaneCenterOffsetAdjustmentsCm = ForwardLaneOffsetAdjustmentsCm;
+	TempFamily.Backward.LaneCenterOffsetAdjustmentsCm = BackwardLaneOffsetAdjustmentsCm;
 
 	BuildForRoad(CachedCenterlinePoints, TempFamily, CachedRoadTransform, false);
 }
@@ -543,6 +600,22 @@ void ALaneCalibrationOverlayActor::BuildFromLanePolylines(const TArray<TArray<FV
 		NumArrowInstances);
 }
 
+void ALaneCalibrationOverlayActor::Editor_ResetLaneOffsetAdjustments()
+{
+#if WITH_EDITOR
+	for (float& Value : ForwardLaneOffsetAdjustmentsCm)
+	{
+		Value = 0.f;
+	}
+	for (float& Value : BackwardLaneOffsetAdjustmentsCm)
+	{
+		Value = 0.f;
+	}
+
+	Editor_RebuildFromCachedCenterline();
+#endif
+}
+
 void ALaneCalibrationOverlayActor::Editor_RebuildFromCachedCenterline()
 {
 #if WITH_EDITOR
@@ -556,6 +629,9 @@ void ALaneCalibrationOverlayActor::Editor_RebuildFromCachedCenterline()
 	CachedCalibration.NumLanesPerSideBackward = NumLanesPerSideBackward;
 	CachedCalibration.LaneWidthCm = LaneWidthCm;
 	CachedCalibration.CenterlineOffsetCm = CenterlineOffsetCm;
+
+	ForwardLaneOffsetAdjustmentsCm.SetNum(FMath::Max(0, NumLanesPerSideForward));
+	BackwardLaneOffsetAdjustmentsCm.SetNum(FMath::Max(0, NumLanesPerSideBackward));
 
 	if (!IsCalibrationValid(CachedCalibration))
 	{
@@ -588,8 +664,12 @@ void ALaneCalibrationOverlayActor::PostEditChangeProperty(FPropertyChangedEvent&
 	if (PropName == GET_MEMBER_NAME_CHECKED(ALaneCalibrationOverlayActor, NumLanesPerSideForward) ||
 		PropName == GET_MEMBER_NAME_CHECKED(ALaneCalibrationOverlayActor, NumLanesPerSideBackward) ||
 		PropName == GET_MEMBER_NAME_CHECKED(ALaneCalibrationOverlayActor, LaneWidthCm) ||
-		PropName == GET_MEMBER_NAME_CHECKED(ALaneCalibrationOverlayActor, CenterlineOffsetCm))
+		PropName == GET_MEMBER_NAME_CHECKED(ALaneCalibrationOverlayActor, CenterlineOffsetCm) ||
+		PropName == GET_MEMBER_NAME_CHECKED(ALaneCalibrationOverlayActor, ForwardLaneOffsetAdjustmentsCm) ||
+		PropName == GET_MEMBER_NAME_CHECKED(ALaneCalibrationOverlayActor, BackwardLaneOffsetAdjustmentsCm))
 	{
+		ForwardLaneOffsetAdjustmentsCm.SetNum(FMath::Max(0, NumLanesPerSideForward));
+		BackwardLaneOffsetAdjustmentsCm.SetNum(FMath::Max(0, NumLanesPerSideBackward));
 		Editor_RebuildFromCachedCenterline();
 	}
 }

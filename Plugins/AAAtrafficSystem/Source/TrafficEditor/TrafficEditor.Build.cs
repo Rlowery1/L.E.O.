@@ -21,6 +21,7 @@ public class TrafficEditor : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
+			"ApplicationCore",
 			"Projects",
 			"EditorSubsystem",
 			"PropertyEditor",

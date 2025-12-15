@@ -8,7 +8,43 @@
 #include "TrafficCityBLDAdapterSettings.h"
 #include "UObject/UObjectIterator.h"
 #include "Interfaces/IPluginManager.h"
+#include "Components/SplineComponent.h"
 #include "EngineUtils.h"
+
+namespace
+{
+	static bool IsCityBLDRoadCandidate(const AActor* Actor, const UTrafficCityBLDAdapterSettings* AdapterSettings)
+	{
+		if (!Actor)
+		{
+			return false;
+		}
+
+		if (AdapterSettings && !AdapterSettings->RoadActorTag.IsNone() && Actor->ActorHasTag(AdapterSettings->RoadActorTag))
+		{
+			return true;
+		}
+
+		const FString ClassName = Actor->GetClass()->GetName();
+		if (ClassName.Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+
+		if (AdapterSettings)
+		{
+			for (const FString& Contains : AdapterSettings->RoadClassNameContains)
+			{
+				if (!Contains.IsEmpty() && ClassName.Contains(Contains, ESearchCase::IgnoreCase))
+				{
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+}
 
 TObjectPtr<UObject> UTrafficGeometryProviderFactory::CreateProvider(
 	UWorld* World,
@@ -27,6 +63,7 @@ TObjectPtr<UObject> UTrafficGeometryProviderFactory::CreateProvider(
 
 	const UTrafficRuntimeSettings* Settings = GetDefault<UTrafficRuntimeSettings>();
 	const bool bCityBLDEnabled = Settings ? Settings->bEnableCityBLDAdapter : true;
+	const UTrafficCityBLDAdapterSettings* AdapterSettings = GetDefault<UTrafficCityBLDAdapterSettings>();
 
 	// Detect whether CityBLD roads exist in the world before selecting the CityBLD provider.
 	bool bHasCityBLDRoads = false;
@@ -34,34 +71,36 @@ TObjectPtr<UObject> UTrafficGeometryProviderFactory::CreateProvider(
 	{
 		for (TActorIterator<AActor> It(World); It; ++It)
 		{
-			// CityBLD roads are BP_MeshRoad actors by convention.
-			if (It->GetClass()->GetName().Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase))
+			if (IsCityBLDRoadCandidate(*It, AdapterSettings) && It->FindComponentByClass<USplineComponent>())
 			{
 				bHasCityBLDRoads = true;
 
 #if WITH_EDITOR
 				// When we detect the first CityBLD road, assign a default lane profile for its family if missing.
-				URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get();
-				if (Registry)
+				// Keep this behavior scoped to BP_MeshRoad to avoid creating unexpected families for other spline actors.
+				if (It->GetClass()->GetName().Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase))
 				{
-					FRoadFamilyInfo* Info = Registry->FindOrCreateFamilyForClass(It->GetClass(), nullptr);
-					if (Info && !Info->FamilyDefinition.VehicleLaneProfile.IsValid())
+					URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get();
+					if (Registry)
 					{
-						// Set a default vehicle lane profile for CityBLD roads (used for ZoneGraph + calibration overlay).
-						// Prefer adapter settings so projects can override via config.
-						const UTrafficCityBLDAdapterSettings* AdapterSettings = GetDefault<UTrafficCityBLDAdapterSettings>();
-						Info->FamilyDefinition.VehicleLaneProfile = (AdapterSettings && AdapterSettings->DefaultCityBLDVehicleLaneProfile.IsValid())
-							? AdapterSettings->DefaultCityBLDVehicleLaneProfile
-							: FSoftObjectPath(TEXT("/AAAtrafficSystem/ZoneProfiles/CityBLDUrbanTwoLane.CityBLDUrbanTwoLane"));
+						FRoadFamilyInfo* Info = Registry->FindOrCreateFamilyForClass(It->GetClass(), nullptr);
+						if (Info && !Info->FamilyDefinition.VehicleLaneProfile.IsValid())
+						{
+							// Set a default vehicle lane profile for CityBLD roads (used for ZoneGraph + calibration overlay).
+							// Prefer adapter settings so projects can override via config.
+							Info->FamilyDefinition.VehicleLaneProfile = (AdapterSettings && AdapterSettings->DefaultCityBLDVehicleLaneProfile.IsValid())
+								? AdapterSettings->DefaultCityBLDVehicleLaneProfile
+								: FSoftObjectPath(TEXT("/AAAtrafficSystem/ZoneProfiles/CityBLDUrbanTwoLane.CityBLDUrbanTwoLane"));
 
-						// Also set reasonable default lane counts (1 lane forward, 1 lane backward).
-						Info->FamilyDefinition.Forward.NumLanes = 1;
-						Info->FamilyDefinition.Backward.NumLanes = 1;
+							// Also set reasonable default lane counts (1 lane forward, 1 lane backward).
+							Info->FamilyDefinition.Forward.NumLanes = 1;
+							Info->FamilyDefinition.Backward.NumLanes = 1;
 
-						Registry->RefreshCache();
-						Registry->SaveConfig();
+							Registry->RefreshCache();
+							Registry->SaveConfig();
 
-						UE_LOG(LogTraffic, Log, TEXT("[GeometryProviderFactory] Assigned CityBLD default lane profile to family %s"), *Info->DisplayName);
+							UE_LOG(LogTraffic, Log, TEXT("[GeometryProviderFactory] Assigned CityBLD default lane profile to family %s"), *Info->DisplayName);
+						}
 					}
 				}
 #endif
@@ -115,13 +154,14 @@ void UTrafficGeometryProviderFactory::CreateProviderChainForEditorWorld(
 
 	const UTrafficRuntimeSettings* Settings = GetDefault<UTrafficRuntimeSettings>();
 	const bool bCityBLDEnabled = Settings ? Settings->bEnableCityBLDAdapter : true;
+	const UTrafficCityBLDAdapterSettings* AdapterSettings = GetDefault<UTrafficCityBLDAdapterSettings>();
 
 	bool bHasCityBLDRoads = false;
 	if (bCityBLDEnabled)
 	{
 		for (TActorIterator<AActor> It(World); It; ++It)
 		{
-			if (It->GetClass()->GetName().Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase))
+			if (IsCityBLDRoadCandidate(*It, AdapterSettings) && It->FindComponentByClass<USplineComponent>())
 			{
 				bHasCityBLDRoads = true;
 				break;

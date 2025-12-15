@@ -27,6 +27,7 @@
 #include "UObject/ConstructorHelpers.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
+#include "Algo/Reverse.h"
 
 // Helper to harvest vertices from a static mesh. Uses render data if available,
 // otherwise falls back to the mesh's MeshDescription so CPU access is never needed (editor only).
@@ -292,6 +293,11 @@ void UStaticMeshRoadGeometryProvider::CollectRoads(UWorld* World, TArray<FTraffi
 		if (!BuildCenterlineFromActor(Actor, Centerline) || Centerline.Num() < 2)
 		{
 			continue;
+		}
+
+		if (Meta->bReverseCenterlineDirection)
+		{
+			Algo::Reverse(Centerline);
 		}
 
 		int32 FamilyId = 0;

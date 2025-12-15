@@ -13,14 +13,49 @@
 #include "TrafficRoadMetadataComponent.h"
 #include "TrafficRuntimeModule.h"
 #include "TrafficRoadTypes.h"
+#include "Algo/Reverse.h"
 
 namespace
 {
 	static TAutoConsoleVariable<int32> CVarTrafficCityBLDWarnMissingCenterlineSplineTag(
 		TEXT("aaa.Traffic.CityBLD.WarnMissingCenterlineSplineTag"),
 		1,
-		TEXT("If non-zero, warns when BP_MeshRoad has multiple splines but none are tagged with RoadSplineTag (e.g. CityBLD_Centerline)."),
+		TEXT("If non-zero, warns when a CityBLD road actor has multiple splines but none are tagged with RoadSplineTag (e.g. CityBLD_Centerline)."),
 		ECVF_Default);
+
+	static bool IsCityBLDRoadCandidate(const AActor* Actor, const UTrafficCityBLDAdapterSettings* AdapterSettings)
+	{
+		if (!Actor)
+		{
+			return false;
+		}
+
+		if (AdapterSettings && !AdapterSettings->RoadActorTag.IsNone() && Actor->ActorHasTag(AdapterSettings->RoadActorTag))
+		{
+			return true;
+		}
+
+		const FString ClassName = Actor->GetClass()->GetName();
+
+		// Back-compat: CityBLD roads are BP_MeshRoad actors by convention.
+		if (ClassName.Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+
+		if (AdapterSettings)
+		{
+			for (const FString& Contains : AdapterSettings->RoadClassNameContains)
+			{
+				if (!Contains.IsEmpty() && ClassName.Contains(Contains, ESearchCase::IgnoreCase))
+				{
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
 
 	static bool ShouldWarnOncePerActor(const AActor* Actor)
 	{
@@ -149,6 +184,7 @@ void UCityBLDRoadGeometryProvider::CollectRoads(UWorld* World, TArray<FTrafficRo
 	const UTrafficRoadFamilySettings* FamSettings = GetDefault<UTrafficRoadFamilySettings>();
 	const TArray<FRoadFamilyDefinition>* FamiliesPtr = FamSettings ? &FamSettings->Families : nullptr;
 	const int32 FamilyCount = FamiliesPtr ? FamiliesPtr->Num() : 0;
+	const UTrafficCityBLDAdapterSettings* AdapterSettings = GetDefault<UTrafficCityBLDAdapterSettings>();
 
 	int32 NextRoadId = 0;
 
@@ -160,7 +196,7 @@ void UCityBLDRoadGeometryProvider::CollectRoads(UWorld* World, TArray<FTrafficRo
 			continue;
 		}
 
-		if (!Actor->GetClass()->GetName().Contains(TEXT("BP_MeshRoad")))
+		if (!IsCityBLDRoadCandidate(Actor, AdapterSettings))
 		{
 			continue;
 		}
@@ -175,6 +211,11 @@ void UCityBLDRoadGeometryProvider::CollectRoads(UWorld* World, TArray<FTrafficRo
 		if (!BuildCenterlineFromCityBLDRoad(Actor, Centerline) || Centerline.Num() < 2)
 		{
 			continue;
+		}
+
+		if (Meta && Meta->bReverseCenterlineDirection)
+		{
+			Algo::Reverse(Centerline);
 		}
 
 		int32 FamilyId = 0;
@@ -225,14 +266,30 @@ bool UCityBLDRoadGeometryProvider::GetDisplayCenterlineForActor(AActor* RoadActo
 		return false;
 	}
 
-	// Only handle CityBLD BP_MeshRoad here; let other providers handle non-CityBLD roads.
-	if (!RoadActor->GetClass()->GetName().Contains(TEXT("BP_MeshRoad"), ESearchCase::IgnoreCase))
+	const UTrafficCityBLDAdapterSettings* AdapterSettings = GetDefault<UTrafficCityBLDAdapterSettings>();
+
+	// Only handle CityBLD road candidates here; let other providers handle unrelated roads.
+	if (!IsCityBLDRoadCandidate(RoadActor, AdapterSettings))
 	{
 		return false;
 	}
 
 	// This uses the full CityBLD smoothing pipeline already implemented in BuildCenterlineFromCityBLDRoad.
-	return BuildCenterlineFromCityBLDRoad(RoadActor, OutPoints) && OutPoints.Num() >= 2;
+	const bool bOk = BuildCenterlineFromCityBLDRoad(RoadActor, OutPoints) && OutPoints.Num() >= 2;
+	if (!bOk)
+	{
+		return false;
+	}
+
+	if (const UTrafficRoadMetadataComponent* Meta = RoadActor->FindComponentByClass<UTrafficRoadMetadataComponent>())
+	{
+		if (Meta->bReverseCenterlineDirection)
+		{
+			Algo::Reverse(OutPoints);
+		}
+	}
+
+	return OutPoints.Num() >= 2;
 }
 
 bool UCityBLDRoadGeometryProvider::BuildCenterlineFromCityBLDRoad(const AActor* Actor, TArray<FVector>& OutPoints) const

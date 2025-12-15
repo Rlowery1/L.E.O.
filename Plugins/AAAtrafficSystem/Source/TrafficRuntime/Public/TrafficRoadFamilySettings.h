@@ -18,6 +18,16 @@ struct TRAFFICRUNTIME_API FTrafficLaneLayoutSide
 
 	UPROPERTY(EditAnywhere, Config, Category="Traffic")
 	float InnerLaneCenterOffsetCm = 175.f;
+
+	/**
+	 * Optional per-lane lateral offset adjustments (in cm) added on top of:
+	 *   InnerLaneCenterOffsetCm + LaneIndex * LaneWidthCm
+	 *
+	 * Use this when a road has an asymmetrical lane layout (e.g. bus lane) and evenly-spaced lanes are not sufficient.
+	 * If empty or shorter than NumLanes, missing entries are treated as 0.
+	 */
+	UPROPERTY(EditAnywhere, Config, Category="Traffic")
+	TArray<float> LaneCenterOffsetAdjustmentsCm;
 };
 
 USTRUCT(BlueprintType)

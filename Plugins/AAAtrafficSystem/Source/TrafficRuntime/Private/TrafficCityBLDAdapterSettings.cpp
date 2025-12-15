@@ -8,5 +8,6 @@ UTrafficCityBLDAdapterSettings::UTrafficCityBLDAdapterSettings()
 	RoadClassNameContains.Add(TEXT("CityKit_Road"));
 	RoadClassNameContains.Add(TEXT("CityKit_MeshRoad"));
 	RoadClassNameContains.Add(TEXT("BP_MeshRoad"));
+	RoadClassNameContains.Add(TEXT("BP_ModularRoad"));
 	DefaultCityBLDVehicleLaneProfile = FSoftObjectPath(TEXT("/AAAtrafficSystem/ZoneProfiles/CityBLDUrbanTwoLane.CityBLDUrbanTwoLane"));
 }

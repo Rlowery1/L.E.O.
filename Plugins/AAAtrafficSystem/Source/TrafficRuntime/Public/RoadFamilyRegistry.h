@@ -61,6 +61,12 @@ public:
 
 	/** Returns existing family or creates a new one for the provided road actor (may use a variant key). */
 	FRoadFamilyInfo* FindOrCreateFamilyForActor(AActor* RoadActor, bool* bOutCreated = nullptr);
+	/**
+	 * Returns existing family or creates a new one for the provided road actor, but forces a specific VariantKey.
+	 * Useful for cases where the actor class is shared (e.g. CityBLD BP_ModularRoad ramps) but we need to split
+	 * sub-variants (e.g. On vs Off) that would otherwise collide.
+	 */
+	FRoadFamilyInfo* FindOrCreateFamilyForActorWithVariantKey(AActor* RoadActor, const FString& VariantKeyOverride, bool* bOutCreated = nullptr);
 
 	/** Finds family by id. */
 	FRoadFamilyInfo* FindFamilyById(const FGuid& FamilyId);
@@ -81,6 +87,9 @@ public:
 
 	/** Restore last backed-up calibration if present. */
 	bool RestoreLastCalibration(const FGuid& FamilyId);
+
+	/** Removes a family entry (and its calibration) from the registry. */
+	bool DeleteFamilyById(const FGuid& FamilyId);
 
 	/** Find a family by id (const). */
 	const FRoadFamilyInfo* GetFamilyById(const FGuid& FamilyId) const { return FindFamilyById(FamilyId); }

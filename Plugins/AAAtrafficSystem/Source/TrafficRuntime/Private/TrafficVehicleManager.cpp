@@ -264,6 +264,13 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 	{
 		const FTrafficLane& Lane = Lanes[LaneIndex];
 
+		// When the network builder splits lanes to support mid-spline merges/diverges, we only want to spawn on the root segment.
+		// Vehicles will transition across split segments via generated movements.
+		if (Lane.PrevLaneId != INDEX_NONE)
+		{
+			continue;
+		}
+
 		if (Lane.CenterlinePoints.Num() < 2)
 		{
 			UE_LOG(LogTraffic, Verbose, TEXT("[VehicleManager] Lane %d has insufficient points; skipping spawn."), LaneIndex);
