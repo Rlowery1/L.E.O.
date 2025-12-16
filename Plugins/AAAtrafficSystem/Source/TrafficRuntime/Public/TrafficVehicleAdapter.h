@@ -5,6 +5,7 @@
 #include "TrafficVehicleAdapter.generated.h"
 
 class ATrafficVehicleBase;
+class UPrimitiveComponent;
 
 /**
  * Adapter that binds a logic vehicle (ATrafficVehicleBase) to a visual/Chaos pawn.
@@ -31,4 +32,24 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+
+private:
+	struct FChaosDrivePrimWarmupState
+	{
+		TWeakObjectPtr<UPrimitiveComponent> Prim;
+		bool bWasSimulatingPhysics = false;
+		bool bWasGravityEnabled = true;
+	};
+
+	bool bLoggedChaosDriveInit = false;
+	bool bLoggedChaosDriveMissingMovement = false;
+	bool bChaosDriveMovementSuspended = false;
+	float ChaosDriveMovementResumeAgeSeconds = 0.f;
+	bool bChaosDriveUprightFixed = false;
+	bool bChaosDrivePhysicsSuspended = false;
+	float ChaosDrivePhysicsResumeAgeSeconds = 0.f;
+	TArray<FChaosDrivePrimWarmupState> ChaosDrivePhysicsComps;
+	float PrevSteer = 0.f;
+	float PrevThrottle = 0.f;
+	float PrevBrake = 0.f;
 };

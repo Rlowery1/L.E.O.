@@ -57,6 +57,12 @@ static TAutoConsoleVariable<float> CVarTrafficIntersectionReservationConflictDis
 	TEXT("Minimum separation (cm) between two movement paths to allow simultaneous intersection reservations (TrafficLights mode only)."),
 	ECVF_Default);
 
+static TAutoConsoleVariable<float> CVarTrafficIntersectionReservationMaxLifetimeSeconds(
+	TEXT("aaa.Traffic.Intersections.ReservationMaxLifetimeSeconds"),
+	12.0f,
+	TEXT("Hard cap (seconds) on how long an intersection reservation can persist (safety deadlock breaker)."),
+	ECVF_Default);
+
 #if WITH_EDITOR
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "UObject/SavePackage.h"
@@ -616,13 +622,44 @@ bool ATrafficSystemController::TryReserveIntersection(int32 IntersectionId, ATra
 		return false;
 	}
 
+	const float Now = World->GetTimeSeconds();
+	const float ExpireAt = Now + FMath::Max(0.1f, HoldSeconds);
+	const float MaxLifetimeSeconds = FMath::Max(0.f, CVarTrafficIntersectionReservationMaxLifetimeSeconds.GetValueOnGameThread());
+
+	const int32 ControlMode = CVarTrafficIntersectionControlMode.GetValueOnGameThread();
+	const bool bTrafficLightsMode = (ControlMode == 2);
+
+	// Ensure signal phase is up-to-date even if vehicle ticks run before the controller tick this frame.
+	if (bTrafficLightsMode && BuiltNetworkAsset)
+	{
+		UpdateIntersectionSignals(BuiltNetworkAsset->Network, Now);
+	}
+
 	if (BuiltNetworkAsset && !IsMovementAllowedBySignals(BuiltNetworkAsset->Network, IntersectionId, MovementId))
 	{
 		return false;
 	}
 
-	const float Now = World->GetTimeSeconds();
-	const float ExpireAt = Now + FMath::Max(0.1f, HoldSeconds);
+	const FTrafficIntersection* Intersection = nullptr;
+	float KeepAliveRadiusCm = 0.f;
+	if (BuiltNetworkAsset)
+	{
+		Intersection = BuiltNetworkAsset->Network.Intersections.FindByPredicate(
+			[&](const FTrafficIntersection& I) { return I.IntersectionId == IntersectionId; });
+
+		if (Intersection)
+		{
+			float StopLineOffsetCm = 0.f;
+			if (IConsoleVariable* StopLineVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm")))
+			{
+				StopLineOffsetCm = FMath::Max(0.f, StopLineVar->GetFloat());
+			}
+
+			// Avoid dropping a reservation while the vehicle is still physically near/within the intersection,
+			// even if the time-based hold expires (release should normally clear it).
+			KeepAliveRadiusCm = FMath::Max(0.f, Intersection->Radius) + StopLineOffsetCm + 200.f;
+		}
+	}
 
 	TArray<FIntersectionReservation>& Reservations = IntersectionReservations.FindOrAdd(IntersectionId);
 	for (int32 Idx = Reservations.Num() - 1; Idx >= 0; --Idx)
@@ -630,8 +667,30 @@ bool ATrafficSystemController::TryReserveIntersection(int32 IntersectionId, ATra
 		const FIntersectionReservation& R = Reservations[Idx];
 		const bool bExpired = (R.ExpireTimeSeconds > 0.f && Now > R.ExpireTimeSeconds);
 		const bool bInvalid = !R.Vehicle.IsValid();
-		if (bExpired || bInvalid)
+		if (bInvalid)
 		{
+			Reservations.RemoveAtSwap(Idx, 1, EAllowShrinking::No);
+			continue;
+		}
+
+		if (bExpired)
+		{
+			if (MaxLifetimeSeconds > 0.f && R.CreatedTimeSeconds > 0.f && (Now - R.CreatedTimeSeconds) > MaxLifetimeSeconds)
+			{
+				Reservations.RemoveAtSwap(Idx, 1, EAllowShrinking::No);
+				continue;
+			}
+
+			const ATrafficVehicleBase* ReservedVehicle = R.Vehicle.Get();
+			if (Intersection && ReservedVehicle && KeepAliveRadiusCm > 0.f)
+			{
+				const float DistSq = FVector::DistSquared(ReservedVehicle->GetActorLocation(), Intersection->Center);
+				if (DistSq <= FMath::Square(KeepAliveRadiusCm))
+				{
+					continue;
+				}
+			}
+
 			Reservations.RemoveAtSwap(Idx, 1, EAllowShrinking::No);
 		}
 	}
@@ -642,12 +701,13 @@ bool ATrafficSystemController::TryReserveIntersection(int32 IntersectionId, ATra
 		{
 			Existing.MovementId = MovementId;
 			Existing.ExpireTimeSeconds = ExpireAt;
+			if (Existing.CreatedTimeSeconds <= 0.f)
+			{
+				Existing.CreatedTimeSeconds = Now;
+			}
 			return true;
 		}
 	}
-
-	const int32 ControlMode = CVarTrafficIntersectionControlMode.GetValueOnGameThread();
-	const bool bTrafficLightsMode = (ControlMode == 2);
 
 	// In non-signal modes, keep the simple "one vehicle at a time" reservation to stay conservative.
 	if (!bTrafficLightsMode)
@@ -687,6 +747,7 @@ bool ATrafficSystemController::TryReserveIntersection(int32 IntersectionId, ATra
 	NewRes.Vehicle = Vehicle;
 	NewRes.MovementId = MovementId;
 	NewRes.ExpireTimeSeconds = ExpireAt;
+	NewRes.CreatedTimeSeconds = Now;
 	Reservations.Add(MoveTemp(NewRes));
 	return true;
 }

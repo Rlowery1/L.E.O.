@@ -4,15 +4,16 @@
 #include "GameFramework/Actor.h"
 #include "TrafficAutomationLogger.h"
 #include "ZoneGraphTypes.h"
+#include "TrafficSystemController.h"
 #include "TrafficVehicleBase.generated.h"
 
 class UStaticMeshComponent;
 class UTrafficKinematicFollower;
 class UZoneGraphSubsystem;
 class UTrafficNetworkAsset;
-class ATrafficSystemController;
 struct FTrafficLane;
 struct FTrafficMovement;
+enum class EPathFollowTargetType : uint8;
 
 UCLASS()
 class TRAFFICRUNTIME_API ATrafficVehicleBase : public AActor
@@ -40,6 +41,15 @@ public:
 
 	/** Show/hide the debug body mesh (the cube). Used when Chaos visuals are active. */
 	void SetDebugBodyVisible(bool bVisible);
+
+	/** Planned speed from the traffic logic (cm/sec). Useful for driving a physical/visual vehicle. */
+	float GetPlannedSpeedCmPerSec() const;
+
+	/** Returns the current lane/movement follow target (for following/spacing queries). */
+	bool GetFollowTarget(EPathFollowTargetType& OutType, int32& OutTargetId, float& OutS) const;
+
+	/** Approximate length of this vehicle (cm) used for spacing/following. */
+	void SetApproxVehicleLengthCm(float InLengthCm) { ApproxVehicleLengthCm = FMath::Max(0.f, InLengthCm); }
 
 protected:
 	virtual void BeginPlay() override;
@@ -75,6 +85,7 @@ protected:
 	float CruiseSpeedCmPerSec = 800.f;
 	float StopUntilTimeSeconds = -1.f;
 	float LastStopLineDebugTimeSeconds = -1.f;
+	float ApproxVehicleLengthCm = 450.f;
 
 	// ZoneGraph-following mode (alternative to UTrafficKinematicFollower).
 	bool bUseZoneGraphLane = false;

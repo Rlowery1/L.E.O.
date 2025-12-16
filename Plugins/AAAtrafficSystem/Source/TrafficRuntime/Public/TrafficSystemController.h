@@ -76,6 +76,7 @@ private:
 		TWeakObjectPtr<ATrafficVehicleBase> Vehicle;
 		int32 MovementId = INDEX_NONE;
 		float ExpireTimeSeconds = 0.f;
+		float CreatedTimeSeconds = 0.f;
 	};
 
 	TMap<int32, TArray<FIntersectionReservation>> IntersectionReservations;

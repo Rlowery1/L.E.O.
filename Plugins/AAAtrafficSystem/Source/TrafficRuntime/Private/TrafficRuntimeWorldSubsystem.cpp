@@ -613,6 +613,12 @@ void UTrafficRuntimeWorldSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 		return;
 	}
 
+	// Apply kit-tuned traffic rule defaults (unless the user explicitly overrode the CVars).
+	// This is intentionally independent of auto-spawn so that Project Settings act as defaults
+	// for any runtime workflow (manual controller placement, Blueprints, etc).
+	ApplyIntersectionStopLineDefaultsForWorld(InWorld);
+	ApplyIntersectionControlDefaultsForWorld(InWorld);
+
 	const UTrafficRuntimeSettings* Settings = GetDefault<UTrafficRuntimeSettings>();
 	if (!Settings || !Settings->bAutoSpawnTrafficOnBeginPlay)
 	{
@@ -623,10 +629,6 @@ void UTrafficRuntimeWorldSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	{
 		return;
 	}
-
-	// Apply kit-tuned traffic rule defaults (unless the user explicitly overrode the CVars).
-	ApplyIntersectionStopLineDefaultsForWorld(InWorld);
-	ApplyIntersectionControlDefaultsForWorld(InWorld);
 
 	UE_LOG(LogTraffic, Log,
 		TEXT("[TrafficRuntimeWorldSubsystem] OnWorldBeginPlay: World=%s Type=%d AutoBuild=%s AutoSpawn=%s VehiclesPerLane=%d Speed=%.1f ZoneGraph=%s"),

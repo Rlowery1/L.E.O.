@@ -14,6 +14,7 @@
 #include "TrafficRuntimeModule.h"
 #include "TrafficSystemController.h"
 #include "ZoneGraphSubsystem.h"
+#include "EngineUtils.h"
 #include "HAL/IConsoleManager.h"
 
 static TAutoConsoleVariable<int32> CVarTrafficIntersectionReservationEnabled(
@@ -56,6 +57,36 @@ static TAutoConsoleVariable<float> CVarTrafficIntersectionFullStopSeconds(
 	TEXT("aaa.Traffic.Intersections.FullStopSeconds"),
 	0.75f,
 	TEXT("Seconds to remain fully stopped at the stop line when RequireFullStop=1."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficFollowingTimeHeadwaySeconds(
+	TEXT("aaa.Traffic.Following.TimeHeadwaySeconds"),
+	1.6f,
+	TEXT("Desired time headway to the lead vehicle when following (seconds)."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficFollowingMinGapCm(
+	TEXT("aaa.Traffic.Following.MinGapCm"),
+	250.f,
+	TEXT("Minimum standstill gap to the lead vehicle when following (cm)."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficFollowingMaxAccelCmPerSec2(
+	TEXT("aaa.Traffic.Following.MaxAccelCmPerSec2"),
+	220.f,
+	TEXT("Max acceleration when adjusting speed for following (cm/s^2)."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficFollowingMaxDecelCmPerSec2(
+	TEXT("aaa.Traffic.Following.MaxDecelCmPerSec2"),
+	500.f,
+	TEXT("Max deceleration when adjusting speed for following (cm/s^2)."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarTrafficFollowingEnabled(
+	TEXT("aaa.Traffic.Following.Enabled"),
+	1,
+	TEXT("If non-zero, vehicles adjust speed to follow a lead vehicle on the same lane/movement."),
 	ECVF_Default);
 
 static bool TryComputeStopSFromIntersectionBoundary(
@@ -172,6 +203,25 @@ ATrafficVehicleBase::ATrafficVehicleBase()
 	}
 
 	Follower = nullptr;
+}
+
+bool ATrafficVehicleBase::GetFollowTarget(EPathFollowTargetType& OutType, int32& OutTargetId, float& OutS) const
+{
+	if (!Follower)
+	{
+		return false;
+	}
+
+	const FPathFollowState& State = Follower->GetState();
+	if (State.TargetType != EPathFollowTargetType::Lane && State.TargetType != EPathFollowTargetType::Movement)
+	{
+		return false;
+	}
+
+	OutType = State.TargetType;
+	OutTargetId = State.TargetId;
+	OutS = State.S;
+	return true;
 }
 
 void ATrafficVehicleBase::BeginPlay()
@@ -323,6 +373,8 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 		TrafficController.IsValid() &&
 		NetworkAsset;
 
+	float DesiredSpeedCmPerSec = CruiseSpeedCmPerSec;
+
 	if (bReservationEnabled)
 	{
 		const FTrafficNetwork& Net = NetworkAsset->Network;
@@ -394,7 +446,7 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 				// Optional 4-way-stop style full stop even when reservation succeeds.
 				if (StopUntilTimeSeconds > Now && StopLineOffset > 0.f)
 				{
-					Follower->SetSpeedCmPerSec(0.f);
+					DesiredSpeedCmPerSec = 0.f;
 					if (PreState.S > StopS)
 					{
 						Follower->SetDistanceAlongTarget(StopS);
@@ -403,16 +455,13 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 				else if (StopUntilTimeSeconds > 0.f && StopUntilTimeSeconds <= Now)
 				{
 					StopUntilTimeSeconds = -1.f;
-					if (!bWaitingForIntersection)
-					{
-						Follower->SetSpeedCmPerSec(CruiseSpeedCmPerSec);
-					}
+					// Resume normal following behavior below (speed will be restored smoothly).
 				}
 
 				// If we're waiting, hold position and retry reservation.
 				if (bWaitingForIntersection)
 				{
-					Follower->SetSpeedCmPerSec(0.f);
+					DesiredSpeedCmPerSec = 0.f;
 					if (PreState.S > StopS)
 					{
 						Follower->SetDistanceAlongTarget(StopS);
@@ -443,12 +492,8 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 							{
 								const float StopSeconds = FMath::Max(0.f, CVarTrafficIntersectionFullStopSeconds.GetValueOnGameThread());
 								StopUntilTimeSeconds = Now + StopSeconds;
-								Follower->SetSpeedCmPerSec(0.f);
+								DesiredSpeedCmPerSec = 0.f;
 								Follower->SetDistanceAlongTarget(StopS);
-							}
-							else
-							{
-								Follower->SetSpeedCmPerSec(CruiseSpeedCmPerSec);
 							}
 						}
 					}
@@ -481,7 +526,7 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 							{
 								const float StopSeconds = FMath::Max(0.f, CVarTrafficIntersectionFullStopSeconds.GetValueOnGameThread());
 								StopUntilTimeSeconds = Now + StopSeconds;
-								Follower->SetSpeedCmPerSec(0.f);
+								DesiredSpeedCmPerSec = 0.f;
 								Follower->SetDistanceAlongTarget(StopS);
 							}
 						}
@@ -498,7 +543,7 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 							WaitingMovementId = NextMovement->MovementId;
 							WaitingOutgoingLaneId = NextMovement->OutgoingLaneId;
 
-							Follower->SetSpeedCmPerSec(0.f);
+							DesiredSpeedCmPerSec = 0.f;
 							if (PreState.S > StopS)
 							{
 								Follower->SetDistanceAlongTarget(StopS);
@@ -508,6 +553,99 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 				}
 			}
 		}
+	}
+
+	// Simple car-following: cap desired speed based on a lead vehicle on the same lane/movement.
+	if (CVarTrafficFollowingEnabled.GetValueOnGameThread() != 0 && Follower)
+	{
+		EPathFollowTargetType MyType;
+		int32 MyTargetId;
+		float MyS;
+		if (GetFollowTarget(MyType, MyTargetId, MyS))
+		{
+			float BestDeltaS = TNumericLimits<float>::Max();
+			float LeadSpeed = 0.f;
+			float LeadLength = 0.f;
+
+			for (TActorIterator<ATrafficVehicleBase> It(GetWorld()); It; ++It)
+			{
+				ATrafficVehicleBase* Other = *It;
+				if (!Other || Other == this)
+				{
+					continue;
+				}
+
+				EPathFollowTargetType OtherType;
+				int32 OtherTargetId;
+				float OtherS;
+				if (!Other->GetFollowTarget(OtherType, OtherTargetId, OtherS))
+				{
+					continue;
+				}
+
+				if (OtherType != MyType || OtherTargetId != MyTargetId)
+				{
+					continue;
+				}
+
+				const float DeltaS = OtherS - MyS;
+				if (DeltaS <= 0.f)
+				{
+					continue;
+				}
+
+				if (DeltaS < BestDeltaS)
+				{
+					BestDeltaS = DeltaS;
+					LeadSpeed = Other->GetPlannedSpeedCmPerSec();
+					LeadLength = Other->ApproxVehicleLengthCm;
+				}
+			}
+
+			if (BestDeltaS < TNumericLimits<float>::Max())
+			{
+				const float TimeHeadway = FMath::Max(0.f, CVarTrafficFollowingTimeHeadwaySeconds.GetValueOnGameThread());
+				const float MinGap = FMath::Max(0.f, CVarTrafficFollowingMinGapCm.GetValueOnGameThread());
+
+				const float EgoSpeed = Follower->GetCurrentSpeedCmPerSec();
+				const float DesiredGap = MinGap + TimeHeadway * EgoSpeed;
+				const float AvailableGap = FMath::Max(0.f, BestDeltaS - LeadLength);
+
+				// If too close, cap speed (and potentially stop).
+				if (AvailableGap <= DesiredGap)
+				{
+					DesiredSpeedCmPerSec = FMath::Min(DesiredSpeedCmPerSec, LeadSpeed);
+					if (AvailableGap <= MinGap * 0.5f)
+					{
+						DesiredSpeedCmPerSec = 0.f;
+					}
+				}
+			}
+		}
+	}
+
+	// Apply acceleration limits for smoother motion (and better ChaosDrive targets).
+	if (Follower)
+	{
+		const float Current = Follower->GetCurrentSpeedCmPerSec();
+		const float Target = FMath::Max(0.f, DesiredSpeedCmPerSec);
+		const float MaxAccel = FMath::Max(0.f, CVarTrafficFollowingMaxAccelCmPerSec2.GetValueOnGameThread());
+		const float MaxDecel = FMath::Max(0.f, CVarTrafficFollowingMaxDecelCmPerSec2.GetValueOnGameThread());
+
+		const float MaxDeltaUp = MaxAccel * FMath::Max(0.f, DeltaSeconds);
+		const float MaxDeltaDown = MaxDecel * FMath::Max(0.f, DeltaSeconds);
+
+		float NewSpeed = Target;
+		if (NewSpeed > Current)
+		{
+			NewSpeed = FMath::Min(NewSpeed, Current + MaxDeltaUp);
+		}
+		else
+		{
+			NewSpeed = FMath::Max(NewSpeed, Current - MaxDeltaDown);
+		}
+
+		Follower->SetSpeedCmPerSec(NewSpeed);
 	}
 
 	const float CurrentSpeed = Follower->GetCurrentSpeedCmPerSec();
@@ -688,4 +826,14 @@ void ATrafficVehicleBase::SetDebugBodyVisible(bool bVisible)
 		Body->SetVisibility(bVisible, true);
 		Body->SetHiddenInGame(!bVisible);
 	}
+}
+
+float ATrafficVehicleBase::GetPlannedSpeedCmPerSec() const
+{
+	if (bUseZoneGraphLane)
+	{
+		return FMath::Max(0.f, ZoneSpeedCmPerSec);
+	}
+
+	return Follower ? FMath::Max(0.f, Follower->GetCurrentSpeedCmPerSec()) : 0.f;
 }
