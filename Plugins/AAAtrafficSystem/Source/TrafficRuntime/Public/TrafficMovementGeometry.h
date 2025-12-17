@@ -36,10 +36,15 @@ namespace TrafficMovementGeometry
 		const FTrafficMovement& Movement,
 		TArray<FMovementSample>& OutSamples);
 
+	/** Projects a world location onto the movement polyline and returns distance S (cm) along it. */
+	TRAFFICRUNTIME_API bool ProjectPointOntoMovement(
+		const FTrafficMovement& Movement,
+		const FVector& WorldLocation,
+		float& OutS);
+
 	TRAFFICRUNTIME_API bool SamplePoseAtS(
 		const FTrafficMovement& Movement,
 		float S,
 		FVector& OutPosition,
 		FVector& OutTangent);
 }
-

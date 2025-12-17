@@ -18,4 +18,8 @@ public:
 
 private:
 	void RegisterMenus();
+	void OnPreBeginPIE(const bool bIsSimulating);
+	bool AreTrafficBinariesStale(FString& OutDetails) const;
+
+	FDelegateHandle PreBeginPIEHandle;
 };

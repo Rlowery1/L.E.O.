@@ -7,17 +7,30 @@
 #include "TrafficRoadFamilySettings.h"
 #include "TrafficRoadMetadataComponent.h"
 #include "TrafficSystemController.h"
+#include "TrafficVisualMode.h"
 #include "TrafficRuntimeModule.h"
+#include "TrafficNetworkAsset.h"
 
+#include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Algo/Reverse.h"
+#include "TimerManager.h"
+#include "CollisionQueryParams.h"
 #include "UObject/UnrealType.h"
 #include "HAL/IConsoleManager.h"
 
 namespace
 {
 	static bool IsCityBLDRoadCandidate_Runtime(const AActor* Actor, const UTrafficCityBLDAdapterSettings* AdapterSettings);
+
+	static TAutoConsoleVariable<int32> CVarTrafficOnScreenBuildStamp(
+		TEXT("aaa.Traffic.Debug.OnScreenBuildStamp"),
+		1,
+		TEXT("If non-zero, prints the AAA Traffic runtime build stamp on-screen at PIE start.\n")
+		TEXT("This provides an unmissable confirmation that the latest plugin binaries are loaded.\n")
+		TEXT("Default: 1"),
+		ECVF_Default);
 
 	static bool IsCVarExplicitlySet(const IConsoleVariable* Var)
 	{
@@ -98,6 +111,7 @@ namespace
 		}
 
 		IConsoleVariable* ControlModeVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.ControlMode"));
+		IConsoleVariable* RequireFullStopVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.RequireFullStop"));
 		IConsoleVariable* GreenVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.GreenSeconds"));
 		IConsoleVariable* YellowVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.YellowSeconds"));
 		IConsoleVariable* AllRedVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.AllRedSeconds"));
@@ -105,6 +119,14 @@ namespace
 		if (ControlModeVar && !IsCVarExplicitlySet(ControlModeVar))
 		{
 			ControlModeVar->Set(static_cast<int32>(RuntimeSettings->IntersectionControlMode), ECVF_SetByProjectSetting);
+		}
+
+		// 4-way-stop should default to a full stop at the stop line (unless the user explicitly overrides the CVar).
+		if (RequireFullStopVar && !IsCVarExplicitlySet(RequireFullStopVar))
+		{
+			const int32 Mode = static_cast<int32>(RuntimeSettings->IntersectionControlMode);
+			const int32 RequireStop = (Mode == static_cast<int32>(ETrafficIntersectionControlMode::FourWayStop)) ? 1 : 0;
+			RequireFullStopVar->Set(RequireStop, ECVF_SetByProjectSetting);
 		}
 		if (GreenVar && !IsCVarExplicitlySet(GreenVar))
 		{
@@ -117,6 +139,21 @@ namespace
 		if (AllRedVar && !IsCVarExplicitlySet(AllRedVar))
 		{
 			AllRedVar->Set(FMath::Max(0.f, RuntimeSettings->TrafficLightAllRedSeconds), ECVF_SetByProjectSetting);
+		}
+	}
+
+	static void ApplyRoutingDefaultsForWorld(UWorld& World)
+	{
+		const UTrafficRuntimeSettings* RuntimeSettings = GetDefault<UTrafficRuntimeSettings>();
+		if (!RuntimeSettings)
+		{
+			return;
+		}
+
+		IConsoleVariable* TurnPolicyVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Routing.TurnPolicy"));
+		if (TurnPolicyVar && !IsCVarExplicitlySet(TurnPolicyVar))
+		{
+			TurnPolicyVar->Set(static_cast<int32>(RuntimeSettings->TurnPolicy), ECVF_SetByProjectSetting);
 		}
 	}
 
@@ -153,7 +190,7 @@ namespace
 		return false;
 	}
 
-	static bool TryReadStringLikePropertyValue(const FProperty* Prop, const void* ValuePtr, FString& OutValue)
+	static bool TryReadStringLikePropertyValue_Runtime(const FProperty* Prop, const void* ValuePtr, FString& OutValue)
 	{
 		if (!Prop || !ValuePtr)
 		{
@@ -181,7 +218,7 @@ namespace
 		return false;
 	}
 
-	static FString FindBestStyleOrPresetNameOnObject(UObject* Obj)
+	static FString FindBestStyleOrPresetNameOnObject_Runtime(UObject* Obj)
 	{
 		if (!Obj)
 		{
@@ -224,7 +261,7 @@ namespace
 			const void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Obj);
 			FString Value;
 
-			if (TryReadStringLikePropertyValue(Prop, ValuePtr, Value))
+			if (TryReadStringLikePropertyValue_Runtime(Prop, ValuePtr, Value))
 			{
 				Value.TrimStartAndEndInline();
 				if (Value.Len() > Best.Len())
@@ -243,7 +280,7 @@ namespace
 					continue;
 				}
 
-				const FString Nested = FindBestStyleOrPresetNameOnObject(Ref);
+				const FString Nested = FindBestStyleOrPresetNameOnObject_Runtime(Ref);
 				if (Nested.Len() > Best.Len())
 				{
 					Best = Nested;
@@ -283,7 +320,7 @@ namespace
 
 					const void* InnerPtr = Inner->ContainerPtrToValuePtr<void>(StructPtr);
 					FString InnerValue;
-					if (TryReadStringLikePropertyValue(Inner, InnerPtr, InnerValue))
+					if (TryReadStringLikePropertyValue_Runtime(Inner, InnerPtr, InnerValue))
 					{
 						InnerValue.TrimStartAndEndInline();
 						if (InnerValue.Len() > Best.Len())
@@ -298,7 +335,7 @@ namespace
 		return Best;
 	}
 
-	static FString TryGetCityBLDVariantKeyFromActor(const AActor* RoadActor)
+	static FString TryGetCityBLDVariantKeyFromActor_Runtime(const AActor* RoadActor)
 	{
 		if (!RoadActor)
 		{
@@ -315,7 +352,7 @@ namespace
 				continue;
 			}
 
-			const FString Candidate = FindBestStyleOrPresetNameOnObject(C);
+			const FString Candidate = FindBestStyleOrPresetNameOnObject_Runtime(C);
 			if (Candidate.Len() > Best.Len())
 			{
 				Best = Candidate;
@@ -324,7 +361,7 @@ namespace
 
 		// Also scan the actor itself.
 		{
-			const FString Candidate = FindBestStyleOrPresetNameOnObject(const_cast<AActor*>(RoadActor));
+			const FString Candidate = FindBestStyleOrPresetNameOnObject_Runtime(const_cast<AActor*>(RoadActor));
 			if (Candidate.Len() > Best.Len())
 			{
 				Best = Candidate;
@@ -433,7 +470,7 @@ namespace
 
 			++CityBLDActorsProcessed;
 
-			const FString VariantKey = TryGetCityBLDVariantKeyFromActor(Actor);
+			const FString VariantKey = TryGetCityBLDVariantKeyFromActor_Runtime(Actor);
 			const bool bLooksLikeRamp = VariantKey.Contains(TEXT("Ramp"), ESearchCase::IgnoreCase);
 			const bool bLooksLikeHighway = !bLooksLikeRamp &&
 				(VariantKey.Contains(TEXT("Freeway"), ESearchCase::IgnoreCase) ||
@@ -618,6 +655,66 @@ void UTrafficRuntimeWorldSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	// for any runtime workflow (manual controller placement, Blueprints, etc).
 	ApplyIntersectionStopLineDefaultsForWorld(InWorld);
 	ApplyIntersectionControlDefaultsForWorld(InWorld);
+	ApplyRoutingDefaultsForWorld(InWorld);
+
+	// Always log the effective runtime defaults once per PIE/Game session to make debugging "press play and send logs" easy.
+	auto ReadIntCVar = [](const TCHAR* Name, int32 Fallback) -> int32
+	{
+		if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(Name))
+		{
+			return Var->GetInt();
+		}
+		return Fallback;
+	};
+	auto ReadFloatCVar = [](const TCHAR* Name, float Fallback) -> float
+	{
+		if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(Name))
+		{
+			return Var->GetFloat();
+		}
+		return Fallback;
+	};
+
+	const int32 VisualMode = GetTrafficVisualModeRaw();
+	const int32 IntersectionMode = ReadIntCVar(TEXT("aaa.Traffic.Intersections.ControlMode"), 0);
+	const int32 RequireFullStop = ReadIntCVar(TEXT("aaa.Traffic.Intersections.RequireFullStop"), 0);
+	const int32 TurnPolicy = ReadIntCVar(TEXT("aaa.Traffic.Routing.TurnPolicy"), 0);
+	const float StopLineOffsetCm = ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm"), 300.f);
+	const int32 ReservationEnabled = ReadIntCVar(TEXT("aaa.Traffic.Intersections.ReservationEnabled"), 1);
+	const float ReservationHoldSeconds = ReadFloatCVar(TEXT("aaa.Traffic.Intersections.ReservationHoldSeconds"), 3.f);
+	const float TLGreen = ReadFloatCVar(TEXT("aaa.Traffic.Intersections.TrafficLight.GreenSeconds"), 10.f);
+	const float TLYellow = ReadFloatCVar(TEXT("aaa.Traffic.Intersections.TrafficLight.YellowSeconds"), 2.f);
+	const float TLAllRed = ReadFloatCVar(TEXT("aaa.Traffic.Intersections.TrafficLight.AllRedSeconds"), 1.f);
+	const float ChaosWarmup = ReadFloatCVar(TEXT("aaa.Traffic.Visual.ChaosDrive.PhysicsWarmupSeconds"), 0.5f);
+	const int32 ChaosForceSim = ReadIntCVar(TEXT("aaa.Traffic.Visual.ChaosDrive.ForceSimulatePhysics"), 1);
+
+	UE_LOG(LogTraffic, Log,
+		TEXT("[TrafficRuntimeWorldSubsystem] Defaults: VisualMode=%d IntersectionMode=%d RequireFullStop=%d TurnPolicy=%d StopLineOffsetCm=%.1f ReservationEnabled=%d Hold=%.2fs TL(g=%.1f y=%.1f r=%.1f) Chaos(warmup=%.2fs forceSim=%d) Build=%s %s"),
+		VisualMode,
+		IntersectionMode,
+		RequireFullStop,
+		TurnPolicy,
+		StopLineOffsetCm,
+		ReservationEnabled,
+		ReservationHoldSeconds,
+		TLGreen,
+		TLYellow,
+		TLAllRed,
+		ChaosWarmup,
+		ChaosForceSim,
+		TEXT(__DATE__),
+		TEXT(__TIME__));
+
+	if (GEngine && (CVarTrafficOnScreenBuildStamp.GetValueOnGameThread() != 0))
+	{
+		const FString Msg = FString::Printf(TEXT("AAA Traffic Build: %s %s"), TEXT(__DATE__), TEXT(__TIME__));
+		static const uint64 BuildStampKey = 0xAAA747AFFFu;
+		GEngine->AddOnScreenDebugMessage(
+			/*Key=*/BuildStampKey,
+			/*TimeToDisplay=*/10.f,
+			/*DisplayColor=*/FColor::Cyan,
+			Msg);
+	}
 
 	const UTrafficRuntimeSettings* Settings = GetDefault<UTrafficRuntimeSettings>();
 	if (!Settings || !Settings->bAutoSpawnTrafficOnBeginPlay)
@@ -704,6 +801,189 @@ void UTrafficRuntimeWorldSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 
 	if (Settings->bAutoSpawnVehicles)
 	{
-		Controller->Runtime_SpawnTraffic();
+		DeferredSpawnController = Controller;
+		ScheduleDeferredTrafficSpawn();
 	}
+}
+
+namespace
+{
+	static TAutoConsoleVariable<int32> CVarTrafficRuntimeDeferSpawnUntilCollision(
+		TEXT("aaa.Traffic.Runtime.DeferSpawnUntilRoadCollision"),
+		1,
+		TEXT("If non-zero, delays runtime vehicle spawning until road collision is detected under the traffic network (prevents Chaos vehicles falling from mid-air on PIE start).\n")
+		TEXT("Default: 1"),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<float> CVarTrafficRuntimeDeferSpawnPollSeconds(
+		TEXT("aaa.Traffic.Runtime.DeferSpawnPollSeconds"),
+		0.25f,
+		TEXT("Polling interval (seconds) while waiting for road collision before spawning traffic. Default: 0.25"),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<float> CVarTrafficRuntimeDeferSpawnMaxWaitSeconds(
+		TEXT("aaa.Traffic.Runtime.DeferSpawnMaxWaitSeconds"),
+		6.0f,
+		TEXT("Max seconds to wait for road collision before spawning anyway. Default: 6.0"),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<int32> CVarTrafficRuntimeDeferSpawnRequiredHits(
+		TEXT("aaa.Traffic.Runtime.DeferSpawnRequiredHits"),
+		3,
+		TEXT("How many ground hits (sampled from the built traffic network) are required to consider road collision ready. Default: 3"),
+		ECVF_Default);
+}
+
+void UTrafficRuntimeWorldSubsystem::ScheduleDeferredTrafficSpawn()
+{
+	UWorld* World = GetWorld();
+	if (!World || !DeferredSpawnController.IsValid())
+	{
+		return;
+	}
+
+	if (CVarTrafficRuntimeDeferSpawnUntilCollision.GetValueOnGameThread() == 0)
+	{
+		DeferredSpawnController->Runtime_SpawnTraffic();
+		return;
+	}
+
+	// Only defer when ChaosDrive visuals are active (kinematic/logic-only doesn't need road collision).
+	if (GetTrafficVisualMode() != ETrafficVisualMode::ChaosDrive)
+	{
+		DeferredSpawnController->Runtime_SpawnTraffic();
+		return;
+	}
+
+	DeferredSpawnAttempts = 0;
+	DeferredSpawnStartWallSeconds = FPlatformTime::Seconds();
+
+	// If collision is already ready, spawn immediately.
+	if (IsRoadCollisionReadyForTraffic())
+	{
+		DeferredSpawnController->Runtime_SpawnTraffic();
+		return;
+	}
+
+	const float Poll = FMath::Max(0.05f, CVarTrafficRuntimeDeferSpawnPollSeconds.GetValueOnGameThread());
+	World->GetTimerManager().SetTimer(
+		DeferredSpawnTimerHandle,
+		this,
+		&UTrafficRuntimeWorldSubsystem::TryDeferredTrafficSpawn,
+		Poll,
+		/*bLoop=*/true);
+}
+
+void UTrafficRuntimeWorldSubsystem::TryDeferredTrafficSpawn()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	if (!DeferredSpawnController.IsValid())
+	{
+		World->GetTimerManager().ClearTimer(DeferredSpawnTimerHandle);
+		return;
+	}
+
+	const float MaxWait = FMath::Max(0.f, CVarTrafficRuntimeDeferSpawnMaxWaitSeconds.GetValueOnGameThread());
+	const double Elapsed = FPlatformTime::Seconds() - DeferredSpawnStartWallSeconds;
+
+	++DeferredSpawnAttempts;
+
+	if (IsRoadCollisionReadyForTraffic() || (Elapsed >= MaxWait))
+	{
+		World->GetTimerManager().ClearTimer(DeferredSpawnTimerHandle);
+
+		if (Elapsed >= MaxWait)
+		{
+			UE_LOG(LogTraffic, Warning,
+				TEXT("[TrafficRuntimeWorldSubsystem] Road collision not detected after %.2fs (%d polls); spawning traffic anyway."),
+				Elapsed,
+				DeferredSpawnAttempts);
+		}
+
+		DeferredSpawnController->Runtime_SpawnTraffic();
+	}
+}
+
+bool UTrafficRuntimeWorldSubsystem::IsRoadCollisionReadyForTraffic() const
+{
+	const UWorld* World = GetWorld();
+	if (!World || !DeferredSpawnController.IsValid())
+	{
+		return true;
+	}
+
+	UTrafficNetworkAsset* Net = DeferredSpawnController->GetBuiltNetworkAsset();
+	if (!Net || Net->Network.Roads.Num() == 0)
+	{
+		// Nothing to collide with, nothing to wait for.
+		return true;
+	}
+
+	const int32 Required = FMath::Max(1, CVarTrafficRuntimeDeferSpawnRequiredHits.GetValueOnGameThread());
+	int32 Hits = 0;
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(AAA_Traffic_RoadCollisionReady), /*bTraceComplex=*/false);
+	Params.bReturnPhysicalMaterial = false;
+
+	// Sample a few points from the built road centerlines; these should be over drivable surface.
+	for (const FTrafficRoad& Road : Net->Network.Roads)
+	{
+		AActor* RoadActor = Road.SourceActor.Get();
+		if (!RoadActor || Road.CenterlinePoints.Num() < 2)
+		{
+			continue;
+		}
+
+		const FVector P = Road.CenterlinePoints[Road.CenterlinePoints.Num() / 2];
+		const FVector Start = P + FVector(0.f, 0.f, 5000.f);
+		const FVector End = P - FVector(0.f, 0.f, 10000.f);
+
+		TArray<FHitResult> HitResults;
+		const bool bAny =
+			World->LineTraceMultiByChannel(HitResults, Start, End, ECC_WorldStatic, Params) ||
+			World->LineTraceMultiByChannel(HitResults, Start, End, ECC_WorldDynamic, Params) ||
+			World->LineTraceMultiByChannel(HitResults, Start, End, ECC_Visibility, Params);
+
+		if (!bAny)
+		{
+			continue;
+		}
+
+		// Prefer hits on the road actor itself; if its collision isn't ready yet, we'd typically get zero hits.
+		bool bCounted = false;
+		for (const FHitResult& HR : HitResults)
+		{
+			if (HR.bBlockingHit && HR.GetActor() == RoadActor)
+			{
+				++Hits;
+				bCounted = true;
+				break;
+			}
+		}
+
+		// Fallback: accept any blocking hit (some kits use separate collision actors/components).
+		if (!bCounted)
+		{
+			for (const FHitResult& HR : HitResults)
+			{
+				if (HR.bBlockingHit)
+				{
+					++Hits;
+					break;
+				}
+			}
+		}
+
+		if (Hits >= Required)
+		{
+			return true;
+		}
+	}
+
+	return false;
 }

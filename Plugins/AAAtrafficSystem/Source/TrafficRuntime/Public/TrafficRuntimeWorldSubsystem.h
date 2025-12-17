@@ -17,5 +17,14 @@ class TRAFFICRUNTIME_API UTrafficRuntimeWorldSubsystem : public UWorldSubsystem
 
 public:
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
-};
 
+private:
+	void ScheduleDeferredTrafficSpawn();
+	void TryDeferredTrafficSpawn();
+	bool IsRoadCollisionReadyForTraffic() const;
+
+	FTimerHandle DeferredSpawnTimerHandle;
+	TWeakObjectPtr<class ATrafficSystemController> DeferredSpawnController;
+	double DeferredSpawnStartWallSeconds = 0.0;
+	int32 DeferredSpawnAttempts = 0;
+};

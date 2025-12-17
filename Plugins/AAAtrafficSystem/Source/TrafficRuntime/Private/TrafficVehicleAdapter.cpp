@@ -2,8 +2,11 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/MovementComponent.h"
 #include "Components/PrimitiveComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "TrafficRuntimeModule.h"
 #include "TrafficVehicleBase.h"
+#include "TrafficKinematicFollower.h"
+#include "TrafficVisualMode.h"
 #include "HAL/IConsoleManager.h"
 #include "UObject/UnrealType.h"
 #include "Engine/CollisionProfile.h"
@@ -16,16 +19,6 @@ static TAutoConsoleVariable<int32> CVarTrafficKinematicChaosVisuals(
 	TEXT("  - disables movement components\n")
 	TEXT("  - keeps collision enabled\n")
 	TEXT("This prevents jitter/spinning caused by teleport-following active Chaos physics vehicles.\n")
-	TEXT("Default: 1"),
-	ECVF_Default);
-
-static TAutoConsoleVariable<int32> CVarTrafficVisualMode(
-	TEXT("aaa.Traffic.Visual.Mode"),
-	1,
-	TEXT("Traffic visual mode:\n")
-	TEXT("  0 = LogicOnly (no spawned visual pawns)\n")
-	TEXT("  1 = KinematicVisual (teleport-follow; physics off)\n")
-	TEXT("  2 = ChaosDrive (apply throttle/brake/steer to follow logic)\n")
 	TEXT("Default: 1"),
 	ECVF_Default);
 
@@ -65,6 +58,170 @@ static TAutoConsoleVariable<float> CVarTrafficChaosDriveInitialBrakeSeconds(
 	TEXT("Seconds to hold full brake after spawn (lets physics settle before driving)."),
 	ECVF_Default);
 
+static TAutoConsoleVariable<float> CVarTrafficChaosDriveDriveDelaySeconds(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.DriveDelaySeconds"),
+	0.25f,
+	TEXT("Seconds after spawn to apply full brake and no throttle (lets wheels/contact settle before driving)."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficChaosDriveDriveRampSeconds(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.DriveRampSeconds"),
+	1.0f,
+	TEXT("Seconds after DriveDelaySeconds to ramp desired speed from 0 to planned speed (reduces spin-outs at spawn)."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarTrafficChaosDriveWheelTraceChannelOverride(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.WheelTraceChannelOverride"),
+	-1,
+	TEXT("Override the collision channel used for Chaos wheel/suspension traces and AAA Traffic grounding checks.\n")
+	TEXT("Set to -1 to auto-detect from the vehicle movement component (WheelTraceCollisionChannel), otherwise use an ECollisionChannel value.\n")
+	TEXT("Common values: 0=WorldStatic 1=WorldDynamic 3=Visibility 6=Vehicle. Default: -1"),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarTrafficChaosDriveRequireGroundedToDrive(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.RequireGroundedToDrive"),
+	1,
+	TEXT("If non-zero, AAA Traffic holds full brake and zero throttle until the Chaos pawn is detected as grounded (via downward trace).\n")
+	TEXT("Prevents wheel-in-air torque, spawn flip-outs, and endless spinning before first ground contact.\n")
+	TEXT("Default: 1"),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficChaosDriveRequireGroundedMaxSeconds(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.RequireGroundedMaxSeconds"),
+	10.0f,
+	TEXT("Max seconds after spawn to require grounding before driving. After this, AAA Traffic will attempt to drive even if grounding is not detected.\n")
+	TEXT("Default: 10.0"),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficChaosDriveGroundedMaxGapCm(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.GroundedMaxGapCm"),
+	300.0f,
+	TEXT("Max vertical gap (cm) between pawn bounds bottom and the ECC_WorldDynamic hit point to consider the pawn grounded.\n")
+	TEXT("Default: 300"),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficChaosDriveGroundedTraceDepthCm(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.GroundedTraceDepthCm"),
+	8000.0f,
+	TEXT("How far (cm) to trace down from the pawn bounds bottom when detecting grounding.\n")
+	TEXT("Default: 8000"),
+	ECVF_Default);
+
+static ECollisionChannel ResolveChaosWheelTraceChannel(UMovementComponent* Move)
+{
+	const int32 Override = CVarTrafficChaosDriveWheelTraceChannelOverride.GetValueOnGameThread();
+	if (Override >= 0 && Override <= 31)
+	{
+		return static_cast<ECollisionChannel>(Override);
+	}
+
+	if (!Move)
+	{
+		// Legacy default (older code assumed WorldDynamic). Prefer auto-detection when available.
+		return ECC_WorldDynamic;
+	}
+
+	static const FName WheelTraceChannelPropName(TEXT("WheelTraceCollisionChannel"));
+	if (FProperty* Prop = Move->GetClass()->FindPropertyByName(WheelTraceChannelPropName))
+	{
+		if (const FEnumProperty* EnumProp = CastField<FEnumProperty>(Prop))
+		{
+			if (const FNumericProperty* Underlying = EnumProp->GetUnderlyingProperty())
+			{
+				const int64 V = Underlying->GetSignedIntPropertyValue(Prop->ContainerPtrToValuePtr<void>(Move));
+				if (V >= 0 && V <= 31)
+				{
+					return static_cast<ECollisionChannel>(V);
+				}
+			}
+		}
+		else if (const FByteProperty* ByteProp = CastField<FByteProperty>(Prop))
+		{
+			const uint8 V = ByteProp->GetPropertyValue_InContainer(Move);
+			if (V <= 31)
+			{
+				return static_cast<ECollisionChannel>(V);
+			}
+		}
+		else if (const FIntProperty* IntProp = CastField<FIntProperty>(Prop))
+		{
+			const int32 V = IntProp->GetPropertyValue_InContainer(Move);
+			if (V >= 0 && V <= 31)
+			{
+				return static_cast<ECollisionChannel>(V);
+			}
+		}
+	}
+
+	// Common Chaos default is Visibility, but we avoid hard-coding assumptions; keep legacy behavior when we can't detect.
+	return ECC_WorldDynamic;
+}
+
+static const TCHAR* CollisionChannelName(const ECollisionChannel Channel)
+{
+	switch (Channel)
+	{
+	case ECC_WorldStatic: return TEXT("WorldStatic");
+	case ECC_WorldDynamic: return TEXT("WorldDynamic");
+	case ECC_Pawn: return TEXT("Pawn");
+	case ECC_Visibility: return TEXT("Visibility");
+	case ECC_Camera: return TEXT("Camera");
+	case ECC_PhysicsBody: return TEXT("PhysicsBody");
+	case ECC_Vehicle: return TEXT("Vehicle");
+	case ECC_Destructible: return TEXT("Destructible");
+	default: return TEXT("Other");
+	}
+}
+
+static TAutoConsoleVariable<float> CVarTrafficChaosDriveTurnSlowdownStartDeg(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.TurnSlowdownStartDeg"),
+	15.0f,
+	TEXT("Yaw error (degrees) at which AAA Traffic starts reducing target speed for ChaosDrive."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficChaosDriveTurnSlowdownFullDeg(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.TurnSlowdownFullDeg"),
+	60.0f,
+	TEXT("Yaw error (degrees) at which AAA Traffic reduces target speed to near-zero for ChaosDrive."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficChaosDriveSpawnSpinDampSeconds(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.SpawnSpinDampSeconds"),
+	3.0f,
+	TEXT("Seconds after spawn during which AAA Traffic will damp excessive chassis angular velocity (helps stop continuous spin)."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficChaosDriveSpawnSpinDampMaxAngularDegPerSec(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.SpawnSpinDampMaxAngularDegPerSec"),
+	180.0f,
+	TEXT("If chassis angular speed exceeds this (deg/sec) during SpawnSpinDampSeconds, it will be clamped."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficChaosDriveSpawnSpinDampMaxSpeedCmPerSec(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.SpawnSpinDampMaxSpeedCmPerSec"),
+	1200.0f,
+	TEXT("Only applies spin damping when vehicle speed is below this (cm/sec)."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarTrafficChaosDriveLowSpeedSpinClamp(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.LowSpeedSpinClamp"),
+	1,
+	TEXT("If non-zero, clamps excessive chassis angular velocity any time the vehicle is moving slowly (helps stop endless post-collision spins).\n")
+	TEXT("Default: 1"),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficChaosDriveLowSpeedSpinClampMaxAngularDegPerSec(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.LowSpeedSpinClampMaxAngularDegPerSec"),
+	360.0f,
+	TEXT("If LowSpeedSpinClamp is enabled and chassis angular speed exceeds this (deg/sec) at low speed, it will be clamped."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficChaosDriveLowSpeedSpinClampMaxSpeedCmPerSec(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.LowSpeedSpinClampMaxSpeedCmPerSec"),
+	250.0f,
+	TEXT("Max speed (cm/sec) at which LowSpeedSpinClamp may apply."),
+	ECVF_Default);
+
 static TAutoConsoleVariable<float> CVarTrafficChaosDriveDisableMovementSeconds(
 	TEXT("aaa.Traffic.Visual.ChaosDrive.DisableMovementSeconds"),
 	0.f,
@@ -73,19 +230,53 @@ static TAutoConsoleVariable<float> CVarTrafficChaosDriveDisableMovementSeconds(
 
 static TAutoConsoleVariable<float> CVarTrafficChaosDrivePhysicsWarmupSeconds(
 	TEXT("aaa.Traffic.Visual.ChaosDrive.PhysicsWarmupSeconds"),
-	0.5f,
+	0.0f,
 	TEXT("Seconds after spawn to keep physics simulation disabled on the Chaos pawn, while holding it in place (reduces spawn impulses/flip-outs)."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarTrafficChaosDriveHoldUntilRoadCollision(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.HoldUntilRoadCollision"),
+	1,
+	TEXT("If non-zero, and no ground collision is detected under a ChaosDrive pawn, AAA Traffic temporarily disables physics and hides the pawn\n")
+	TEXT("until ground collision becomes available (common when road kits build collision asynchronously at PIE start).\n")
+	TEXT("Default: 1"),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficChaosDriveHoldUntilRoadCollisionMaxSeconds(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.HoldUntilRoadCollisionMaxSeconds"),
+	10.0f,
+	TEXT("Max seconds after spawn to hold/hide a ChaosDrive pawn while waiting for road collision. Default: 10.0"),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarTrafficChaosDriveHideWhileWaitingForRoadCollision(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.HideWhileWaitingForRoadCollision"),
+	1,
+	TEXT("If non-zero, hides ChaosDrive pawns while waiting for road collision (prevents visible floating mid-air). Default: 1"),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficChaosDriveRoadCollisionPlaceClearanceCm(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.RoadCollisionPlaceClearanceCm"),
+	20.0f,
+	TEXT("When road collision becomes available after a hold, Z clearance (cm) above the hit point to place the pawn before re-enabling physics. Default: 20"),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficChaosDriveForceReadySeconds(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.ForceReadySeconds"),
+	2.0f,
+	TEXT("Seconds after spawn during which AAA Traffic will aggressively re-enable physics/gravity and movement components on the Chaos pawn.\n")
+	TEXT("This helps when vehicle blueprints toggle simulation/movement during BeginPlay and would otherwise remain floating/inactive.\n")
+	TEXT("Default: 2.0"),
 	ECVF_Default);
 
 static TAutoConsoleVariable<float> CVarTrafficChaosDriveUprightFixSeconds(
 	TEXT("aaa.Traffic.Visual.ChaosDrive.UprightFixSeconds"),
-	0.0f,
+	10.0f,
 	TEXT("Seconds after spawn during which AAA Traffic will auto-correct a Chaos vehicle that ends up upside-down."),
 	ECVF_Default);
 
 static TAutoConsoleVariable<float> CVarTrafficChaosDriveUprightFixMinUpZ(
 	TEXT("aaa.Traffic.Visual.ChaosDrive.UprightFixMinUpZ"),
-	-0.2f,
+	0.2f,
 	TEXT("If the Chaos pawn's UpVector.Z is below this value during UprightFixSeconds, it is considered upside-down and will be corrected."),
 	ECVF_Default);
 
@@ -107,37 +298,25 @@ static TAutoConsoleVariable<int32> CVarTrafficChaosDriveDebug(
 	TEXT("If non-zero, logs ChaosDrive adapter initialization and missing bindings."),
 	ECVF_Default);
 
+static TAutoConsoleVariable<int32> CVarTrafficChaosDriveForceSimulatePhysics(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.ForceSimulatePhysics"),
+	1,
+	TEXT("If non-zero, and a ChaosDrive pawn has a suitable movement component but no primitive components simulating physics,\n")
+	TEXT("AAA Traffic will enable SimulatePhysics on the best candidate primitive (usually the root mesh).\n")
+	TEXT("This helps when a vehicle blueprint is misconfigured (physics disabled) and would otherwise float and never drive.\n")
+	TEXT("Default: 1"),
+	ECVF_Default);
+
 static TAutoConsoleVariable<int32> CVarTrafficCollisionIgnoreOtherTraffic(
 	TEXT("aaa.Traffic.Collision.IgnoreOtherTraffic"),
-	0,
+	1,
 	TEXT("If non-zero, spawned traffic vehicles ignore collisions with other traffic vehicles.\n")
 	TEXT("This uses the collision profile 'AAA_TrafficVehicle' (configured via plugin Config/DefaultEngine.ini).\n")
-	TEXT("Default: 0"),
+	TEXT("Default: 1"),
 	ECVF_Default);
 
 namespace
 {
-	enum class ETrafficVisualMode : int32
-	{
-		LogicOnly = 0,
-		KinematicVisual = 1,
-		ChaosDrive = 2,
-	};
-
-	static ETrafficVisualMode GetTrafficVisualMode()
-	{
-		const int32 Raw = CVarTrafficVisualMode.GetValueOnGameThread();
-		if (Raw <= 0)
-		{
-			return ETrafficVisualMode::LogicOnly;
-		}
-		if (Raw == 2)
-		{
-			return ETrafficVisualMode::ChaosDrive;
-		}
-		return ETrafficVisualMode::KinematicVisual;
-	}
-
 	static UMovementComponent* FindChaosMovementComponent(APawn* Pawn)
 	{
 		if (!Pawn)
@@ -271,6 +450,63 @@ static FString ListMovementComponents(APawn* Pawn)
 		}
 	}
 
+	static bool TraceDownFromPawnBounds(
+		UWorld& World,
+		const APawn& Pawn,
+		ECollisionChannel Channel,
+		float TraceDepthCm,
+		FHitResult& OutHit)
+	{
+		const FBox Bounds = Pawn.GetComponentsBoundingBox(true);
+		if (!Bounds.IsValid)
+		{
+			return false;
+		}
+
+		const FVector Center = Bounds.GetCenter();
+		const float StartZ = Bounds.Min.Z + 50.f;
+		const float EndZ = Bounds.Min.Z - FMath::Max(0.f, TraceDepthCm);
+
+		const FVector Start(Center.X, Center.Y, StartZ);
+		const FVector End(Center.X, Center.Y, EndZ);
+
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(AAA_Traffic_GroundedTrace), /*bTraceComplex=*/false);
+		Params.bReturnPhysicalMaterial = false;
+		Params.AddIgnoredActor(&Pawn);
+
+		return World.LineTraceSingleByChannel(OutHit, Start, End, Channel, Params);
+	}
+
+	static bool IsGroundedByWheelTraceChannel(
+		UWorld& World,
+		const APawn& Pawn,
+		ECollisionChannel WheelTraceChannel,
+		float MaxGapCm,
+		float TraceDepthCm,
+		float& OutGapCm,
+		FHitResult* OutHit)
+	{
+		FHitResult Hit;
+		if (!TraceDownFromPawnBounds(World, Pawn, WheelTraceChannel, TraceDepthCm, Hit))
+		{
+			OutGapCm = TNumericLimits<float>::Max();
+			if (OutHit)
+			{
+				*OutHit = FHitResult();
+			}
+			return false;
+		}
+
+		const FBox Bounds = Pawn.GetComponentsBoundingBox(true);
+		const float Gap = Bounds.IsValid ? (Bounds.Min.Z - Hit.ImpactPoint.Z) : TNumericLimits<float>::Max();
+		OutGapCm = Gap;
+		if (OutHit)
+		{
+			*OutHit = Hit;
+		}
+		return Gap <= FMath::Max(0.f, MaxGapCm);
+	}
+
 	static bool CallSingleParam(UObject* Obj, const FName FuncName, float FloatValue, bool BoolValue)
 	{
 		if (!Obj)
@@ -335,8 +571,235 @@ static FString ListMovementComponents(APawn* Pawn)
 		CallSingleParam(Move, FName(TEXT("SetThrottleInput")), 0.f, false);
 		CallSingleParam(Move, FName(TEXT("SetBrakeInput")), 1.f, false);
 
-		// Some Chaos vehicles expose a handbrake input as well.
-		CallSingleParam(Move, FName(TEXT("SetHandbrakeInput")), 1.f, true);
+		// Avoid engaging handbrake during spawn settle; some vehicle setups become unstable when locked wheels are steered.
+		CallSingleParam(Move, FName(TEXT("SetHandbrakeInput")), 0.f, false);
+	}
+
+	static void EnsureChaosDriveTransmissionReady(UMovementComponent* Move)
+	{
+		if (!Move)
+		{
+			return;
+		}
+
+		// Some vehicle blueprints spawn with auto-gears disabled (or expect player code to enable it).
+		// Best-effort: enable auto gears when supported.
+		CallSingleParam(Move, FName(TEXT("SetUseAutoGears")), 0.f, true);
+		CallSingleParam(Move, FName(TEXT("SetUseAutomaticGears")), 0.f, true);
+	}
+
+	static bool HasAnySimulatingPrimitive(APawn& Pawn)
+	{
+		TArray<UPrimitiveComponent*> PrimComps;
+		Pawn.GetComponents(PrimComps);
+		for (UPrimitiveComponent* Prim : PrimComps)
+		{
+			if (Prim && Prim->IsSimulatingPhysics())
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	static UPrimitiveComponent* FindBestPhysicsPrimitive(APawn& Pawn)
+	{
+		// Prefer the component the movement system intends to drive, when available.
+		TArray<UMovementComponent*> MoveComps;
+		Pawn.GetComponents(MoveComps);
+		for (UMovementComponent* Move : MoveComps)
+		{
+			if (!Move || !Move->UpdatedComponent)
+			{
+				continue;
+			}
+			if (UPrimitiveComponent* UpdatedPrim = Cast<UPrimitiveComponent>(Move->UpdatedComponent))
+			{
+				return UpdatedPrim;
+			}
+		}
+
+		if (UPrimitiveComponent* RootPrim = Cast<UPrimitiveComponent>(Pawn.GetRootComponent()))
+		{
+			// Prefer the root if it has a valid body setup (typical for Chaos vehicles).
+			return RootPrim;
+		}
+
+		// Common for vehicle pawns: a skeletal mesh chassis is the primary simulated body.
+		{
+			TArray<USkeletalMeshComponent*> SkelComps;
+			Pawn.GetComponents(SkelComps);
+			for (USkeletalMeshComponent* Skel : SkelComps)
+			{
+				if (Skel && Skel->IsRegistered())
+				{
+					return Skel;
+				}
+			}
+		}
+
+		TArray<UPrimitiveComponent*> PrimComps;
+		Pawn.GetComponents(PrimComps);
+		for (UPrimitiveComponent* Prim : PrimComps)
+		{
+			if (Prim && Prim->IsRegistered())
+			{
+				return Prim;
+			}
+		}
+		return nullptr;
+	}
+
+	static UPrimitiveComponent* FindSimulatingPhysicsPrimitive(APawn& Pawn)
+	{
+		// Prefer the component the movement system intends to drive, when available.
+		TArray<UMovementComponent*> MoveComps;
+		Pawn.GetComponents(MoveComps);
+		for (UMovementComponent* Move : MoveComps)
+		{
+			if (!Move || !Move->UpdatedComponent)
+			{
+				continue;
+			}
+			if (UPrimitiveComponent* UpdatedPrim = Cast<UPrimitiveComponent>(Move->UpdatedComponent))
+			{
+				if (UpdatedPrim->IsSimulatingPhysics())
+				{
+					return UpdatedPrim;
+				}
+			}
+		}
+
+		if (UPrimitiveComponent* RootPrim = Cast<UPrimitiveComponent>(Pawn.GetRootComponent()))
+		{
+			if (RootPrim->IsSimulatingPhysics())
+			{
+				return RootPrim;
+			}
+		}
+
+		// Common for vehicle pawns: a skeletal mesh chassis is the primary simulated body.
+		{
+			TArray<USkeletalMeshComponent*> SkelComps;
+			Pawn.GetComponents(SkelComps);
+			for (USkeletalMeshComponent* Skel : SkelComps)
+			{
+				if (Skel && Skel->IsSimulatingPhysics())
+				{
+					return Skel;
+				}
+			}
+		}
+
+		TArray<UPrimitiveComponent*> PrimComps;
+		Pawn.GetComponents(PrimComps);
+		for (UPrimitiveComponent* Prim : PrimComps)
+		{
+			if (Prim && Prim->IsSimulatingPhysics())
+			{
+				return Prim;
+			}
+		}
+		return nullptr;
+	}
+
+	static void EnsureChaosDrivePhysicsEnabled(APawn& Pawn)
+	{
+		TArray<UPrimitiveComponent*> PrimComps;
+		Pawn.GetComponents(PrimComps);
+
+		bool bHasSim = false;
+		for (UPrimitiveComponent* Prim : PrimComps)
+		{
+			if (!Prim)
+			{
+				continue;
+			}
+			if (Prim->IsSimulatingPhysics())
+			{
+				bHasSim = true;
+			}
+		}
+
+		if (bHasSim)
+		{
+			// Some vehicle blueprints may have physics enabled but gravity disabled, which looks like "floating traffic".
+			// In ChaosDrive mode we want gravity/collision enabled so the vehicle can settle onto the road.
+			for (UPrimitiveComponent* Prim : PrimComps)
+			{
+				if (!Prim)
+				{
+					continue;
+				}
+				if (Prim->IsSimulatingPhysics())
+				{
+					if (!Prim->IsGravityEnabled())
+					{
+						Prim->SetEnableGravity(true);
+					}
+					Prim->WakeAllRigidBodies();
+				}
+				Prim->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+			}
+			return;
+		}
+
+		UPrimitiveComponent* Prim = FindBestPhysicsPrimitive(Pawn);
+		if (!Prim)
+		{
+			return;
+		}
+
+		Prim->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		Prim->SetEnableGravity(true);
+		Prim->SetSimulatePhysics(true);
+		Prim->WakeAllRigidBodies();
+	}
+
+	static void EnsureChaosDriveMovementEnabled(APawn& Pawn)
+	{
+		TArray<UMovementComponent*> MoveComps;
+		Pawn.GetComponents(MoveComps);
+		for (UMovementComponent* Move : MoveComps)
+		{
+			if (!Move)
+			{
+				continue;
+			}
+			Move->Activate(true);
+			Move->SetComponentTickEnabled(true);
+		}
+	}
+
+	static float GetChassisAngularSpeedDegPerSec(APawn& Pawn)
+	{
+		UPrimitiveComponent* Prim = FindSimulatingPhysicsPrimitive(Pawn);
+		if (!Prim)
+		{
+			return 0.f;
+		}
+
+		return Prim->GetPhysicsAngularVelocityInDegrees().Size();
+	}
+
+	static void ClampChassisAngularVelocity(APawn& Pawn, float MaxDegPerSec)
+	{
+		UPrimitiveComponent* Prim = FindSimulatingPhysicsPrimitive(Pawn);
+		if (!Prim)
+		{
+			return;
+		}
+
+		const FVector W = Prim->GetPhysicsAngularVelocityInDegrees();
+		const float Speed = W.Size();
+		const float Max = FMath::Max(0.f, MaxDegPerSec);
+		if (Speed <= Max || Speed <= KINDA_SMALL_NUMBER)
+		{
+			return;
+		}
+
+		const FVector Clamped = W * (Max / Speed);
+		Prim->SetPhysicsAngularVelocityInDegrees(Clamped);
 	}
 }
 
@@ -353,7 +816,7 @@ static void ZeroPhysicsVelocities(APawn& Pawn)
 
 		Prim->SetPhysicsLinearVelocity(FVector::ZeroVector);
 		Prim->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
-		Prim->PutRigidBodyToSleep();
+		Prim->WakeAllRigidBodies();
 	}
 }
 
@@ -391,6 +854,7 @@ static void ForceUpright(APawn& Pawn, float LiftCm)
 ATrafficVehicleAdapter::ATrafficVehicleAdapter()
 {
 	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.TickGroup = TG_PrePhysics;
 }
 
 void ATrafficVehicleAdapter::Initialize(ATrafficVehicleBase* InLogic, APawn* InChaos)
@@ -405,14 +869,46 @@ void ATrafficVehicleAdapter::Initialize(ATrafficVehicleBase* InLogic, APawn* InC
 	bChaosDrivePhysicsSuspended = false;
 	ChaosDrivePhysicsResumeAgeSeconds = 0.f;
 	ChaosDrivePhysicsComps.Reset();
+	ChaosDriveRoadHoldPhysicsComps.Reset();
+	ChaosDriveSpawnDampedPrim.Reset();
+	ChaosDriveSavedLinearDamping = 0.f;
+	ChaosDriveSavedAngularDamping = 0.f;
+	bChaosDriveHasSavedDamping = false;
+	bChaosDriveEverGrounded = false;
+	ChaosDriveLastGroundDiagAgeSeconds = -1000.f;
+	bChaosDriveLoggedGroundMismatch = false;
+	bChaosDriveAwaitingRoadCollision = false;
+	bChaosDriveWasHiddenForRoadCollision = false;
 	PrevSteer = 0.f;
 	PrevThrottle = 0.f;
 	PrevBrake = 0.f;
+	PrevFollowTargetTypeRaw = 0;
+	PrevFollowTargetId = INDEX_NONE;
+	PrevFollowTargetS = 0.f;
+	bHasPrevFollowTarget = false;
 
 	if (ChaosVehicle.IsValid())
 	{
+		// Traffic vehicles should be fully controlled by the traffic system (not auto-possessed by player/AI).
+		ChaosVehicle->AutoPossessPlayer = EAutoReceiveInput::Disabled;
+		ChaosVehicle->AutoPossessAI = EAutoPossessAI::Disabled;
+		ChaosVehicle->AIControllerClass = nullptr;
+		ChaosVehicle->DetachFromControllerPendingDestroy();
+		ChaosVehicle->DisableInput(nullptr);
+
+		// Many vehicle blueprints write to their movement inputs during their own tick (e.g., reading player input axes).
+		// Ensure our adapter tick runs AFTER the pawn tick so we can reliably override those inputs for traffic driving.
+		AddTickPrerequisiteActor(ChaosVehicle.Get());
+
 		const ETrafficVisualMode Mode = GetTrafficVisualMode();
 		const bool bDebug = (CVarTrafficChaosDriveDebug.GetValueOnGameThread() != 0);
+		const int32 SampleCount = []() -> int32
+		{
+			static IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Debug.SampleVehicleCount"));
+			return Var ? FMath::Max(0, Var->GetInt()) : 0;
+		}();
+		const int32 DebugIndex = LogicVehicle.IsValid() ? LogicVehicle->GetDebugSpawnIndex() : INDEX_NONE;
+		const bool bSample = (SampleCount > 0) && (DebugIndex >= 0) && (DebugIndex < SampleCount);
 
 		// By default, use kinematic-follow mode for Chaos pawns. Teleporting a fully simulated Chaos vehicle each tick
 		// tends to cause spinning/jitter and looks broken in PIE.
@@ -460,6 +956,44 @@ void ATrafficVehicleAdapter::Initialize(ATrafficVehicleBase* InLogic, APawn* InC
 			}
 
 			ApplyTrafficCollisionProfile(ChaosVehicle.Get());
+
+			if (bSample)
+			{
+				UMovementComponent* Move = FindChaosMovementComponent(ChaosVehicle.Get());
+				const bool bHasMove = (Move != nullptr);
+				const bool bHasSim = HasAnySimulatingPrimitive(*ChaosVehicle.Get());
+				const ECollisionChannel WheelCh = ResolveChaosWheelTraceChannel(Move);
+				UE_LOG(LogTraffic, Log,
+					TEXT("[TrafficVehicleAdapter] Sample[%d] ChaosDrive init: Pawn=%s Move=%s simulating=%d gravityRoot=%d wheelCh=%d(%s)"),
+					DebugIndex,
+					*ChaosVehicle->GetName(),
+					bHasMove ? *Move->GetClass()->GetName() : TEXT("<none>"),
+					bHasSim ? 1 : 0,
+					(ChaosVehicle->GetRootComponent() && ChaosVehicle->GetRootComponent()->IsA<UPrimitiveComponent>()) ?
+						(Cast<UPrimitiveComponent>(ChaosVehicle->GetRootComponent())->IsGravityEnabled() ? 1 : 0) : -1,
+					static_cast<int32>(WheelCh),
+					CollisionChannelName(WheelCh));
+			}
+
+			// If the pawn has a vehicle movement component but physics simulation is off, it will float and never move.
+			// Fix it proactively (common when bringing in custom vehicle blueprints).
+			if (CVarTrafficChaosDriveForceSimulatePhysics.GetValueOnGameThread() != 0)
+			{
+				// Best-effort: enable physics even if movement component discovery fails (prevents permanent "floating" visuals).
+				EnsureChaosDrivePhysicsEnabled(*ChaosVehicle.Get());
+			}
+
+			// Ensure common vehicle movement settings are in a drivable state (e.g., auto-gears enabled).
+			if (UMovementComponent* Move = FindChaosMovementComponent(ChaosVehicle.Get()))
+			{
+				EnsureChaosDriveTransmissionReady(Move);
+			}
+
+			// Ensure movement components are active by default (some BPs start with components deactivated).
+			if (!bChaosDrivePhysicsSuspended && !bChaosDriveMovementSuspended)
+			{
+				EnsureChaosDriveMovementEnabled(*ChaosVehicle.Get());
+			}
 
 			const float PhysicsWarmupSeconds = FMath::Max(0.f, CVarTrafficChaosDrivePhysicsWarmupSeconds.GetValueOnGameThread());
 			if (PhysicsWarmupSeconds > 0.f)
@@ -595,10 +1129,212 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 
 	if (Mode == ETrafficVisualMode::ChaosDrive)
 	{
+		const float Age = ChaosVehicle->GetGameTimeSinceCreation();
+		const int32 SampleCount = []() -> int32
+		{
+			static IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Debug.SampleVehicleCount"));
+			return Var ? FMath::Max(0, Var->GetInt()) : 0;
+		}();
+		const int32 DebugIndex = LogicVehicle.IsValid() ? LogicVehicle->GetDebugSpawnIndex() : INDEX_NONE;
+		const bool bSample = (SampleCount > 0) && (DebugIndex >= 0) && (DebugIndex < SampleCount);
+
+		// If road collision isn't ready yet, don't allow the pawn to fall/spin in mid-air. Hold it kinematically until
+		// a ground trace starts hitting, then place it onto the road and enable physics.
+		if (CVarTrafficChaosDriveHoldUntilRoadCollision.GetValueOnGameThread() != 0 && GetWorld())
+		{
+			const ECollisionChannel WheelTraceChannel = ResolveChaosWheelTraceChannel(FindChaosMovementComponent(ChaosVehicle.Get()));
+
+			const float MaxHoldSeconds = FMath::Max(0.f, CVarTrafficChaosDriveHoldUntilRoadCollisionMaxSeconds.GetValueOnGameThread());
+			const float ClearanceCm = CVarTrafficChaosDriveRoadCollisionPlaceClearanceCm.GetValueOnGameThread();
+
+			// Trace under the logic vehicle's XY (that's the lane-follow target), not the potentially-tumbling Chaos pawn.
+			const FVector LogicPos = LogicVehicle.IsValid() ? LogicVehicle->GetActorLocation() : ChaosVehicle->GetActorLocation();
+			// Trace deep enough to reach collision even when lane Z is far above the physical surface.
+			const FVector Start = LogicPos + FVector(0.f, 0.f, 50000.f);
+			const FVector End = LogicPos - FVector(0.f, 0.f, 100000.f);
+
+			FCollisionQueryParams Params(SCENE_QUERY_STAT(AAA_Traffic_RoadReadyTrace), /*bTraceComplex=*/false);
+			Params.bReturnPhysicalMaterial = false;
+			Params.AddIgnoredActor(ChaosVehicle.Get());
+
+			FHitResult GroundHit;
+			const bool bHasGround = GetWorld()->LineTraceSingleByChannel(GroundHit, Start, End, WheelTraceChannel, Params);
+
+			bool bNeedsSnap = false;
+			if (bHasGround)
+			{
+				const FBox Bounds = ChaosVehicle->GetComponentsBoundingBox(true);
+				if (Bounds.IsValid)
+				{
+					const float MaxGapCm = FMath::Max(0.f, CVarTrafficChaosDriveGroundedMaxGapCm.GetValueOnGameThread());
+					const float DesiredBottomZ = GroundHit.ImpactPoint.Z + ClearanceCm;
+					const float CurrentBottomZ = Bounds.Min.Z;
+					const float GapToDesiredCm = CurrentBottomZ - DesiredBottomZ; // + = pawn above desired ground placement
+					bNeedsSnap = GapToDesiredCm > FMath::Max(50.f, MaxGapCm);
+				}
+			}
+
+			if (bSample && (Age - ChaosDriveLastHoldDiagAgeSeconds) >= 0.5f)
+			{
+				ChaosDriveLastHoldDiagAgeSeconds = Age;
+				UE_LOG(LogTraffic, Log,
+					TEXT("[TrafficVehicleAdapter] Sample[%d] HoldCheck age=%.2fs enabled=1 wheelCh=%d(%s) hasGround=%d needsSnap=%d logicZ=%.1f traceZ=[%.1f..%.1f]"),
+					DebugIndex,
+					Age,
+					static_cast<int32>(WheelTraceChannel),
+					CollisionChannelName(WheelTraceChannel),
+					bHasGround ? 1 : 0,
+					bNeedsSnap ? 1 : 0,
+					LogicPos.Z,
+					Start.Z,
+					End.Z);
+			}
+
+			if ((!bHasGround || bNeedsSnap) && Age <= MaxHoldSeconds)
+			{
+				if (!bChaosDriveAwaitingRoadCollision)
+				{
+					bChaosDriveAwaitingRoadCollision = true;
+					bChaosDriveWasHiddenForRoadCollision = false;
+					ChaosDriveRoadHoldPhysicsComps.Reset();
+
+					TArray<UPrimitiveComponent*> PrimComps;
+					ChaosVehicle->GetComponents(PrimComps);
+					for (UPrimitiveComponent* Prim : PrimComps)
+					{
+						if (!Prim)
+						{
+							continue;
+						}
+
+						FChaosDrivePrimWarmupState State;
+						State.Prim = Prim;
+						State.bWasSimulatingPhysics = Prim->IsSimulatingPhysics();
+						State.bWasGravityEnabled = Prim->IsGravityEnabled();
+						ChaosDriveRoadHoldPhysicsComps.Add(State);
+
+						Prim->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+						Prim->SetEnableGravity(false);
+						if (State.bWasSimulatingPhysics)
+						{
+							Prim->SetSimulatePhysics(false);
+						}
+					}
+
+					TArray<UMovementComponent*> MoveComps;
+					ChaosVehicle->GetComponents(MoveComps);
+					for (UMovementComponent* Move : MoveComps)
+					{
+						if (Move)
+						{
+							Move->Deactivate();
+							Move->SetComponentTickEnabled(false);
+						}
+					}
+
+					if (CVarTrafficChaosDriveHideWhileWaitingForRoadCollision.GetValueOnGameThread() != 0)
+					{
+						ChaosVehicle->SetActorHiddenInGame(true);
+						bChaosDriveWasHiddenForRoadCollision = true;
+					}
+
+					UE_LOG(LogTraffic, Warning,
+						TEXT("[TrafficVehicleAdapter] Sample[%d] Holding ChaosDrive pawn until road collision is ready (age=%.2fs)."),
+						DebugIndex,
+						Age);
+				}
+
+				// Follow the logic transform deterministically while waiting, so the eventual physics pawn starts from the right place.
+				const float Yaw = LogicVehicle.IsValid() ? LogicVehicle->GetActorRotation().Yaw : ChaosVehicle->GetActorRotation().Yaw;
+				ChaosVehicle->SetActorLocationAndRotation(LogicPos, FRotator(0.f, Yaw, 0.f), false, nullptr, ETeleportType::TeleportPhysics);
+
+				if (bHasGround)
+				{
+					const FBox Bounds = ChaosVehicle->GetComponentsBoundingBox(true);
+					if (Bounds.IsValid)
+					{
+						const float DesiredBottomZ = GroundHit.ImpactPoint.Z + ClearanceCm;
+						const float DeltaZ = DesiredBottomZ - Bounds.Min.Z;
+						ChaosVehicle->AddActorWorldOffset(FVector(0.f, 0.f, DeltaZ), false, nullptr, ETeleportType::TeleportPhysics);
+					}
+				}
+
+				ZeroPhysicsVelocities(*ChaosVehicle.Get());
+				return;
+			}
+
+			if (bChaosDriveAwaitingRoadCollision && bHasGround && !bNeedsSnap)
+			{
+				// Place the pawn onto the newly-available road collision before enabling physics.
+				const float Yaw = LogicVehicle.IsValid() ? LogicVehicle->GetActorRotation().Yaw : ChaosVehicle->GetActorRotation().Yaw;
+				ChaosVehicle->SetActorLocationAndRotation(LogicPos, FRotator(0.f, Yaw, 0.f), false, nullptr, ETeleportType::TeleportPhysics);
+
+				// Adjust Z so the pawn's bounds bottom sits on the ground hit plus clearance.
+				const FBox Bounds = ChaosVehicle->GetComponentsBoundingBox(true);
+				if (Bounds.IsValid)
+				{
+					const float DesiredBottomZ = GroundHit.ImpactPoint.Z + ClearanceCm;
+					const float DeltaZ = DesiredBottomZ - Bounds.Min.Z;
+					ChaosVehicle->AddActorWorldOffset(FVector(0.f, 0.f, DeltaZ), false, nullptr, ETeleportType::TeleportPhysics);
+				}
+
+				for (const FChaosDrivePrimWarmupState& State : ChaosDriveRoadHoldPhysicsComps)
+				{
+					if (UPrimitiveComponent* Prim = State.Prim.Get())
+					{
+						Prim->SetEnableGravity(State.bWasGravityEnabled);
+						if (State.bWasSimulatingPhysics)
+						{
+							Prim->SetSimulatePhysics(true);
+						}
+					}
+				}
+				ChaosDriveRoadHoldPhysicsComps.Reset();
+
+				if (bChaosDriveWasHiddenForRoadCollision)
+				{
+					ChaosVehicle->SetActorHiddenInGame(false);
+					bChaosDriveWasHiddenForRoadCollision = false;
+				}
+
+				if (CVarTrafficChaosDriveForceSimulatePhysics.GetValueOnGameThread() != 0)
+				{
+					EnsureChaosDrivePhysicsEnabled(*ChaosVehicle.Get());
+				}
+				if (UMovementComponent* Move = FindChaosMovementComponent(ChaosVehicle.Get()))
+				{
+					EnsureChaosDriveTransmissionReady(Move);
+				}
+				EnsureChaosDriveMovementEnabled(*ChaosVehicle.Get());
+
+				ZeroPhysicsVelocities(*ChaosVehicle.Get());
+				bChaosDriveAwaitingRoadCollision = false;
+			}
+		}
+
+		const float ForceReadySeconds = FMath::Max(0.f, CVarTrafficChaosDriveForceReadySeconds.GetValueOnGameThread());
+		if (ForceReadySeconds > 0.f && GetWorld())
+		{
+			if (Age <= ForceReadySeconds && !bChaosDrivePhysicsSuspended)
+			{
+				if (CVarTrafficChaosDriveForceSimulatePhysics.GetValueOnGameThread() != 0)
+				{
+					EnsureChaosDrivePhysicsEnabled(*ChaosVehicle.Get());
+				}
+				if (UMovementComponent* Move = FindChaosMovementComponent(ChaosVehicle.Get()))
+				{
+					EnsureChaosDriveTransmissionReady(Move);
+				}
+				if (!bChaosDriveMovementSuspended)
+				{
+					EnsureChaosDriveMovementEnabled(*ChaosVehicle.Get());
+				}
+			}
+		}
+
 		// If physics is suspended, hold the pawn steady until the warmup expires.
 		if (bChaosDrivePhysicsSuspended && GetWorld())
 		{
-			const float Age = ChaosVehicle->GetGameTimeSinceCreation();
 			if (Age >= ChaosDrivePhysicsResumeAgeSeconds)
 			{
 				bChaosDrivePhysicsSuspended = false;
@@ -615,6 +1351,13 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 					}
 				}
 				ChaosDrivePhysicsComps.Reset();
+
+				// Warmup restore may return to "no sim" or "no gravity" states if the pawn blueprint was authored that way.
+				// In ChaosDrive mode, try to correct common misconfigurations so vehicles don't float in place forever.
+				if (CVarTrafficChaosDriveForceSimulatePhysics.GetValueOnGameThread() != 0)
+				{
+					EnsureChaosDrivePhysicsEnabled(*ChaosVehicle.Get());
+				}
 
 				ZeroPhysicsVelocities(*ChaosVehicle.Get());
 
@@ -650,7 +1393,6 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 			const float FixSeconds = FMath::Max(0.f, CVarTrafficChaosDriveUprightFixSeconds.GetValueOnGameThread());
 			if (!bChaosDriveUprightFixed && FixSeconds > 0.f && GetWorld())
 			{
-				const float Age = ChaosVehicle->GetGameTimeSinceCreation();
 				if (Age <= FixSeconds)
 				{
 					const float MinUpZ = CVarTrafficChaosDriveUprightFixMinUpZ.GetValueOnGameThread();
@@ -680,7 +1422,6 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 
 		if (bChaosDriveMovementSuspended && GetWorld())
 		{
-			const float Age = ChaosVehicle->GetGameTimeSinceCreation();
 			if (Age >= ChaosDriveMovementResumeAgeSeconds)
 			{
 				bChaosDriveMovementSuspended = false;
@@ -721,10 +1462,67 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 			return;
 		}
 
+		// Spawn spin damping should apply even while we're holding full brake at startup.
+		{
+			const FVector Vel = ChaosVehicle->GetVelocity();
+			const float CurrentSpeed = Vel.Size();
+			const float SpinSeconds = FMath::Max(0.f, CVarTrafficChaosDriveSpawnSpinDampSeconds.GetValueOnGameThread());
+			if (SpinSeconds > 0.f)
+			{
+				if (Age <= SpinSeconds)
+				{
+					if (UPrimitiveComponent* Prim = FindSimulatingPhysicsPrimitive(*ChaosVehicle.Get()))
+					{
+						// Temporary extra damping helps Chaos vehicles settle without violent spin at spawn.
+						if (!bChaosDriveHasSavedDamping || ChaosDriveSpawnDampedPrim.Get() != Prim)
+						{
+							// Restore any previous component we modified.
+							if (bChaosDriveHasSavedDamping)
+							{
+								if (UPrimitiveComponent* PrevPrim = ChaosDriveSpawnDampedPrim.Get())
+								{
+									PrevPrim->SetLinearDamping(ChaosDriveSavedLinearDamping);
+									PrevPrim->SetAngularDamping(ChaosDriveSavedAngularDamping);
+								}
+							}
+
+							ChaosDriveSpawnDampedPrim = Prim;
+							ChaosDriveSavedLinearDamping = Prim->GetLinearDamping();
+							ChaosDriveSavedAngularDamping = Prim->GetAngularDamping();
+							bChaosDriveHasSavedDamping = true;
+						}
+
+						Prim->SetLinearDamping(2.0f);
+						Prim->SetAngularDamping(80.0f);
+					}
+
+					const float MaxSpeed = FMath::Max(0.f, CVarTrafficChaosDriveSpawnSpinDampMaxSpeedCmPerSec.GetValueOnGameThread());
+					if (CurrentSpeed <= MaxSpeed)
+					{
+						const float MaxAng = FMath::Max(0.f, CVarTrafficChaosDriveSpawnSpinDampMaxAngularDegPerSec.GetValueOnGameThread());
+						if (GetChassisAngularSpeedDegPerSec(*ChaosVehicle.Get()) > MaxAng)
+						{
+							ClampChassisAngularVelocity(*ChaosVehicle.Get(), MaxAng);
+						}
+					}
+				}
+				else if (bChaosDriveHasSavedDamping)
+				{
+					// Restore damping after the spawn stabilization window.
+					if (UPrimitiveComponent* PrevPrim = ChaosDriveSpawnDampedPrim.Get())
+					{
+						PrevPrim->SetLinearDamping(ChaosDriveSavedLinearDamping);
+						PrevPrim->SetAngularDamping(ChaosDriveSavedAngularDamping);
+					}
+					ChaosDriveSpawnDampedPrim.Reset();
+					bChaosDriveHasSavedDamping = false;
+				}
+			}
+		}
+
 		const float InitialBrakeSeconds = FMath::Max(0.f, CVarTrafficChaosDriveInitialBrakeSeconds.GetValueOnGameThread());
 		if (InitialBrakeSeconds > 0.f && GetWorld())
 		{
-			const float Age = ChaosVehicle->GetGameTimeSinceCreation();
 			if (Age < InitialBrakeSeconds)
 			{
 				ApplyInitialBraking(Move);
@@ -732,23 +1530,131 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 			}
 		}
 
+		const float DriveDelay = FMath::Max(0.f, CVarTrafficChaosDriveDriveDelaySeconds.GetValueOnGameThread());
+		const float DriveRamp = FMath::Max(0.f, CVarTrafficChaosDriveDriveRampSeconds.GetValueOnGameThread());
+		if (DriveDelay > 0.f && Age < DriveDelay)
+		{
+			// Don't drive while the vehicle is still settling onto the road; this avoids wheel-in-air torque and spin-outs.
+			ApplyInitialBraking(Move);
+			CallSingleParam(Move, FName(TEXT("SetHandbrakeInput")), 0.f, false);
+			return;
+		}
+
+		// Require ground contact (by the wheel/suspension trace channel) before attempting to drive.
+		if (CVarTrafficChaosDriveRequireGroundedToDrive.GetValueOnGameThread() != 0 && GetWorld())
+		{
+			const float MaxWaitSeconds = FMath::Max(0.f, CVarTrafficChaosDriveRequireGroundedMaxSeconds.GetValueOnGameThread());
+			const float MaxGapCm = FMath::Max(0.f, CVarTrafficChaosDriveGroundedMaxGapCm.GetValueOnGameThread());
+			const float TraceDepthCm = FMath::Max(0.f, CVarTrafficChaosDriveGroundedTraceDepthCm.GetValueOnGameThread());
+
+			const ECollisionChannel WheelTraceChannel = ResolveChaosWheelTraceChannel(Move);
+
+			float GapCm = 0.f;
+			FHitResult DynHit;
+			const bool bGrounded = IsGroundedByWheelTraceChannel(*GetWorld(), *ChaosVehicle.Get(), WheelTraceChannel, MaxGapCm, TraceDepthCm, GapCm, &DynHit);
+			bChaosDriveEverGrounded = bChaosDriveEverGrounded || bGrounded;
+
+			// Limited, always-on diagnostics for the first few sample vehicles.
+			if (bSample && (Age - ChaosDriveLastGroundDiagAgeSeconds) >= 0.5f)
+			{
+				ChaosDriveLastGroundDiagAgeSeconds = Age;
+
+				FHitResult StaticHit;
+				const bool bDynHit = DynHit.bBlockingHit;
+				const bool bStaticHit = TraceDownFromPawnBounds(*GetWorld(), *ChaosVehicle.Get(), ECC_WorldStatic, TraceDepthCm, StaticHit);
+
+				if (!bDynHit && bStaticHit && !bChaosDriveLoggedGroundMismatch)
+				{
+					bChaosDriveLoggedGroundMismatch = true;
+
+					const UPrimitiveComponent* HitComp = StaticHit.GetComponent();
+					const ECollisionResponse RespToDyn = HitComp ? HitComp->GetCollisionResponseToChannel(ECC_WorldDynamic) : ECR_MAX;
+					const int32 ObjType = HitComp ? static_cast<int32>(HitComp->GetCollisionObjectType()) : -1;
+					UE_LOG(LogTraffic, Warning,
+						TEXT("[TrafficVehicleAdapter] Sample[%d] GroundTrace mismatch: ECC_WorldDynamic MISS but ECC_WorldStatic HIT (%s.%s objType=%d respToWorldDynamic=%d). Wheels may never see the road."),
+						DebugIndex,
+						StaticHit.GetActor() ? *StaticHit.GetActor()->GetName() : TEXT("<none>"),
+						HitComp ? *HitComp->GetName() : TEXT("<none>"),
+						ObjType,
+						static_cast<int32>(RespToDyn));
+				}
+
+				UE_LOG(LogTraffic, Log,
+					TEXT("[TrafficVehicleAdapter] Sample[%d] GroundCheck age=%.2fs wheelCh=%d(%s) grounded=%d gap=%.1fcm dynHit=%d staticHit=%d upZ=%.2f speed=%.1f"),
+					DebugIndex,
+					Age,
+					static_cast<int32>(WheelTraceChannel),
+					CollisionChannelName(WheelTraceChannel),
+					bGrounded ? 1 : 0,
+					GapCm,
+					bDynHit ? 1 : 0,
+					bStaticHit ? 1 : 0,
+					ChaosVehicle->GetActorUpVector().Z,
+					ChaosVehicle->GetVelocity().Size());
+			}
+
+			// During the early spawn window, do not drive until grounded.
+			if (!bGrounded && (Age <= MaxWaitSeconds))
+			{
+				ApplyInitialBraking(Move);
+				CallSingleParam(Move, FName(TEXT("SetHandbrakeInput")), 0.f, false);
+				return;
+			}
+		}
+
+		if (bSample && LogicVehicle.IsValid())
+		{
+			EPathFollowTargetType FollowType = EPathFollowTargetType::None;
+			int32 FollowId = INDEX_NONE;
+			float FollowS = 0.f;
+			if (LogicVehicle->GetFollowTarget(FollowType, FollowId, FollowS))
+			{
+				const uint8 TypeRaw = static_cast<uint8>(FollowType);
+				const bool bChanged = !bHasPrevFollowTarget || (TypeRaw != PrevFollowTargetTypeRaw) || (FollowId != PrevFollowTargetId);
+				if (bChanged)
+				{
+					UE_LOG(LogTraffic, Log,
+						TEXT("[TrafficVehicleAdapter] Sample[%d] %s FollowTarget type=%d id=%d S=%.1f"),
+						DebugIndex,
+						*ChaosVehicle->GetName(),
+						static_cast<int32>(FollowType),
+						FollowId,
+						FollowS);
+				}
+
+				PrevFollowTargetTypeRaw = TypeRaw;
+				PrevFollowTargetId = FollowId;
+				PrevFollowTargetS = FollowS;
+				bHasPrevFollowTarget = true;
+			}
+		}
+
+		// Ensure any handbrake applied during spawn warmup is released before driving.
+		CallSingleParam(Move, FName(TEXT("SetHandbrakeInput")), 0.f, false);
+
 		const FVector ChaosPos = ChaosVehicle->GetActorLocation();
 		const FVector ChaosFwd = ChaosVehicle->GetActorForwardVector();
 		const FVector LogicPos = LogicVehicle->GetActorLocation();
 		const FVector LogicFwd = LogicVehicle->GetActorForwardVector();
 
 		const float Lookahead = FMath::Max(0.f, CVarTrafficChaosDriveLookaheadCm.GetValueOnGameThread());
-		const FVector Target = LogicPos + LogicFwd * Lookahead;
+		FVector Target = LogicPos + LogicFwd * Lookahead;
+		FVector TargetTangent = LogicFwd;
+		LogicVehicle->SampleFollowPoseAheadOf(ChaosPos, ChaosFwd, Lookahead, Target, TargetTangent);
 
 		const FVector2D ToTarget2D(Target.X - ChaosPos.X, Target.Y - ChaosPos.Y);
 		const FVector2D Fwd2D(ChaosFwd.X, ChaosFwd.Y);
+		const FVector2D DesiredDir2D(TargetTangent.X, TargetTangent.Y);
 
 		const float ToLen = ToTarget2D.Size();
 		const FVector2D ToN = (ToLen > KINDA_SMALL_NUMBER) ? (ToTarget2D / ToLen) : FVector2D::ZeroVector;
 		const FVector2D FwdN = Fwd2D.GetSafeNormal();
 
-		const float Cross = (FwdN.X * ToN.Y) - (FwdN.Y * ToN.X);
-		const float Dot = (FwdN.X * ToN.X) + (FwdN.Y * ToN.Y);
+		const FVector2D DesiredN = DesiredDir2D.GetSafeNormal();
+		const FVector2D AimN = (!DesiredN.IsNearlyZero()) ? DesiredN : ToN;
+
+		const float Cross = (FwdN.X * AimN.Y) - (FwdN.Y * AimN.X);
+		const float Dot = (FwdN.X * AimN.X) + (FwdN.Y * AimN.Y);
 		const float YawErrorRad = FMath::Atan2(Cross, Dot);
 
 		const float SteerGain = CVarTrafficChaosDriveSteerGain.GetValueOnGameThread();
@@ -758,7 +1664,27 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 		const FVector Vel = ChaosVehicle->GetVelocity();
 		const float CurrentForwardSpeed = FVector::DotProduct(Vel, ChaosFwd); // signed cm/s
 		const float CurrentSpeed = FMath::Abs(CurrentForwardSpeed);
-		const float SpeedError = DesiredSpeed - CurrentSpeed;
+
+		// Slow down when facing a large yaw error (prevents "full throttle + full lock" spin behavior).
+		const float StartDeg = FMath::Max(0.f, CVarTrafficChaosDriveTurnSlowdownStartDeg.GetValueOnGameThread());
+		const float FullDeg = FMath::Max(StartDeg + 0.1f, CVarTrafficChaosDriveTurnSlowdownFullDeg.GetValueOnGameThread());
+		const float YawAbsDeg = FMath::Abs(FMath::RadiansToDegrees(YawErrorRad));
+		const float TurnAlpha = FMath::Clamp((YawAbsDeg - StartDeg) / (FullDeg - StartDeg), 0.f, 1.f);
+		const float TurnScale = 1.f - TurnAlpha;
+
+		// Ramp speed up gradually after spawn.
+		float DriveScale = 1.f;
+		if (DriveRamp > 0.f && Age > DriveDelay)
+		{
+			DriveScale = FMath::Clamp((Age - DriveDelay) / DriveRamp, 0.f, 1.f);
+		}
+
+		// Ramp steering authority up gradually after spawn. This helps prevent low-speed spin-outs when yaw error is large.
+		const float SteerLimit = FMath::Clamp(0.25f + 0.75f * DriveScale, 0.25f, 1.0f);
+		Steering = FMath::Clamp(Steering, -SteerLimit, SteerLimit);
+
+		const float EffectiveDesiredSpeed = DesiredSpeed * TurnScale * DriveScale;
+		const float SpeedError = EffectiveDesiredSpeed - CurrentSpeed;
 
 		const float ThrottleGain = FMath::Max(0.f, CVarTrafficChaosDriveThrottleGain.GetValueOnGameThread());
 		const float BrakeGain = FMath::Max(0.f, CVarTrafficChaosDriveBrakeGain.GetValueOnGameThread());
@@ -772,6 +1698,43 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 		else
 		{
 			Brake = FMath::Clamp((-SpeedError) * BrakeGain, 0.f, 1.f);
+		}
+
+		// Spawn spin damping: clamp excessive chassis angular speed at low linear speeds for a short window.
+		{
+			const float SpinSeconds = FMath::Max(0.f, CVarTrafficChaosDriveSpawnSpinDampSeconds.GetValueOnGameThread());
+			if (SpinSeconds > 0.f && Age <= SpinSeconds)
+			{
+				const float MaxSpeed = FMath::Max(0.f, CVarTrafficChaosDriveSpawnSpinDampMaxSpeedCmPerSec.GetValueOnGameThread());
+				if (CurrentSpeed <= MaxSpeed)
+				{
+					const float MaxAng = FMath::Max(0.f, CVarTrafficChaosDriveSpawnSpinDampMaxAngularDegPerSec.GetValueOnGameThread());
+					if (GetChassisAngularSpeedDegPerSec(*ChaosVehicle.Get()) > MaxAng)
+					{
+						ClampChassisAngularVelocity(*ChaosVehicle.Get(), MaxAng);
+						// If we're spinning wildly, prefer braking over throttle this frame.
+						Throttle = 0.f;
+						Brake = FMath::Max(Brake, 0.5f);
+					}
+				}
+			}
+		}
+
+		// Persistent low-speed spin clamp: prevents vehicles from endlessly pirouetting after a collision.
+		if (CVarTrafficChaosDriveLowSpeedSpinClamp.GetValueOnGameThread() != 0)
+		{
+			const float MaxSpeed = FMath::Max(0.f, CVarTrafficChaosDriveLowSpeedSpinClampMaxSpeedCmPerSec.GetValueOnGameThread());
+			if (CurrentSpeed <= MaxSpeed)
+			{
+				const float MaxAng = FMath::Max(0.f, CVarTrafficChaosDriveLowSpeedSpinClampMaxAngularDegPerSec.GetValueOnGameThread());
+				if (GetChassisAngularSpeedDegPerSec(*ChaosVehicle.Get()) > MaxAng)
+				{
+					ClampChassisAngularVelocity(*ChaosVehicle.Get(), MaxAng);
+					Throttle = 0.f;
+					Brake = FMath::Max(Brake, 0.6f);
+					Steering = 0.f;
+				}
+			}
 		}
 
 		// Prevent aggressive oscillations/spin-outs by limiting per-frame input changes.

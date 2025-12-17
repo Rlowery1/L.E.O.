@@ -69,6 +69,7 @@ namespace
 void FTrafficRuntimeModule::StartupModule()
 {
 	UE_LOG(LogTraffic, Log, TEXT("[AAA Traffic] Plugin Version = %s"), TEXT(AAA_TRAFFIC_PLUGIN_VERSION));
+	UE_LOG(LogTraffic, Log, TEXT("[AAA Traffic] BuildStamp = %s %s"), TEXT(__DATE__), TEXT(__TIME__));
 	UE_LOG(LogTraffic, Log, TEXT("TrafficRuntime module started."));
 
 	// Preload ZoneGraph lane profile assets so later ZoneGraph generation does not block on disk loads.

@@ -48,8 +48,24 @@ public:
 	/** Returns the current lane/movement follow target (for following/spacing queries). */
 	bool GetFollowTarget(EPathFollowTargetType& OutType, int32& OutTargetId, float& OutS) const;
 
+	/**
+	 * Samples a pose on the current follow target (lane or movement) a fixed distance ahead of a provided world location.
+	 * This is used by ChaosDrive so the physics vehicle can steer toward the path it is *actually on* (vs. the logic pawn),
+	 * preventing fast 360° spins when the logic pawn advances/rotates at intersections.
+	 */
+	bool SampleFollowPoseAheadOf(
+		const FVector& WorldLocation,
+		const FVector& WorldForward,
+		float LookaheadCm,
+		FVector& OutPosition,
+		FVector& OutTangent) const;
+
 	/** Approximate length of this vehicle (cm) used for spacing/following. */
 	void SetApproxVehicleLengthCm(float InLengthCm) { ApproxVehicleLengthCm = FMath::Max(0.f, InLengthCm); }
+
+	/** Debug spawn index (set by TrafficVehicleManager) used for sampling a few vehicles for always-on logs. */
+	void SetDebugSpawnIndex(int32 InIndex) { DebugSpawnIndex = InIndex; }
+	int32 GetDebugSpawnIndex() const { return DebugSpawnIndex; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -100,6 +116,9 @@ protected:
 	mutable float LastSpeed = 0.f;
 	mutable float LastAccel = 0.f;
 	mutable float LastJerk = 0.f;
+
+	// Debug: stable spawn index used to sample a small number of vehicles for always-on logs in PIE/Game.
+	int32 DebugSpawnIndex = INDEX_NONE;
 
 	UTrafficKinematicFollower* EnsureFollower();
 };

@@ -41,6 +41,12 @@ private:
 		bool bWasGravityEnabled = true;
 	};
 
+	// Debug: track follow target transitions (lane <-> movement) for sampled vehicles.
+	uint8 PrevFollowTargetTypeRaw = 0;
+	int32 PrevFollowTargetId = INDEX_NONE;
+	float PrevFollowTargetS = 0.f;
+	bool bHasPrevFollowTarget = false;
+
 	bool bLoggedChaosDriveInit = false;
 	bool bLoggedChaosDriveMissingMovement = false;
 	bool bChaosDriveMovementSuspended = false;
@@ -49,6 +55,24 @@ private:
 	bool bChaosDrivePhysicsSuspended = false;
 	float ChaosDrivePhysicsResumeAgeSeconds = 0.f;
 	TArray<FChaosDrivePrimWarmupState> ChaosDrivePhysicsComps;
+
+	// When road collision isn't ready yet, temporarily disable physics and (optionally) hide the pawn.
+	TArray<FChaosDrivePrimWarmupState> ChaosDriveRoadHoldPhysicsComps;
+
+	// Temporary spawn stabilization (damping) for ChaosDrive vehicles.
+	TWeakObjectPtr<UPrimitiveComponent> ChaosDriveSpawnDampedPrim;
+	float ChaosDriveSavedLinearDamping = 0.f;
+	float ChaosDriveSavedAngularDamping = 0.f;
+	bool bChaosDriveHasSavedDamping = false;
+
+	// Grounding diagnostics for ChaosDrive stability.
+	bool bChaosDriveEverGrounded = false;
+	float ChaosDriveLastGroundDiagAgeSeconds = -1000.f;
+	float ChaosDriveLastHoldDiagAgeSeconds = -1000.f;
+	bool bChaosDriveLoggedGroundMismatch = false;
+	bool bChaosDriveAwaitingRoadCollision = false;
+	bool bChaosDriveWasHiddenForRoadCollision = false;
+
 	float PrevSteer = 0.f;
 	float PrevThrottle = 0.f;
 	float PrevBrake = 0.f;

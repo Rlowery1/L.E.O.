@@ -15,6 +15,15 @@ enum class ETrafficIntersectionControlMode : uint8
 	TrafficLightsFixedTime UMETA(DisplayName="Traffic Lights (Fixed Time)")
 };
 
+UENUM(BlueprintType)
+enum class ETrafficTurnPolicy : uint8
+{
+	ThroughFirst UMETA(DisplayName="Through First"),
+	LeftFirst UMETA(DisplayName="Left First"),
+	RightFirst UMETA(DisplayName="Right First"),
+	PreferNonThrough UMETA(DisplayName="Prefer Non-Through (Turns)")
+};
+
 UCLASS(Config=Game, DefaultConfig, meta=(DisplayName="AAA Traffic Settings"))
 class TRAFFICRUNTIME_API UTrafficRuntimeSettings : public UDeveloperSettings
 {
@@ -79,4 +88,8 @@ public:
 	/** Fixed-time traffic light: all-red clearance duration (seconds) between phases. */
 	UPROPERTY(EditAnywhere, Config, Category="Intersections|Traffic Lights", meta=(ClampMin="0.0"))
 	float TrafficLightAllRedSeconds = 1.0f;
+
+	/** Default routing turn policy used at runtime (PIE/Game). */
+	UPROPERTY(EditAnywhere, Config, Category="Routing")
+	ETrafficTurnPolicy TurnPolicy = ETrafficTurnPolicy::ThroughFirst;
 };

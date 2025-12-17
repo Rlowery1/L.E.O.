@@ -89,6 +89,39 @@ static TAutoConsoleVariable<int32> CVarTrafficFollowingEnabled(
 	TEXT("If non-zero, vehicles adjust speed to follow a lead vehicle on the same lane/movement."),
 	ECVF_Default);
 
+static TAutoConsoleVariable<int32> CVarTrafficDebugSampleVehicleCount(
+	TEXT("aaa.Traffic.Debug.SampleVehicleCount"),
+	3,
+	TEXT("Number of vehicles (by spawn order) that emit always-on intersection transition logs.\n")
+	TEXT("Set to 0 to disable. Default: 3"),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficKinematicMaxYawRateDegPerSec(
+	TEXT("aaa.Traffic.Kinematic.MaxYawRateDegPerSec"),
+	720.f,
+	TEXT("Max yaw rate (deg/sec) applied to the logic vehicle when aligning to lane/movement tangents.\n")
+	TEXT("Helps prevent sudden spins when tangents are discontinuous (intersections). Default: 720"),
+	ECVF_Default);
+
+static const TCHAR* TurnTypeToString(ETrafficTurnType TurnType)
+{
+	switch (TurnType)
+	{
+	case ETrafficTurnType::Through: return TEXT("Through");
+	case ETrafficTurnType::Left: return TEXT("Left");
+	case ETrafficTurnType::Right: return TEXT("Right");
+	case ETrafficTurnType::UTurn: return TEXT("UTurn");
+	default: break;
+	}
+	return TEXT("Unknown");
+}
+
+static bool ShouldSampleVehicleLogs(const ATrafficVehicleBase& Vehicle)
+{
+	const int32 Count = FMath::Max(0, CVarTrafficDebugSampleVehicleCount.GetValueOnGameThread());
+	return (Count > 0) && (Vehicle.GetDebugSpawnIndex() >= 0) && (Vehicle.GetDebugSpawnIndex() < Count);
+}
+
 static bool TryComputeStopSFromIntersectionBoundary(
 	const FTrafficNetwork& Net,
 	const FTrafficLane& Lane,
@@ -195,6 +228,9 @@ ATrafficVehicleBase::ATrafficVehicleBase()
 
 	Body = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Body"));
 	SetRootComponent(Body);
+	// This actor represents the traffic "logic" vehicle and should not physically interact with Chaos vehicles/world.
+	Body->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Body->SetGenerateOverlapEvents(false);
 
 	if (UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")))
 	{
@@ -222,6 +258,58 @@ bool ATrafficVehicleBase::GetFollowTarget(EPathFollowTargetType& OutType, int32&
 	OutTargetId = State.TargetId;
 	OutS = State.S;
 	return true;
+}
+
+bool ATrafficVehicleBase::SampleFollowPoseAheadOf(
+	const FVector& WorldLocation,
+	const FVector& WorldForward,
+	float LookaheadCm,
+	FVector& OutPosition,
+	FVector& OutTangent) const
+{
+	if (bUseZoneGraphLane || !Follower)
+	{
+		return false;
+	}
+
+	const float Lookahead = FMath::Max(0.f, LookaheadCm);
+	const FPathFollowState& State = Follower->GetState();
+
+	if (State.TargetType == EPathFollowTargetType::Lane)
+	{
+		const FTrafficLane* Lane = Follower->GetCurrentLane();
+		if (!Lane)
+		{
+			return false;
+		}
+
+		FLaneProjectionResult Proj;
+		if (TrafficLaneGeometry::ProjectPointOntoLane(*Lane, WorldLocation, WorldForward, Proj))
+		{
+			return TrafficLaneGeometry::SamplePoseAtS(*Lane, Proj.S + Lookahead, OutPosition, OutTangent);
+		}
+
+		return TrafficLaneGeometry::SamplePoseAtS(*Lane, State.S + Lookahead, OutPosition, OutTangent);
+	}
+
+	if (State.TargetType == EPathFollowTargetType::Movement)
+	{
+		const FTrafficMovement* Movement = Follower->GetCurrentMovement();
+		if (!Movement)
+		{
+			return false;
+		}
+
+		float ProjS = 0.f;
+		if (TrafficMovementGeometry::ProjectPointOntoMovement(*Movement, WorldLocation, ProjS))
+		{
+			return TrafficMovementGeometry::SamplePoseAtS(*Movement, ProjS + Lookahead, OutPosition, OutTangent);
+		}
+
+		return TrafficMovementGeometry::SamplePoseAtS(*Movement, State.S + Lookahead, OutPosition, OutTangent);
+	}
+
+	return false;
 }
 
 void ATrafficVehicleBase::BeginPlay()
@@ -276,6 +364,17 @@ void ATrafficVehicleBase::InitializeOnLane(const FTrafficLane* Lane, float Initi
 	{
 		F->InitForLane(Lane, InitialS, SpeedCmPerSec);
 	}
+
+	if (Lane && ShouldSampleVehicleLogs(*this))
+	{
+		UE_LOG(LogTraffic, Log,
+			TEXT("[TrafficVehicle] Sample[%d] %s InitOnLane lane=%d S=%.1f speed=%.1f"),
+			GetDebugSpawnIndex(),
+			*GetName(),
+			Lane->LaneId,
+			InitialS,
+			SpeedCmPerSec);
+	}
 }
 
 void ATrafficVehicleBase::InitializeOnMovement(const FTrafficMovement* Movement, float InitialS, float SpeedCmPerSec)
@@ -290,6 +389,20 @@ void ATrafficVehicleBase::InitializeOnMovement(const FTrafficMovement* Movement,
 	if (UTrafficKinematicFollower* F = EnsureFollower())
 	{
 		F->InitForMovement(Movement, InitialS, SpeedCmPerSec);
+	}
+
+	if (Movement && ShouldSampleVehicleLogs(*this))
+	{
+		UE_LOG(LogTraffic, Log,
+			TEXT("[TrafficVehicle] Sample[%d] %s InitOnMovement move=%d int=%d turn=%s inLane=%d outLane=%d speed=%.1f"),
+			GetDebugSpawnIndex(),
+			*GetName(),
+			Movement->MovementId,
+			Movement->IntersectionId,
+			TurnTypeToString(Movement->TurnType),
+			Movement->IncomingLaneId,
+			Movement->OutgoingLaneId,
+			SpeedCmPerSec);
 	}
 }
 
@@ -477,6 +590,16 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 								UE_LOG(LogTraffic, Log, TEXT("[TrafficVehicle] %s reserved intersection %d (movement=%d) after waiting."),
 									*GetName(), WaitingIntersectionId, WaitingMove->MovementId);
 							}
+							if (ShouldSampleVehicleLogs(*this))
+							{
+								UE_LOG(LogTraffic, Log,
+									TEXT("[TrafficVehicle] Sample[%d] %s Reserved(after-wait) int=%d move=%d turn=%s"),
+									GetDebugSpawnIndex(),
+									*GetName(),
+									WaitingIntersectionId,
+									WaitingMove->MovementId,
+									TurnTypeToString(WaitingMove->TurnType));
+							}
 
 							bWaitingForIntersection = false;
 							bHasIntersectionReservation = true;
@@ -516,6 +639,16 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 								UE_LOG(LogTraffic, Log, TEXT("[TrafficVehicle] %s reserved intersection %d (movement=%d)."),
 									*GetName(), NextMovement->IntersectionId, NextMovement->MovementId);
 							}
+							if (ShouldSampleVehicleLogs(*this))
+							{
+								UE_LOG(LogTraffic, Log,
+									TEXT("[TrafficVehicle] Sample[%d] %s Reserved int=%d move=%d turn=%s"),
+									GetDebugSpawnIndex(),
+									*GetName(),
+									NextMovement->IntersectionId,
+									NextMovement->MovementId,
+									TurnTypeToString(NextMovement->TurnType));
+							}
 
 							bHasIntersectionReservation = true;
 							ReservedIntersectionId = NextMovement->IntersectionId;
@@ -536,6 +669,16 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 							{
 								UE_LOG(LogTraffic, Log, TEXT("[TrafficVehicle] %s waiting for intersection %d (movement=%d)."),
 									*GetName(), NextMovement->IntersectionId, NextMovement->MovementId);
+							}
+							if (ShouldSampleVehicleLogs(*this))
+							{
+								UE_LOG(LogTraffic, Log,
+									TEXT("[TrafficVehicle] Sample[%d] %s Waiting int=%d move=%d turn=%s"),
+									GetDebugSpawnIndex(),
+									*GetName(),
+									NextMovement->IntersectionId,
+									NextMovement->MovementId,
+									TurnTypeToString(NextMovement->TurnType));
 							}
 
 							bWaitingForIntersection = true;
@@ -675,6 +818,18 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 						{
 							if (const FTrafficMovement* ReservedMove = TrafficRouting::FindMovementById(Net, ReservedMovementId))
 							{
+								if (ShouldSampleVehicleLogs(*this))
+								{
+									UE_LOG(LogTraffic, Log,
+										TEXT("[TrafficVehicle] Sample[%d] %s EnterIntersection int=%d move=%d turn=%s -> outLane=%d"),
+										GetDebugSpawnIndex(),
+										*GetName(),
+										ReservedMove->IntersectionId,
+										ReservedMove->MovementId,
+										TurnTypeToString(ReservedMove->TurnType),
+										ReservedOutgoingLaneId);
+								}
+
 								PendingOutgoingLaneId = ReservedOutgoingLaneId;
 								ActiveReservedIntersectionId = ReservedIntersectionId;
 
@@ -709,6 +864,21 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 								WaitingIntersectionId = NextMovement->IntersectionId;
 								WaitingMovementId = NextMovement->MovementId;
 								WaitingOutgoingLaneId = NextMovement->OutgoingLaneId;
+
+								if (ShouldSampleVehicleLogs(*this))
+								{
+									UE_LOG(LogTraffic, Log,
+										TEXT("[TrafficVehicle] Sample[%d] %s LaneEnd->Wait int=%d move=%d turn=%s stopS=%.1f lane=%d laneLen=%.1f"),
+										GetDebugSpawnIndex(),
+										*GetName(),
+										NextMovement->IntersectionId,
+										NextMovement->MovementId,
+										TurnTypeToString(NextMovement->TurnType),
+										StopS,
+										Lane->LaneId,
+										LaneLen);
+								}
+
 								Follower->SetSpeedCmPerSec(0.f);
 								Follower->SetDistanceAlongTarget(StopS);
 							}
@@ -717,6 +887,17 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 					else if (const FTrafficMovement* NextMovement = TrafficRouting::ChooseDefaultMovementForIncomingLane(Net, Lane->LaneId))
 					{
 						PendingOutgoingLaneId = NextMovement->OutgoingLaneId;
+						if (ShouldSampleVehicleLogs(*this))
+						{
+							UE_LOG(LogTraffic, Log,
+								TEXT("[TrafficVehicle] Sample[%d] %s LaneEnd->Movement move=%d int=%d turn=%s -> outLane=%d"),
+								GetDebugSpawnIndex(),
+								*GetName(),
+								NextMovement->MovementId,
+								NextMovement->IntersectionId,
+								TurnTypeToString(NextMovement->TurnType),
+								NextMovement->OutgoingLaneId);
+						}
 						InitializeOnMovement(NextMovement, /*InitialS=*/0.0f, CurrentSpeed);
 					}
 				}
@@ -742,7 +923,31 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 
 					if (const FTrafficLane* OutLane = TrafficRouting::FindLaneById(Net, PendingOutgoingLaneId))
 					{
-						InitializeOnLane(OutLane, /*InitialS=*/0.0f, CurrentSpeed);
+						if (ShouldSampleVehicleLogs(*this))
+						{
+							UE_LOG(LogTraffic, Log,
+								TEXT("[TrafficVehicle] Sample[%d] %s ExitMovement -> outLane=%d speed=%.1f"),
+								GetDebugSpawnIndex(),
+								*GetName(),
+								OutLane->LaneId,
+								CurrentSpeed);
+						}
+
+						// Avoid visual pops at movement->lane transition by projecting our current pose onto the outgoing lane.
+						float OutS = 0.0f;
+						{
+							FVector MovePos, MoveTangent;
+							if (TrafficMovementGeometry::SamplePoseAtS(*Movement, State.S, MovePos, MoveTangent))
+							{
+								FLaneProjectionResult Proj;
+								if (TrafficLaneGeometry::ProjectPointOntoLane(*OutLane, MovePos, MoveTangent, Proj))
+								{
+									OutS = Proj.S;
+								}
+							}
+						}
+
+						InitializeOnLane(OutLane, /*InitialS=*/OutS, CurrentSpeed);
 					}
 					else
 					{
@@ -758,7 +963,14 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 	if (Follower->GetCurrentPose(Pos, Tangent))
 	{
 		SetActorLocation(Pos);
-		SetActorRotation(Tangent.Rotation());
+
+		// Keep traffic visuals upright and smooth yaw changes to reduce intersection "spin" artifacts.
+		const FVector Tangent2D = FVector(Tangent.X, Tangent.Y, 0.f).GetSafeNormal();
+		const float DesiredYaw = Tangent2D.IsNearlyZero() ? GetActorRotation().Yaw : Tangent2D.Rotation().Yaw;
+		const float MaxYawRate = FMath::Max(0.f, CVarTrafficKinematicMaxYawRateDegPerSec.GetValueOnGameThread());
+		const float CurrentYaw = GetActorRotation().Yaw;
+		const float NewYaw = (MaxYawRate > 0.f) ? FMath::FixedTurn(CurrentYaw, DesiredYaw, MaxYawRate * FMath::Max(0.f, DeltaSeconds)) : DesiredYaw;
+		SetActorRotation(FRotator(0.f, NewYaw, 0.f));
 
 		// Update dynamics samples.
 		const float PrevSpeed = LastSpeed;
@@ -823,6 +1035,9 @@ void ATrafficVehicleBase::SetDebugBodyVisible(bool bVisible)
 {
 	if (Body)
 	{
+		// Even when visible for debugging, keep collision disabled to avoid pushing Chaos traffic vehicles.
+		Body->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Body->SetGenerateOverlapEvents(false);
 		Body->SetVisibility(bVisible, true);
 		Body->SetHiddenInGame(!bVisible);
 	}

@@ -8,17 +8,20 @@
 #include "TrafficVehicleAdapter.h"
 #include "TrafficVehicleProfile.h"
 #include "TrafficLaneGeometry.h"
+#include "TrafficVisualMode.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/MovementComponent.h"
 #include "HAL/IConsoleManager.h"
+#include "UObject/UnrealType.h"
 #include "UObject/SoftObjectPath.h"
 #include "Misc/AutomationTest.h"
 #include "ZoneGraphSubsystem.h"
 #include "CollisionQueryParams.h"
 #include "Components/StaticMeshComponent.h"
 #include "PhysicsEngine/BodySetup.h"
+#include "TimerManager.h"
 
 static TAutoConsoleVariable<int32> CVarShowLogicDebugMesh(
 	TEXT("aaa.Traffic.ShowLogicDebugMesh"),
@@ -26,12 +29,6 @@ static TAutoConsoleVariable<int32> CVarShowLogicDebugMesh(
 	TEXT("If non-zero, show the TrafficVehicleBase debug cube even when Chaos visuals are present.\n")
 	TEXT("Default: 0 (hide cube when Chaos pawn is spawned)."),
 	ECVF_Default);
-
-static int32 GetTrafficVisualModeForManager()
-{
-	IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.Mode"));
-	return Var ? Var->GetInt() : 1;
-}
 
 static TAutoConsoleVariable<float> CVarTrafficChaosDriveSpawnZOffsetCm(
 	TEXT("aaa.Traffic.Visual.ChaosDrive.SpawnZOffsetCm"),
@@ -41,14 +38,22 @@ static TAutoConsoleVariable<float> CVarTrafficChaosDriveSpawnZOffsetCm(
 
 static TAutoConsoleVariable<float> CVarTrafficChaosDriveSpawnTraceMaxDeltaZCm(
 	TEXT("aaa.Traffic.Visual.ChaosDrive.SpawnTraceMaxDeltaZCm"),
-	100.f,
+	500.f,
 	TEXT("If the ground trace hit is farther than this (cm) from the lane's desired Z, ignore the trace and use lane Z instead."),
 	ECVF_Default);
 
 static TAutoConsoleVariable<float> CVarTrafficChaosDriveSpawnInitialLiftCm(
 	TEXT("aaa.Traffic.Visual.ChaosDrive.SpawnInitialLiftCm"),
-	200.f,
+	50.f,
 	TEXT("Extra Z (cm) to spawn the Chaos pawn above its final position, then sweep down into place (helps avoid initial penetration impulses)."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarTrafficChaosDriveFixRoadWheelTraceCollision(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.FixRoadWheelTraceCollision"),
+	1,
+	TEXT("If non-zero, AAA Traffic will ensure road collision blocks ECC_WorldDynamic.\n")
+	TEXT("Chaos wheeled vehicle suspension traces commonly use ECC_WorldDynamic; if roads ignore it, vehicles can hover/flip and never get traction.\n")
+	TEXT("Default: 1"),
 	ECVF_Default);
 
 static TAutoConsoleVariable<int32> CVarTrafficSpawnMaxVehicles(
@@ -69,6 +74,25 @@ static TAutoConsoleVariable<int32> CVarTrafficChaosDriveSpawnResolvePenetration(
 	TEXT("If non-zero, attempts to resolve spawn overlap by lifting the vehicle upward."),
 	ECVF_Default);
 
+static TAutoConsoleVariable<int32> CVarTrafficRuntimeDeferSpawnUntilCollision(
+	TEXT("aaa.Traffic.Runtime.DeferSpawnUntilRoadCollision"),
+	1,
+	TEXT("If non-zero, delays ChaosDrive traffic spawning until road collision is detected (prevents vehicles falling/spawning mid-air at PIE start).\n")
+	TEXT("Default: 1"),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficRuntimeDeferSpawnPollSeconds(
+	TEXT("aaa.Traffic.Runtime.DeferSpawnPollSeconds"),
+	0.25f,
+	TEXT("Polling interval (seconds) while waiting for road collision before spawning traffic. Default: 0.25"),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficRuntimeDeferSpawnMaxWaitSeconds(
+	TEXT("aaa.Traffic.Runtime.DeferSpawnMaxWaitSeconds"),
+	6.0f,
+	TEXT("Max seconds to wait for road collision before spawning anyway. Default: 6.0"),
+	ECVF_Default);
+
 static TAutoConsoleVariable<float> CVarTrafficChaosDriveSpawnResolveStepCm(
 	TEXT("aaa.Traffic.Visual.ChaosDrive.SpawnResolveStepCm"),
 	50.f,
@@ -77,7 +101,7 @@ static TAutoConsoleVariable<float> CVarTrafficChaosDriveSpawnResolveStepCm(
 
 static TAutoConsoleVariable<float> CVarTrafficChaosDriveSpawnResolveMaxLiftCm(
 	TEXT("aaa.Traffic.Visual.ChaosDrive.SpawnResolveMaxLiftCm"),
-	2500.f,
+	300.f,
 	TEXT("Max total lift (cm) when resolving spawn overlap by lifting."),
 	ECVF_Default);
 
@@ -100,6 +124,175 @@ static int32 IsComplexAsSimpleCollision(const FHitResult& Hit)
 	}
 
 	return (BodySetup->CollisionTraceFlag == CTF_UseComplexAsSimple) ? 1 : 0;
+}
+
+static void EnsureRoadsBlockChaosWheelTraces(UWorld& World, const UTrafficNetworkAsset& NetworkAsset, ECollisionChannel WheelTraceChannelHint)
+{
+	if (CVarTrafficChaosDriveFixRoadWheelTraceCollision.GetValueOnGameThread() == 0)
+	{
+		return;
+	}
+
+	// Avoid repeatedly touching collision on every spawn call within the same world.
+	static TSet<uint32> FixedWorldIds;
+	const uint32 WorldId = World.GetUniqueID();
+	if (FixedWorldIds.Contains(WorldId))
+	{
+		return;
+	}
+	FixedWorldIds.Add(WorldId);
+
+	int32 ActorsTouched = 0;
+	int32 ComponentsChanged = 0;
+
+	const int32 Override = []() -> int32
+	{
+		if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.ChaosDrive.WheelTraceChannelOverride")))
+		{
+			return Var->GetInt();
+		}
+		return -1;
+	}();
+
+	// If the user explicitly overrides the wheel channel, prefer that; otherwise use the hint from the vehicle class.
+	const ECollisionChannel WheelTraceChannel =
+		(Override >= 0 && Override <= 31) ? static_cast<ECollisionChannel>(Override) : WheelTraceChannelHint;
+	const bool bAlsoFixWorldDynamic = (WheelTraceChannel != ECC_WorldDynamic);
+
+	for (const FTrafficRoad& Road : NetworkAsset.Network.Roads)
+	{
+		AActor* RoadActor = Road.SourceActor.Get();
+		if (!RoadActor || RoadActor->GetWorld() != &World)
+		{
+			continue;
+		}
+
+		bool bTouchedActor = false;
+		TArray<UPrimitiveComponent*> PrimComps;
+		RoadActor->GetComponents(PrimComps);
+		for (UPrimitiveComponent* Prim : PrimComps)
+		{
+			if (!Prim)
+			{
+				continue;
+			}
+
+			if (Prim->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
+			{
+				continue;
+			}
+
+			// Chaos wheeled vehicle suspension traces must hit the road collision channel. If the road ignores that channel,
+			// wheels won't detect ground and the vehicle will hover/flip and never drive correctly.
+			if (Prim->GetCollisionResponseToChannel(WheelTraceChannel) != ECR_Block)
+			{
+				Prim->SetCollisionResponseToChannel(WheelTraceChannel, ECR_Block);
+				bTouchedActor = true;
+				++ComponentsChanged;
+			}
+
+			// Keep the legacy fix as a backup in case a given vehicle setup still uses WorldDynamic in-wheel traces.
+			if (bAlsoFixWorldDynamic && Prim->GetCollisionResponseToChannel(ECC_WorldDynamic) != ECR_Block)
+			{
+				Prim->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
+				bTouchedActor = true;
+				++ComponentsChanged;
+			}
+		}
+
+		if (bTouchedActor)
+		{
+			++ActorsTouched;
+		}
+	}
+
+	if (ComponentsChanged > 0)
+	{
+		UE_LOG(LogTraffic, Log,
+			TEXT("[VehicleManager] ChaosDrive: Updated %d components across %d road actors to Block wheel/suspension trace channel=%d (and WorldDynamic backup=%d)."),
+			ComponentsChanged,
+			ActorsTouched,
+			static_cast<int32>(WheelTraceChannel),
+			bAlsoFixWorldDynamic ? 1 : 0);
+	}
+}
+
+static ECollisionChannel ResolveWheelTraceChannelFromMovement(UMovementComponent* Move)
+{
+	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.ChaosDrive.WheelTraceChannelOverride")))
+	{
+		const int32 Override = Var->GetInt();
+		if (Override >= 0 && Override <= 31)
+		{
+			return static_cast<ECollisionChannel>(Override);
+		}
+	}
+
+	if (!Move)
+	{
+		return ECC_WorldDynamic;
+	}
+
+	static const FName WheelTraceChannelPropName(TEXT("WheelTraceCollisionChannel"));
+	if (FProperty* Prop = Move->GetClass()->FindPropertyByName(WheelTraceChannelPropName))
+	{
+		if (const FEnumProperty* EnumProp = CastField<FEnumProperty>(Prop))
+		{
+			if (const FNumericProperty* Underlying = EnumProp->GetUnderlyingProperty())
+			{
+				const int64 V = Underlying->GetSignedIntPropertyValue(Prop->ContainerPtrToValuePtr<void>(Move));
+				if (V >= 0 && V <= 31)
+				{
+					return static_cast<ECollisionChannel>(V);
+				}
+			}
+		}
+		else if (const FByteProperty* ByteProp = CastField<FByteProperty>(Prop))
+		{
+			const uint8 V = ByteProp->GetPropertyValue_InContainer(Move);
+			if (V <= 31)
+			{
+				return static_cast<ECollisionChannel>(V);
+			}
+		}
+		else if (const FIntProperty* IntProp = CastField<FIntProperty>(Prop))
+		{
+			const int32 V = IntProp->GetPropertyValue_InContainer(Move);
+			if (V >= 0 && V <= 31)
+			{
+				return static_cast<ECollisionChannel>(V);
+			}
+		}
+	}
+
+	return ECC_WorldDynamic;
+}
+
+static ECollisionChannel ResolveWheelTraceChannelFromClass(const TSubclassOf<APawn>& PawnClass)
+{
+	if (!PawnClass)
+	{
+		return ResolveWheelTraceChannelFromMovement(nullptr);
+	}
+
+	const APawn* CDO = PawnClass->GetDefaultObject<APawn>();
+	if (!CDO)
+	{
+		return ResolveWheelTraceChannelFromMovement(nullptr);
+	}
+
+	TArray<UMovementComponent*> MoveComps;
+	CDO->GetComponents(MoveComps);
+	for (UMovementComponent* Move : MoveComps)
+	{
+		if (!Move)
+		{
+			continue;
+		}
+		return ResolveWheelTraceChannelFromMovement(Move);
+	}
+
+	return ResolveWheelTraceChannelFromMovement(nullptr);
 }
 
 static float EstimatePawnHalfHeightCm(const TSubclassOf<APawn>& PawnClass)
@@ -206,47 +399,69 @@ static FVector ComputeChaosDriveSpawnLocation(
 	bool& bOutUsedTraceZ,
 	FHitResult* OutHit)
 {
-	const FVector Start = DesiredLocation + FVector(0.f, 0.f, 3000.f);
-	const FVector End = DesiredLocation - FVector(0.f, 0.f, 5000.f);
-
-	FHitResult Hit;
-	bool bHit =
-		World.LineTraceSingleByChannel(Hit, Start, End, ECC_WorldStatic, QueryParams) ||
-		World.LineTraceSingleByChannel(Hit, Start, End, ECC_WorldDynamic, QueryParams) ||
-		World.LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, QueryParams);
-
-	if (!bHit)
-	{
-		// Fallback: object-type query that can catch custom collision setups.
-		FCollisionObjectQueryParams ObjParams;
-		ObjParams.AddObjectTypesToQuery(ECC_WorldStatic);
-		ObjParams.AddObjectTypesToQuery(ECC_WorldDynamic);
-		ObjParams.AddObjectTypesToQuery(ECC_PhysicsBody);
-		ObjParams.AddObjectTypesToQuery(ECC_Vehicle);
-		ObjParams.AddObjectTypesToQuery(ECC_Pawn);
-		bHit = World.LineTraceSingleByObjectType(Hit, Start, End, ObjParams, QueryParams);
-	}
-
 	const float Lift = FMath::Max(0.f, BottomOffsetCm) + FMath::Max(0.f, ExtraZOffsetCm);
 	const float MaxDeltaZ = FMath::Max(0.f, CVarTrafficChaosDriveSpawnTraceMaxDeltaZCm.GetValueOnGameThread());
-	const bool bTraceZTrusted = bHit && (FMath::Abs(Hit.ImpactPoint.Z - DesiredLocation.Z) <= MaxDeltaZ);
 
-	bOutUsedTraceZ = bTraceZTrusted;
+	// Trace deep enough to reach collision even if lane Z is far above the physical surface.
+	const FVector Start = DesiredLocation + FVector(0.f, 0.f, 50000.f);
+	const FVector End = DesiredLocation - FVector(0.f, 0.f, 100000.f);
 
-	const float BaseZ = bTraceZTrusted ? Hit.ImpactPoint.Z : DesiredLocation.Z;
-	if (bHit)
+	// Prefer the closest blocking surface at or below the lane Z (+ small tolerance for slightly-over lanes).
+	FCollisionObjectQueryParams ObjParams;
+	ObjParams.AddObjectTypesToQuery(ECC_WorldStatic);
+	ObjParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+	ObjParams.AddObjectTypesToQuery(ECC_PhysicsBody);
+	ObjParams.AddObjectTypesToQuery(ECC_Vehicle);
+	ObjParams.AddObjectTypesToQuery(ECC_Pawn);
+
+	TArray<FHitResult> Hits;
+	const bool bAnyHit = World.LineTraceMultiByObjectType(Hits, Start, End, ObjParams, QueryParams);
+
+	bool bFound = false;
+	FHitResult BestHit;
+	float BestZ = -FLT_MAX;
+
+	if (bAnyHit)
 	{
+		for (const FHitResult& HR : Hits)
+		{
+			if (!HR.bBlockingHit)
+			{
+				continue;
+			}
+
+			// Trust downward hits even when the lane's desired Z is far above the road.
+			// Only reject hits significantly ABOVE the desired lane Z (e.g., tracing onto an overhead bridge/deck).
+			const float DeltaZ = HR.ImpactPoint.Z - DesiredLocation.Z; // + = hit above lane, - = hit below lane
+			if (DeltaZ > MaxDeltaZ)
+			{
+				continue;
+			}
+
+			if (HR.ImpactPoint.Z > BestZ)
+			{
+				BestZ = HR.ImpactPoint.Z;
+				BestHit = HR;
+				bFound = true;
+			}
+		}
+	}
+
+	if (bFound)
+	{
+		bOutUsedTraceZ = true;
 		if (OutHit)
 		{
-			*OutHit = Hit;
+			*OutHit = BestHit;
 		}
-		return FVector(DesiredLocation.X, DesiredLocation.Y, BaseZ + Lift);
+		return FVector(DesiredLocation.X, DesiredLocation.Y, BestHit.ImpactPoint.Z + Lift);
 	}
 
 	if (OutHit)
 	{
 		*OutHit = FHitResult();
 	}
+
 	bOutUsedTraceZ = false;
 	return DesiredLocation + FVector(0.f, 0.f, Lift);
 }
@@ -350,7 +565,7 @@ static void ZeroPhysicsVelocities(APawn& Pawn)
 
 		Prim->SetPhysicsLinearVelocity(FVector::ZeroVector);
 		Prim->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
-		Prim->PutRigidBodyToSleep();
+		Prim->WakeAllRigidBodies();
 	}
 }
 
@@ -472,6 +687,182 @@ void ATrafficVehicleManager::BeginPlay()
 	Super::BeginPlay();
 }
 
+bool ATrafficVehicleManager::IsRoadCollisionReadyForChaosDrive(ECollisionChannel WheelTraceChannel) const
+{
+	const UWorld* World = GetWorld();
+	if (!World || !NetworkAsset)
+	{
+		return true;
+	}
+
+	// If we have no roads, there is nothing to wait for.
+	if (NetworkAsset->Network.Roads.Num() == 0)
+	{
+		return true;
+	}
+
+	int32 Hits = 0;
+	const int32 RequiredHits = 3;
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(AAA_Traffic_RoadCollisionReady), /*bTraceComplex=*/false);
+	Params.bReturnPhysicalMaterial = false;
+
+	for (const FTrafficRoad& Road : NetworkAsset->Network.Roads)
+	{
+		AActor* RoadActor = Road.SourceActor.Get();
+		if (!RoadActor || Road.CenterlinePoints.Num() < 2)
+		{
+			continue;
+		}
+
+		const FVector P = Road.CenterlinePoints[Road.CenterlinePoints.Num() / 2];
+		// Some road kits (and some CityBLD exports) can have lane/centerline Z far above the actual collision surface.
+		// Trace deep enough to detect the surface we will spawn onto.
+		const FVector Start = P + FVector(0.f, 0.f, 50000.f);
+		const FVector End = P - FVector(0.f, 0.f, 100000.f);
+
+		TArray<FHitResult> HitResults;
+		const bool bAny = World->LineTraceMultiByChannel(HitResults, Start, End, WheelTraceChannel, Params);
+		if (!bAny)
+		{
+			continue;
+		}
+
+		for (const FHitResult& HR : HitResults)
+		{
+			if (!HR.bBlockingHit)
+			{
+				continue;
+			}
+
+			// IMPORTANT: Only count a hit that belongs to this specific road actor.
+			// A previous version mistakenly accepted "any hit with a component", which always returns true and defeats deferral.
+			const AActor* HitActor = HR.GetActor();
+			if (HitActor == RoadActor)
+			{
+				++Hits;
+				break;
+			}
+
+			const UPrimitiveComponent* HitComp = HR.GetComponent();
+			if (HitComp && HitComp->GetOwner() == RoadActor)
+			{
+				++Hits;
+				break;
+			}
+		}
+
+		if (Hits >= RequiredHits)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool ATrafficVehicleManager::MaybeDeferChaosDriveSpawn(bool bZoneGraph, int32 VehiclesPerLane, float SpeedCmPerSec, FName RequiredLaneTag, ECollisionChannel WheelTraceChannel)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	// Only defer in ChaosDrive mode.
+	if (GetTrafficVisualMode() != ETrafficVisualMode::ChaosDrive)
+	{
+		return false;
+	}
+
+	if (CVarTrafficRuntimeDeferSpawnUntilCollision.GetValueOnGameThread() == 0)
+	{
+		return false;
+	}
+
+	if (IsRoadCollisionReadyForChaosDrive(WheelTraceChannel))
+	{
+		return false;
+	}
+
+	// Prevent repeatedly scheduling timers if some code calls Spawn* multiple times early in PIE.
+	if (!bDeferredSpawnPending)
+	{
+		bDeferredSpawnPending = true;
+		bDeferredSpawnWasZoneGraph = bZoneGraph;
+		DeferredVehiclesPerLane = VehiclesPerLane;
+		DeferredSpeedCmPerSec = SpeedCmPerSec;
+		DeferredRequiredLaneTag = RequiredLaneTag;
+		DeferredSpawnAttempts = 0;
+		DeferredSpawnStartWallSeconds = FPlatformTime::Seconds();
+
+		UE_LOG(LogTraffic, Warning,
+			TEXT("[VehicleManager] ChaosDrive: deferring spawn until road collision is ready for wheelTraceCh=%d (mode=%s vPerLane=%d speed=%.1f)."),
+			static_cast<int32>(WheelTraceChannel),
+			bZoneGraph ? TEXT("ZoneGraph") : TEXT("Lanes"),
+			VehiclesPerLane,
+			SpeedCmPerSec);
+	}
+
+	const float Poll = FMath::Max(0.05f, CVarTrafficRuntimeDeferSpawnPollSeconds.GetValueOnGameThread());
+	World->GetTimerManager().SetTimer(
+		DeferredSpawnTimerHandle,
+		this,
+		&ATrafficVehicleManager::TryDeferredSpawn,
+		Poll,
+		/*bLoop=*/true);
+
+	// Ensure no partially spawned vehicles are left around while we're deferring.
+	ClearVehicles();
+	return true;
+}
+
+void ATrafficVehicleManager::TryDeferredSpawn()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const double Elapsed = FPlatformTime::Seconds() - DeferredSpawnStartWallSeconds;
+	const float MaxWait = FMath::Max(0.f, CVarTrafficRuntimeDeferSpawnMaxWaitSeconds.GetValueOnGameThread());
+	++DeferredSpawnAttempts;
+
+	const ECollisionChannel WheelTraceChannel =
+		bHasCachedWheelTraceChannel ? CachedWheelTraceChannel : ResolveWheelTraceChannelFromMovement(nullptr);
+
+	if (IsRoadCollisionReadyForChaosDrive(WheelTraceChannel) || Elapsed >= MaxWait)
+	{
+		World->GetTimerManager().ClearTimer(DeferredSpawnTimerHandle);
+		bDeferredSpawnPending = false;
+
+		if (Elapsed >= MaxWait)
+		{
+			UE_LOG(LogTraffic, Warning,
+				TEXT("[VehicleManager] ChaosDrive: road collision not detected after %.2fs (%d polls); spawning anyway."),
+				Elapsed,
+				DeferredSpawnAttempts);
+		}
+		else
+		{
+			UE_LOG(LogTraffic, Log,
+				TEXT("[VehicleManager] ChaosDrive: road collision ready after %.2fs (%d polls); spawning."),
+				Elapsed,
+				DeferredSpawnAttempts);
+		}
+
+		if (bDeferredSpawnWasZoneGraph)
+		{
+			SpawnZoneGraphVehicles(DeferredVehiclesPerLane, DeferredSpeedCmPerSec, DeferredRequiredLaneTag);
+		}
+		else
+		{
+			SpawnTestVehicles(DeferredVehiclesPerLane, DeferredSpeedCmPerSec);
+		}
+	}
+}
+
 UTrafficNetworkAsset* ATrafficVehicleManager::FindNetworkAsset() const
 {
 	UWorld* World = GetWorld();
@@ -577,6 +968,8 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 		return;
 	}
 
+	UE_LOG(LogTraffic, Log, TEXT("[VehicleManager] Build=%s %s"), TEXT(__DATE__), TEXT(__TIME__));
+
 	ATrafficSystemController* Controller = nullptr;
 	for (TActorIterator<ATrafficSystemController> It(World); It; ++It)
 	{
@@ -590,6 +983,11 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 	}
 
 	ClearVehicles();
+
+	const int32 VisualModeAtSpawn = static_cast<int32>(GetTrafficVisualMode());
+	UE_LOG(LogTraffic, Log,
+		TEXT("[VehicleManager] VisualMode=%d (0=LogicOnly, 1=KinematicVisual (teleport), 2=ChaosDrive (physics))."),
+		VisualModeAtSpawn);
 
 	const UTrafficVehicleProfile* Profile = ResolveDefaultVehicleProfile();
 	if (Profile && !bForceLogicOnlyForTests)
@@ -652,8 +1050,27 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 		}
 	}
 
+	ECollisionChannel WheelTraceChannel = ECC_WorldDynamic;
+	bHasCachedWheelTraceChannel = false;
+	if (VisualModeAtSpawn == 2)
+	{
+		WheelTraceChannel = ResolveWheelTraceChannelFromClass(VisualClass);
+		CachedWheelTraceChannel = WheelTraceChannel;
+		bHasCachedWheelTraceChannel = true;
+
+		if (NetworkAsset)
+		{
+			EnsureRoadsBlockChaosWheelTraces(*World, *NetworkAsset, WheelTraceChannel);
+		}
+
+		if (MaybeDeferChaosDriveSpawn(/*bZoneGraph=*/false, VehiclesPerLane, SpeedCmPerSec, NAME_None, WheelTraceChannel))
+		{
+			return;
+		}
+	}
+
 	// Allow forcing logic-only spawn via CVar (useful for debugging and CI).
-	if (GetTrafficVisualModeForManager() <= 0)
+	if (GetTrafficVisualMode() == ETrafficVisualMode::LogicOnly)
 	{
 		VisualClass = nullptr;
 	}
@@ -678,6 +1095,8 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 	FActorSpawnParameters VehicleSpawnParams;
 	VehicleSpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	VehicleSpawnParams.Owner = this;
+
+	int32 SpawnOrdinal = 0;
 
 	for (int32 LaneIndex = 0; LaneIndex < Lanes.Num(); ++LaneIndex)
 	{
@@ -734,6 +1153,7 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 				UE_LOG(LogTraffic, Warning, TEXT("[VehicleManager] Failed to spawn vehicle for lane %d (class %s)."), LaneIndex, *LogicClass->GetName());
 				continue;
 			}
+			Vehicle->SetDebugSpawnIndex(SpawnOrdinal++);
 			Vehicle->Tags.AddUnique(TrafficSpawnedVehicleTag);
 			Vehicle->SetApproxVehicleLengthCm(ApproxVehicleLengthCm);
 
@@ -761,7 +1181,7 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 			if (VisualClass)
 			{
 				FActorSpawnParameters Params;
-				const int32 VisualMode = GetTrafficVisualModeForManager();
+				const int32 VisualMode = VisualModeAtSpawn;
 				Params.SpawnCollisionHandlingOverride =
 					(VisualMode == 2) ? ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn : ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 				Params.Owner = this;
@@ -860,21 +1280,34 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 						TemporarilyDisablePhysics(*VisualPawn, DisabledSim);
 
 						// Sweep down into place with real pawn collision (more accurate than our approximate spawn box).
+						// NOTE: SetActorLocationAndRotation with sweep can return false when blocked, but it will still move the
+						// actor to a safe location along the sweep. We treat that as a successful "placed on ground" outcome.
 						FHitResult SweepHit;
-						const float Step = FMath::Max(1.f, CVarTrafficChaosDriveSpawnResolveStepCm.GetValueOnGameThread());
-						const float MaxLift = FMath::Max(0.f, CVarTrafficChaosDriveSpawnResolveMaxLiftCm.GetValueOnGameThread());
-						bool bPlaced = false;
-						FVector Candidate = VisualXform.GetLocation();
-						for (float Lift = 0.f; Lift <= MaxLift; Lift += Step)
+						const FVector Target = VisualXform.GetLocation();
+						const FVector StartLoc = VisualPawn->GetActorLocation();
+						const bool bSetOk = VisualPawn->SetActorLocationAndRotation(Target, VisualXform.GetRotation(), /*bSweep=*/true, &SweepHit, ETeleportType::None);
+						const bool bMoved = !StartLoc.Equals(VisualPawn->GetActorLocation(), 0.1f);
+						bool bPlaced = bSetOk || bMoved || SweepHit.bBlockingHit;
+
+						// If we started in penetration (or ended up unable to move), try a small lift to clear overlaps.
+						if (!bPlaced || SweepHit.bStartPenetrating)
 						{
-							Candidate.Z = VisualXform.GetLocation().Z + Lift;
-							// Use a real sweep (TeleportPhysics can bypass sweeps). Physics is currently disabled, so this is safe.
-							if (VisualPawn->SetActorLocationAndRotation(Candidate, VisualXform.GetRotation(), /*bSweep=*/true, &SweepHit, ETeleportType::None))
+							const float Step = FMath::Max(1.f, CVarTrafficChaosDriveSpawnResolveStepCm.GetValueOnGameThread());
+							const float MaxLift = FMath::Max(0.f, CVarTrafficChaosDriveSpawnResolveMaxLiftCm.GetValueOnGameThread());
+							for (float Lift = Step; Lift <= MaxLift; Lift += Step)
 							{
-								bPlaced = true;
-								break;
+								const FVector Lifted = Target + FVector(0.f, 0.f, Lift);
+								const FVector Prev = VisualPawn->GetActorLocation();
+								const bool bLiftOk = VisualPawn->SetActorLocationAndRotation(Lifted, VisualXform.GetRotation(), /*bSweep=*/true, &SweepHit, ETeleportType::None);
+								const bool bLiftMoved = !Prev.Equals(VisualPawn->GetActorLocation(), 0.1f);
+								if (bLiftOk || bLiftMoved || SweepHit.bBlockingHit)
+								{
+									bPlaced = true;
+									break;
+								}
 							}
 						}
+
 						if (!bPlaced)
 						{
 							// Fallback: teleport to the requested transform.
@@ -895,7 +1328,9 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 
 						// Keep movement disabled here; the TrafficVehicleAdapter will enable it after it applies initial braking
 						// (and respects aaa.Traffic.Visual.ChaosDrive.DisableMovementSeconds).
-						RestorePhysicsAndOptionallyMovement(*VisualPawn, DisabledSim, /*bRestoreMovement=*/false);
+						// In practice, some Chaos vehicle blueprints need their movement component ticking immediately after spawn
+						// to finish internal initialization; leaving it disabled can result in "floating" inactive vehicles.
+						RestorePhysicsAndOptionallyMovement(*VisualPawn, DisabledSim, /*bRestoreMovement=*/true);
 					}
 				}
 				else
@@ -956,6 +1391,8 @@ void ATrafficVehicleManager::SpawnZoneGraphVehicles(int32 VehiclesPerLane, float
 		return;
 	}
 
+	UE_LOG(LogTraffic, Log, TEXT("[VehicleManager] Build=%s %s"), TEXT(__DATE__), TEXT(__TIME__));
+
 	UZoneGraphSubsystem* ZGS = World->GetSubsystem<UZoneGraphSubsystem>();
 	if (!ZGS)
 	{
@@ -965,6 +1402,11 @@ void ATrafficVehicleManager::SpawnZoneGraphVehicles(int32 VehiclesPerLane, float
 
 	ClearVehicles();
 	const int32 MaxVehicles = CVarTrafficSpawnMaxVehicles.GetValueOnGameThread();
+	const int32 VisualModeAtSpawn = static_cast<int32>(GetTrafficVisualMode());
+	UE_LOG(LogTraffic, Log,
+		TEXT("[VehicleManager] ZoneGraph: VisualMode=%d (0=LogicOnly, 1=KinematicVisual (teleport), 2=ChaosDrive (physics))."),
+		VisualModeAtSpawn);
+	int32 SpawnOrdinal = 0;
 
 	ATrafficSystemController* Controller = nullptr;
 	for (TActorIterator<ATrafficSystemController> It(World); It; ++It)
@@ -989,7 +1431,7 @@ void ATrafficVehicleManager::SpawnZoneGraphVehicles(int32 VehiclesPerLane, float
 	const float ApproxVehicleLengthCm = Profile ? Profile->LengthCm : 450.f;
 
 	// Resolve visual class if allowed.
-	UClass* VisualClass = nullptr;
+	TSubclassOf<APawn> VisualClass = nullptr;
 	if (Profile && !bForceLogicOnlyForTests)
 	{
 		VisualClass = Profile->VehicleClass.LoadSynchronous();
@@ -1000,8 +1442,22 @@ void ATrafficVehicleManager::SpawnZoneGraphVehicles(int32 VehiclesPerLane, float
 		LogPawnBoundsForDebug(VisualClass);
 	}
 
+	ECollisionChannel WheelTraceChannel = ECC_WorldDynamic;
+	bHasCachedWheelTraceChannel = false;
+	if (VisualModeAtSpawn == 2)
+	{
+		WheelTraceChannel = ResolveWheelTraceChannelFromClass(VisualClass);
+		CachedWheelTraceChannel = WheelTraceChannel;
+		bHasCachedWheelTraceChannel = true;
+
+		if (MaybeDeferChaosDriveSpawn(/*bZoneGraph=*/true, VehiclesPerLane, SpeedCmPerSec, RequiredLaneTag, WheelTraceChannel))
+		{
+			return;
+		}
+	}
+
 	// Allow forcing logic-only spawn via CVar (useful for debugging and CI).
-	if (GetTrafficVisualModeForManager() <= 0)
+	if (GetTrafficVisualMode() == ETrafficVisualMode::LogicOnly)
 	{
 		VisualClass = nullptr;
 	}
@@ -1133,6 +1589,7 @@ void ATrafficVehicleManager::SpawnZoneGraphVehicles(int32 VehiclesPerLane, float
 				{
 					continue;
 				}
+				Vehicle->SetDebugSpawnIndex(SpawnOrdinal++);
 				Vehicle->Tags.AddUnique(TrafficSpawnedVehicleTag);
 				Vehicle->SetTrafficSystemController(Controller);
 
@@ -1147,7 +1604,7 @@ void ATrafficVehicleManager::SpawnZoneGraphVehicles(int32 VehiclesPerLane, float
 				if (VisualClass && !bForceLogicOnlyForTests)
 				{
 					FActorSpawnParameters Params;
-					const int32 VisualMode = GetTrafficVisualModeForManager();
+					const int32 VisualMode = VisualModeAtSpawn;
 					Params.SpawnCollisionHandlingOverride =
 						(VisualMode == 2) ? ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn : ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 					Params.Owner = this;
@@ -1245,20 +1702,30 @@ void ATrafficVehicleManager::SpawnZoneGraphVehicles(int32 VehiclesPerLane, float
 						TemporarilyDisablePhysics(*VisualPawn, DisabledSim);
 
 						FHitResult SweepHit;
-						const float Step = FMath::Max(1.f, CVarTrafficChaosDriveSpawnResolveStepCm.GetValueOnGameThread());
-						const float MaxLift = FMath::Max(0.f, CVarTrafficChaosDriveSpawnResolveMaxLiftCm.GetValueOnGameThread());
-						bool bPlaced = false;
-						FVector Candidate = VisualXform.GetLocation();
-						for (float Lift = 0.f; Lift <= MaxLift; Lift += Step)
+						const FVector Target = VisualXform.GetLocation();
+						const FVector StartLoc = VisualPawn->GetActorLocation();
+						const bool bSetOk = VisualPawn->SetActorLocationAndRotation(Target, VisualXform.GetRotation(), /*bSweep=*/true, &SweepHit, ETeleportType::None);
+						const bool bMoved = !StartLoc.Equals(VisualPawn->GetActorLocation(), 0.1f);
+						bool bPlaced = bSetOk || bMoved || SweepHit.bBlockingHit;
+
+						if (!bPlaced || SweepHit.bStartPenetrating)
 						{
-							Candidate.Z = VisualXform.GetLocation().Z + Lift;
-							// Use a real sweep (TeleportPhysics can bypass sweeps). Physics is currently disabled, so this is safe.
-							if (VisualPawn->SetActorLocationAndRotation(Candidate, VisualXform.GetRotation(), /*bSweep=*/true, &SweepHit, ETeleportType::None))
+							const float Step = FMath::Max(1.f, CVarTrafficChaosDriveSpawnResolveStepCm.GetValueOnGameThread());
+							const float MaxLift = FMath::Max(0.f, CVarTrafficChaosDriveSpawnResolveMaxLiftCm.GetValueOnGameThread());
+							for (float Lift = Step; Lift <= MaxLift; Lift += Step)
 							{
-								bPlaced = true;
-								break;
+								const FVector Lifted = Target + FVector(0.f, 0.f, Lift);
+								const FVector Prev = VisualPawn->GetActorLocation();
+								const bool bLiftOk = VisualPawn->SetActorLocationAndRotation(Lifted, VisualXform.GetRotation(), /*bSweep=*/true, &SweepHit, ETeleportType::None);
+								const bool bLiftMoved = !Prev.Equals(VisualPawn->GetActorLocation(), 0.1f);
+								if (bLiftOk || bLiftMoved || SweepHit.bBlockingHit)
+								{
+									bPlaced = true;
+									break;
+								}
 							}
 						}
+
 						if (!bPlaced)
 						{
 							VisualPawn->SetActorLocationAndRotation(VisualXform.GetLocation(), VisualXform.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
@@ -1278,7 +1745,9 @@ void ATrafficVehicleManager::SpawnZoneGraphVehicles(int32 VehiclesPerLane, float
 
 						// Keep movement disabled here; the TrafficVehicleAdapter will enable it after it applies initial braking
 						// (and respects aaa.Traffic.Visual.ChaosDrive.DisableMovementSeconds).
-						RestorePhysicsAndOptionallyMovement(*VisualPawn, DisabledSim, /*bRestoreMovement=*/false);
+						// In practice, some Chaos vehicle blueprints need their movement component ticking immediately after spawn
+						// to finish internal initialization; leaving it disabled can result in "floating" inactive vehicles.
+						RestorePhysicsAndOptionallyMovement(*VisualPawn, DisabledSim, /*bRestoreMovement=*/true);
 					}
 				}
 				else

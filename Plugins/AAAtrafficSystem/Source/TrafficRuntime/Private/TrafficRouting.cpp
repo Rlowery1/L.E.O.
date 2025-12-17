@@ -1,4 +1,15 @@
 #include "TrafficRouting.h"
+#include "HAL/IConsoleManager.h"
+
+static TAutoConsoleVariable<int32> CVarTrafficRoutingTurnPolicy(
+	TEXT("aaa.Traffic.Routing.TurnPolicy"),
+	0,
+	TEXT("Default turn selection policy when multiple movements exist for an incoming lane:\n")
+	TEXT("  0 = ThroughFirst (default)\n")
+	TEXT("  1 = LeftFirst\n")
+	TEXT("  2 = RightFirst\n")
+	TEXT("  3 = PreferNonThrough (Left/Right before Through; chooses Left/Right deterministically when both exist)\n"),
+	ECVF_Default);
 
 const FTrafficLane* TrafficRouting::FindLaneById(const FTrafficNetwork& Network, int32 LaneId)
 {
@@ -54,19 +65,50 @@ const FTrafficMovement* TrafficRouting::ChooseDefaultMovementForIncomingLane(
 		return nullptr;
 	};
 
-	if (const FTrafficMovement* Through = FindFirst(ETrafficTurnType::Through))
+	const int32 Policy = CVarTrafficRoutingTurnPolicy.GetValueOnGameThread();
+
+	// Cache common picks.
+	const FTrafficMovement* Through = FindFirst(ETrafficTurnType::Through);
+	const FTrafficMovement* Left = FindFirst(ETrafficTurnType::Left);
+	const FTrafficMovement* Right = FindFirst(ETrafficTurnType::Right);
+	const FTrafficMovement* UTurn = FindFirst(ETrafficTurnType::UTurn);
+
+	auto PreferTurnDeterministic = [&]() -> const FTrafficMovement*
 	{
-		return Through;
-	}
-	if (const FTrafficMovement* Right = FindFirst(ETrafficTurnType::Right))
+		if (Left && Right)
+		{
+			// Deterministic split across lanes (no randomness, stable in tests).
+			return ((IncomingLaneId & 1) == 0) ? Left : Right;
+		}
+		return Left ? Left : Right;
+	};
+
+	switch (Policy)
 	{
-		return Right;
-	}
-	if (const FTrafficMovement* Left = FindFirst(ETrafficTurnType::Left))
-	{
-		return Left;
+	case 1: // LeftFirst
+		if (Left) return Left;
+		if (Through) return Through;
+		if (Right) return Right;
+		if (UTurn) return UTurn;
+		break;
+	case 2: // RightFirst
+		if (Right) return Right;
+		if (Through) return Through;
+		if (Left) return Left;
+		if (UTurn) return UTurn;
+		break;
+	case 3: // PreferNonThrough
+		if (const FTrafficMovement* Turn = PreferTurnDeterministic()) return Turn;
+		if (Through) return Through;
+		if (UTurn) return UTurn;
+		break;
+	default: // ThroughFirst
+		if (Through) return Through;
+		if (Right) return Right;
+		if (Left) return Left;
+		if (UTurn) return UTurn;
+		break;
 	}
 
 	return Options[0];
 }
-
