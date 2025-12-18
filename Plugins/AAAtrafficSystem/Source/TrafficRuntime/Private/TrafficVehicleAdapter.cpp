@@ -95,9 +95,9 @@ static TAutoConsoleVariable<float> CVarTrafficChaosDriveRequireGroundedMaxSecond
 
 static TAutoConsoleVariable<float> CVarTrafficChaosDriveGroundedMaxGapCm(
 	TEXT("aaa.Traffic.Visual.ChaosDrive.GroundedMaxGapCm"),
-	300.0f,
+	75.0f,
 	TEXT("Max vertical gap (cm) between pawn bounds bottom and the ECC_WorldDynamic hit point to consider the pawn grounded.\n")
-	TEXT("Default: 300"),
+	TEXT("Default: 75"),
 	ECVF_Default);
 
 static TAutoConsoleVariable<float> CVarTrafficChaosDriveGroundedTraceDepthCm(
@@ -105,6 +105,14 @@ static TAutoConsoleVariable<float> CVarTrafficChaosDriveGroundedTraceDepthCm(
 	8000.0f,
 	TEXT("How far (cm) to trace down from the pawn bounds bottom when detecting grounding.\n")
 	TEXT("Default: 8000"),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficChaosDriveRoadHitMaxAboveLaneCm(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.RoadHitMaxAboveLaneCm"),
+	200.0f,
+	TEXT("When searching for road collision under a lane, ignores hits whose Z is more than this many cm ABOVE the lane Z.\n")
+	TEXT("Prevents snapping vehicles onto overhead collision (trees, bridges) when road collision is not ready.\n")
+	TEXT("Default: 200"),
 	ECVF_Default);
 
 static ECollisionChannel ResolveChaosWheelTraceChannel(UMovementComponent* Move)
@@ -155,6 +163,55 @@ static ECollisionChannel ResolveChaosWheelTraceChannel(UMovementComponent* Move)
 
 	// Common Chaos default is Visibility, but we avoid hard-coding assumptions; keep legacy behavior when we can't detect.
 	return ECC_WorldDynamic;
+}
+
+static bool ApplyChaosWheelTraceChannelOverride(UMovementComponent* Move)
+{
+	if (!Move)
+	{
+		return false;
+	}
+
+	const int32 Override = CVarTrafficChaosDriveWheelTraceChannelOverride.GetValueOnGameThread();
+	if (Override < 0 || Override > 31)
+	{
+		return false;
+	}
+
+	static const FName WheelTraceChannelPropName(TEXT("WheelTraceCollisionChannel"));
+	FProperty* Prop = Move->GetClass()->FindPropertyByName(WheelTraceChannelPropName);
+	if (!Prop)
+	{
+		return false;
+	}
+
+	void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Move);
+	if (!ValuePtr)
+	{
+		return false;
+	}
+
+	// Support the common representations used by Chaos vehicle movement components across engine versions.
+	if (FEnumProperty* EnumProp = CastField<FEnumProperty>(Prop))
+	{
+		if (FNumericProperty* Underlying = EnumProp->GetUnderlyingProperty())
+		{
+			Underlying->SetIntPropertyValue(ValuePtr, static_cast<int64>(Override));
+			return true;
+		}
+	}
+	else if (FByteProperty* ByteProp = CastField<FByteProperty>(Prop))
+	{
+		ByteProp->SetPropertyValue(ValuePtr, static_cast<uint8>(Override));
+		return true;
+	}
+	else if (FIntProperty* IntProp = CastField<FIntProperty>(Prop))
+	{
+		IntProp->SetPropertyValue(ValuePtr, Override);
+		return true;
+	}
+
+	return false;
 }
 
 static const TCHAR* CollisionChannelName(const ECollisionChannel Channel)
@@ -458,14 +515,10 @@ static FString ListMovementComponents(APawn* Pawn)
 		FHitResult& OutHit)
 	{
 		const FBox Bounds = Pawn.GetComponentsBoundingBox(true);
-		if (!Bounds.IsValid)
-		{
-			return false;
-		}
-
-		const FVector Center = Bounds.GetCenter();
-		const float StartZ = Bounds.Min.Z + 50.f;
-		const float EndZ = Bounds.Min.Z - FMath::Max(0.f, TraceDepthCm);
+		const FVector FallbackCenter = Pawn.GetActorLocation();
+		const FVector Center = Bounds.IsValid ? Bounds.GetCenter() : FallbackCenter;
+		const float StartZ = (Bounds.IsValid ? Bounds.Max.Z : FallbackCenter.Z) + 50.f;
+		const float EndZ = (Bounds.IsValid ? Bounds.Min.Z : FallbackCenter.Z) - FMath::Max(0.f, TraceDepthCm);
 
 		const FVector Start(Center.X, Center.Y, StartZ);
 		const FVector End(Center.X, Center.Y, EndZ);
@@ -475,6 +528,62 @@ static FString ListMovementComponents(APawn* Pawn)
 		Params.AddIgnoredActor(&Pawn);
 
 		return World.LineTraceSingleByChannel(OutHit, Start, End, Channel, Params);
+	}
+
+	static bool FindBestGroundHitNearExpectedZ(
+		UWorld& World,
+		const FVector& ExpectedPos,
+		const FVector& Start,
+		const FVector& End,
+		ECollisionChannel Channel,
+		const FCollisionQueryParams& Params,
+		FHitResult& OutHit)
+	{
+		TArray<FHitResult> Hits;
+		if (!World.LineTraceMultiByChannel(Hits, Start, End, Channel, Params))
+		{
+			return false;
+		}
+
+		bool bFound = false;
+		float BestScore = TNumericLimits<float>::Max();
+		const float MaxAbove = FMath::Max(0.f, CVarTrafficChaosDriveRoadHitMaxAboveLaneCm.GetValueOnGameThread());
+		for (const FHitResult& Hit : Hits)
+		{
+			if (!Hit.bBlockingHit)
+			{
+				continue;
+			}
+
+			// Ignore overhead hits far above the lane (tree canopies, bridges, signs).
+			if (Hit.ImpactPoint.Z > ExpectedPos.Z + MaxAbove)
+			{
+				continue;
+			}
+
+			const float Dz = FMath::Abs(Hit.ImpactPoint.Z - ExpectedPos.Z);
+			const float NormalZ = Hit.ImpactNormal.Z;
+
+			// Prefer surfaces whose normal points up (roads/terrain). Strongly de-prioritize walls/trees.
+			float Score = Dz;
+			if (NormalZ < 0.2f)
+			{
+				Score += 100000.f;
+			}
+			else if (NormalZ < 0.6f)
+			{
+				Score += 1000.f;
+			}
+
+			if (Score < BestScore)
+			{
+				BestScore = Score;
+				OutHit = Hit;
+				bFound = true;
+			}
+		}
+
+		return bFound;
 	}
 
 	static bool IsGroundedByWheelTraceChannel(
@@ -504,7 +613,7 @@ static FString ListMovementComponents(APawn* Pawn)
 		{
 			*OutHit = Hit;
 		}
-		return Gap <= FMath::Max(0.f, MaxGapCm);
+		return FMath::Abs(Gap) <= FMath::Max(0.f, MaxGapCm);
 	}
 
 	static bool CallSingleParam(UObject* Obj, const FName FuncName, float FloatValue, bool BoolValue)
@@ -876,9 +985,12 @@ void ATrafficVehicleAdapter::Initialize(ATrafficVehicleBase* InLogic, APawn* InC
 	bChaosDriveHasSavedDamping = false;
 	bChaosDriveEverGrounded = false;
 	ChaosDriveLastGroundDiagAgeSeconds = -1000.f;
+	ChaosDriveLastHoldDiagAgeSeconds = -1000.f;
 	bChaosDriveLoggedGroundMismatch = false;
 	bChaosDriveAwaitingRoadCollision = false;
 	bChaosDriveWasHiddenForRoadCollision = false;
+	bChaosDriveReleasedFromRoadHold = false;
+	ChaosDriveRoadHoldReleaseAgeSeconds = -1.f;
 	PrevSteer = 0.f;
 	PrevThrottle = 0.f;
 	PrevBrake = 0.f;
@@ -986,6 +1098,7 @@ void ATrafficVehicleAdapter::Initialize(ATrafficVehicleBase* InLogic, APawn* InC
 			// Ensure common vehicle movement settings are in a drivable state (e.g., auto-gears enabled).
 			if (UMovementComponent* Move = FindChaosMovementComponent(ChaosVehicle.Get()))
 			{
+				ApplyChaosWheelTraceChannelOverride(Move);
 				EnsureChaosDriveTransmissionReady(Move);
 			}
 
@@ -1140,7 +1253,7 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 
 		// If road collision isn't ready yet, don't allow the pawn to fall/spin in mid-air. Hold it kinematically until
 		// a ground trace starts hitting, then place it onto the road and enable physics.
-		if (CVarTrafficChaosDriveHoldUntilRoadCollision.GetValueOnGameThread() != 0 && GetWorld())
+		if (!bChaosDriveReleasedFromRoadHold && CVarTrafficChaosDriveHoldUntilRoadCollision.GetValueOnGameThread() != 0 && GetWorld())
 		{
 			const ECollisionChannel WheelTraceChannel = ResolveChaosWheelTraceChannel(FindChaosMovementComponent(ChaosVehicle.Get()));
 
@@ -1158,39 +1271,54 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 			Params.AddIgnoredActor(ChaosVehicle.Get());
 
 			FHitResult GroundHit;
-			const bool bHasGround = GetWorld()->LineTraceSingleByChannel(GroundHit, Start, End, WheelTraceChannel, Params);
+			// Do NOT take the first hit from 50kcm above: overhead collisions (trees, signs, bridges) would be selected first
+			// and cause vehicles to be snapped up into the air. Choose the hit closest to the expected lane Z instead.
+			const bool bHasGround = FindBestGroundHitNearExpectedZ(*GetWorld(), LogicPos, Start, End, WheelTraceChannel, Params, GroundHit);
+
+			// If the vehicle's suspension traces are not detecting ground yet, keep holding. This is the root cause behind
+			// "car flies/spins even though there's a road under it": wheels never get a stable ground hit, so Chaos goes unstable.
+			const float MaxGapCm = FMath::Max(0.f, CVarTrafficChaosDriveGroundedMaxGapCm.GetValueOnGameThread());
+			const float WheelTraceDepthCm = FMath::Max(0.f, CVarTrafficChaosDriveGroundedTraceDepthCm.GetValueOnGameThread());
+			float WheelGapCm = 0.f;
+			FHitResult WheelHit;
+			const bool bWheelGrounded = IsGroundedByWheelTraceChannel(*GetWorld(), *ChaosVehicle.Get(), WheelTraceChannel, MaxGapCm, WheelTraceDepthCm, WheelGapCm, &WheelHit);
 
 			bool bNeedsSnap = false;
-			if (bHasGround)
+			const FBox BoundsNow = ChaosVehicle->GetComponentsBoundingBox(true);
+			if (bHasGround && BoundsNow.IsValid)
 			{
-				const FBox Bounds = ChaosVehicle->GetComponentsBoundingBox(true);
-				if (Bounds.IsValid)
-				{
-					const float MaxGapCm = FMath::Max(0.f, CVarTrafficChaosDriveGroundedMaxGapCm.GetValueOnGameThread());
-					const float DesiredBottomZ = GroundHit.ImpactPoint.Z + ClearanceCm;
-					const float CurrentBottomZ = Bounds.Min.Z;
-					const float GapToDesiredCm = CurrentBottomZ - DesiredBottomZ; // + = pawn above desired ground placement
-					bNeedsSnap = GapToDesiredCm > FMath::Max(50.f, MaxGapCm);
-				}
+				const float DesiredBottomZ = GroundHit.ImpactPoint.Z + ClearanceCm;
+				const float CurrentBottomZ = BoundsNow.Min.Z;
+				const float GapToDesiredCm = CurrentBottomZ - DesiredBottomZ; // + = pawn above desired ground placement
+				bNeedsSnap = FMath::Abs(GapToDesiredCm) > FMath::Max(50.f, MaxGapCm);
+			}
+			else if (bHasGround && !BoundsNow.IsValid)
+			{
+				// If bounds are not valid yet (common while meshes stream in), treat as needing snap/hold.
+				const float DeltaZ = ChaosVehicle->GetActorLocation().Z - (GroundHit.ImpactPoint.Z + ClearanceCm);
+				bNeedsSnap = (DeltaZ > 50.f);
 			}
 
 			if (bSample && (Age - ChaosDriveLastHoldDiagAgeSeconds) >= 0.5f)
 			{
 				ChaosDriveLastHoldDiagAgeSeconds = Age;
 				UE_LOG(LogTraffic, Log,
-					TEXT("[TrafficVehicleAdapter] Sample[%d] HoldCheck age=%.2fs enabled=1 wheelCh=%d(%s) hasGround=%d needsSnap=%d logicZ=%.1f traceZ=[%.1f..%.1f]"),
+					TEXT("[TrafficVehicleAdapter] Sample[%d] HoldCheck age=%.2fs enabled=1 wheelCh=%d(%s) hasGround=%d wheelGrounded=%d wheelGap=%.1f needsSnap=%d boundsValid=%d logicZ=%.1f traceZ=[%.1f..%.1f]"),
 					DebugIndex,
 					Age,
 					static_cast<int32>(WheelTraceChannel),
 					CollisionChannelName(WheelTraceChannel),
 					bHasGround ? 1 : 0,
+					bWheelGrounded ? 1 : 0,
+					WheelGapCm,
 					bNeedsSnap ? 1 : 0,
+					BoundsNow.IsValid ? 1 : 0,
 					LogicPos.Z,
 					Start.Z,
 					End.Z);
 			}
 
-			if ((!bHasGround || bNeedsSnap) && Age <= MaxHoldSeconds)
+			if ((!bHasGround || bNeedsSnap || !bWheelGrounded) && Age <= MaxHoldSeconds)
 			{
 				if (!bChaosDriveAwaitingRoadCollision)
 				{
@@ -1257,13 +1385,73 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 						const float DeltaZ = DesiredBottomZ - Bounds.Min.Z;
 						ChaosVehicle->AddActorWorldOffset(FVector(0.f, 0.f, DeltaZ), false, nullptr, ETeleportType::TeleportPhysics);
 					}
+					else
+					{
+						// Fallback placement when bounds are not ready: keep actor slightly above the hit point.
+						const float DesiredZ = GroundHit.ImpactPoint.Z + ClearanceCm + 100.f;
+						FVector P = ChaosVehicle->GetActorLocation();
+						P.Z = DesiredZ;
+						ChaosVehicle->SetActorLocation(P, false, nullptr, ETeleportType::TeleportPhysics);
+					}
 				}
 
 				ZeroPhysicsVelocities(*ChaosVehicle.Get());
 				return;
 			}
 
-			if (bChaosDriveAwaitingRoadCollision && bHasGround && !bNeedsSnap)
+			// If we were holding but exceeded the max wait time, restore physics anyway (better to drop to the ground than to stay hidden/frozen).
+			if (bChaosDriveAwaitingRoadCollision && Age > MaxHoldSeconds)
+			{
+				const float Yaw = LogicVehicle.IsValid() ? LogicVehicle->GetActorRotation().Yaw : ChaosVehicle->GetActorRotation().Yaw;
+				ChaosVehicle->SetActorLocationAndRotation(LogicPos, FRotator(0.f, Yaw, 0.f), false, nullptr, ETeleportType::TeleportPhysics);
+
+				if (bHasGround)
+				{
+					const FBox Bounds = ChaosVehicle->GetComponentsBoundingBox(true);
+					if (Bounds.IsValid)
+					{
+						const float DesiredBottomZ = GroundHit.ImpactPoint.Z + ClearanceCm;
+						const float DeltaZ = DesiredBottomZ - Bounds.Min.Z;
+						ChaosVehicle->AddActorWorldOffset(FVector(0.f, 0.f, DeltaZ), false, nullptr, ETeleportType::TeleportPhysics);
+					}
+				}
+
+				for (const FChaosDrivePrimWarmupState& State : ChaosDriveRoadHoldPhysicsComps)
+				{
+					if (UPrimitiveComponent* Prim = State.Prim.Get())
+					{
+						Prim->SetEnableGravity(State.bWasGravityEnabled);
+						if (State.bWasSimulatingPhysics)
+						{
+							Prim->SetSimulatePhysics(true);
+						}
+					}
+				}
+				ChaosDriveRoadHoldPhysicsComps.Reset();
+
+				if (bChaosDriveWasHiddenForRoadCollision)
+				{
+					ChaosVehicle->SetActorHiddenInGame(false);
+					bChaosDriveWasHiddenForRoadCollision = false;
+				}
+
+				if (CVarTrafficChaosDriveForceSimulatePhysics.GetValueOnGameThread() != 0)
+				{
+					EnsureChaosDrivePhysicsEnabled(*ChaosVehicle.Get());
+				}
+				if (UMovementComponent* Move = FindChaosMovementComponent(ChaosVehicle.Get()))
+				{
+					EnsureChaosDriveTransmissionReady(Move);
+				}
+				EnsureChaosDriveMovementEnabled(*ChaosVehicle.Get());
+
+				ZeroPhysicsVelocities(*ChaosVehicle.Get());
+				bChaosDriveAwaitingRoadCollision = false;
+				bChaosDriveReleasedFromRoadHold = true;
+				ChaosDriveRoadHoldReleaseAgeSeconds = Age;
+			}
+
+			if (bChaosDriveAwaitingRoadCollision && bHasGround && !bNeedsSnap && bWheelGrounded)
 			{
 				// Place the pawn onto the newly-available road collision before enabling physics.
 				const float Yaw = LogicVehicle.IsValid() ? LogicVehicle->GetActorRotation().Yaw : ChaosVehicle->GetActorRotation().Yaw;
@@ -1309,6 +1497,8 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 
 				ZeroPhysicsVelocities(*ChaosVehicle.Get());
 				bChaosDriveAwaitingRoadCollision = false;
+				bChaosDriveReleasedFromRoadHold = true;
+				ChaosDriveRoadHoldReleaseAgeSeconds = Age;
 			}
 		}
 

@@ -72,6 +72,8 @@ private:
 	bool bChaosDriveLoggedGroundMismatch = false;
 	bool bChaosDriveAwaitingRoadCollision = false;
 	bool bChaosDriveWasHiddenForRoadCollision = false;
+	bool bChaosDriveReleasedFromRoadHold = false;
+	float ChaosDriveRoadHoldReleaseAgeSeconds = -1.f;
 
 	float PrevSteer = 0.f;
 	float PrevThrottle = 0.f;

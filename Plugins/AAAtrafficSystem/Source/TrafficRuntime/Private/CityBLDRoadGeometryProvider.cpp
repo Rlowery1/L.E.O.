@@ -106,6 +106,7 @@ namespace
 
 					float MinDist = FLT_MAX;
 					float MaxDist = -FLT_MAX;
+					float MaxZ = -FLT_MAX;
 					int32 InSlice = 0;
 					for (const FVector& V : Vertices)
 					{
@@ -119,19 +120,94 @@ namespace
 						const float D = FVector::DotProduct(Delta, Right);
 						MinDist = FMath::Min(MinDist, D);
 						MaxDist = FMath::Max(MaxDist, D);
+						MaxZ = FMath::Max(MaxZ, V.Z);
 						++InSlice;
 					}
 
 					if (InSlice >= 16 && MinDist < MaxDist)
 					{
 						const float Mid = 0.5f * (MinDist + MaxDist);
-						OutPoints.Add(Pos + Right * Mid);
+						FVector Fitted = Pos + Right * Mid;
+						if (MaxZ > -FLT_MAX)
+						{
+							// Many modular kits keep the control spline at a constant Z even when the generated mesh/collision is elevated.
+							// Use the mesh vertex Z in the local slice so centerline points match the drivable surface (prevents "lane Z=0 while road Z>0").
+							Fitted.Z = MaxZ;
+						}
+						OutPoints.Add(Fitted);
 						continue;
 					}
 				}
 			}
 
 			OutPoints.Add(Pos);
+		}
+	}
+
+	static TAutoConsoleVariable<int32> CVarTrafficCityBLDProjectCenterlineZToCollision(
+		TEXT("aaa.Traffic.CityBLD.ProjectCenterlineZToCollision"),
+		1,
+		TEXT("If non-zero, projects sampled centerline points onto the owning road actor's collision (fixes kits where the control spline Z is not at the drivable surface).\n")
+		TEXT("Default: 1"),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<float> CVarTrafficCityBLDProjectCenterlineZTraceHalfHeightCm(
+		TEXT("aaa.Traffic.CityBLD.ProjectCenterlineZTraceHalfHeightCm"),
+		20000.0f,
+		TEXT("Half-height (cm) for the vertical trace used when projecting centerline points onto road collision.\n")
+		TEXT("Default: 20000"),
+		ECVF_Default);
+
+	static void ProjectCenterlineZToActorCollision(const AActor& Actor, TArray<FVector>& Points)
+	{
+		if (CVarTrafficCityBLDProjectCenterlineZToCollision.GetValueOnAnyThread() == 0)
+		{
+			return;
+		}
+
+		UWorld* World = Actor.GetWorld();
+		if (!World || Points.Num() == 0)
+		{
+			return;
+		}
+
+		const float HalfHeight = FMath::Max(0.f, CVarTrafficCityBLDProjectCenterlineZTraceHalfHeightCm.GetValueOnAnyThread());
+		if (HalfHeight <= 0.f)
+		{
+			return;
+		}
+
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(AAA_Traffic_CityBLD_ProjectZ), /*bTraceComplex=*/false);
+		Params.bReturnPhysicalMaterial = false;
+
+		for (FVector& P : Points)
+		{
+			TArray<FHitResult> Hits;
+			const FVector Start(P.X, P.Y, P.Z + HalfHeight);
+			const FVector End(P.X, P.Y, P.Z - HalfHeight);
+			if (!World->LineTraceMultiByChannel(Hits, Start, End, ECC_WorldStatic, Params))
+			{
+				continue;
+			}
+
+			for (const FHitResult& Hit : Hits)
+			{
+				if (!Hit.bBlockingHit)
+				{
+					continue;
+				}
+				if (Hit.GetActor() != &Actor)
+				{
+					continue;
+				}
+				if (Hit.ImpactNormal.Z < 0.2f)
+				{
+					continue;
+				}
+
+				P.Z = Hit.ImpactPoint.Z;
+				break;
+			}
 		}
 	}
 
@@ -438,6 +514,8 @@ bool UCityBLDRoadGeometryProvider::BuildCenterlineFromCityBLDRoad(const AActor* 
 			OutPoints.Add(ControlSpline->GetLocationAtDistanceAlongSpline(Dist, ESplineCoordinateSpace::World));
 		}
 
+		ProjectCenterlineZToActorCollision(*Actor, OutPoints);
+
 		UE_LOG(LogTraffic, Verbose, TEXT("[CityBLD] %s used control spline samples (%d points)"), *Actor->GetName(), OutPoints.Num());
 		return OutPoints.Num() >= 2;
 	}
@@ -470,6 +548,7 @@ bool UCityBLDRoadGeometryProvider::BuildCenterlineFromCityBLDRoad(const AActor* 
 		*Actor->GetName(), CollectedVerts.Num());
 
 	BuildSmoothCenterline(ControlSpline, CollectedVerts, OutPoints);
+	ProjectCenterlineZToActorCollision(*Actor, OutPoints);
 	UE_LOG(LogTraffic, Verbose, TEXT("[CityBLD] %s produced %d centreline points"), *Actor->GetName(), OutPoints.Num());
 	return OutPoints.Num() >= 2;
 }

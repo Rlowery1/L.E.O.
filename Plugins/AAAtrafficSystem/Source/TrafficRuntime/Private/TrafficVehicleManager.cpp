@@ -48,6 +48,14 @@ static TAutoConsoleVariable<float> CVarTrafficChaosDriveSpawnInitialLiftCm(
 	TEXT("Extra Z (cm) to spawn the Chaos pawn above its final position, then sweep down into place (helps avoid initial penetration impulses)."),
 	ECVF_Default);
 
+static TAutoConsoleVariable<int32> CVarTrafficChaosDriveSpawnUseTracePlacement(
+	TEXT("aaa.Traffic.Visual.ChaosDrive.SpawnUseTracePlacement"),
+	0,
+	TEXT("If non-zero, uses trace/bounds-based spawn placement for ChaosDrive pawns.\n")
+	TEXT("This can snap onto overhead collision or use incorrect bounds while meshes are still streaming.\n")
+	TEXT("Default: 0 (spawn at lane pose; TrafficVehicleAdapter handles holding/snapping)."),
+	ECVF_Default);
+
 static TAutoConsoleVariable<int32> CVarTrafficChaosDriveFixRoadWheelTraceCollision(
 	TEXT("aaa.Traffic.Visual.ChaosDrive.FixRoadWheelTraceCollision"),
 	1,
@@ -1182,12 +1190,11 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 			{
 				FActorSpawnParameters Params;
 				const int32 VisualMode = VisualModeAtSpawn;
-				Params.SpawnCollisionHandlingOverride =
-					(VisualMode == 2) ? ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn : ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+				Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 				Params.Owner = this;
 
 				FTransform VisualXform = SpawnXform;
-				if (VisualMode == 2)
+				if (VisualMode == 2 && CVarTrafficChaosDriveSpawnUseTracePlacement.GetValueOnGameThread() != 0)
 				{
 					// Disable logic collision before doing spawn queries so we don't trace/hit our own proxy vehicles.
 					if (Vehicle)
@@ -1267,70 +1274,107 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 				if (VisualMode == 2)
 				{
 					const float InitialLift = FMath::Max(0.f, CVarTrafficChaosDriveSpawnInitialLiftCm.GetValueOnGameThread());
-					FTransform SpawnXformHigh = VisualXform;
-					SpawnXformHigh.AddToTranslation(FVector(0.f, 0.f, InitialLift));
+					const float SpawnZOffset = FMath::Max(0.f, CVarTrafficChaosDriveSpawnZOffsetCm.GetValueOnGameThread());
 
-					VisualPawn = World->SpawnActorDeferred<APawn>(VisualClass, SpawnXformHigh, this, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
-					if (VisualPawn)
+					if (CVarTrafficChaosDriveSpawnUseTracePlacement.GetValueOnGameThread() == 0)
 					{
-						DisableAutoPossess(*VisualPawn);
-						VisualPawn->FinishSpawning(SpawnXformHigh, /*bIsDefaultTransform=*/true);
-
-						TArray<UPrimitiveComponent*> DisabledSim;
-						TemporarilyDisablePhysics(*VisualPawn, DisabledSim);
-
-						// Sweep down into place with real pawn collision (more accurate than our approximate spawn box).
-						// NOTE: SetActorLocationAndRotation with sweep can return false when blocked, but it will still move the
-						// actor to a safe location along the sweep. We treat that as a successful "placed on ground" outcome.
-						FHitResult SweepHit;
-						const FVector Target = VisualXform.GetLocation();
-						const FVector StartLoc = VisualPawn->GetActorLocation();
-						const bool bSetOk = VisualPawn->SetActorLocationAndRotation(Target, VisualXform.GetRotation(), /*bSweep=*/true, &SweepHit, ETeleportType::None);
-						const bool bMoved = !StartLoc.Equals(VisualPawn->GetActorLocation(), 0.1f);
-						bool bPlaced = bSetOk || bMoved || SweepHit.bBlockingHit;
-
-						// If we started in penetration (or ended up unable to move), try a small lift to clear overlaps.
-						if (!bPlaced || SweepHit.bStartPenetrating)
-						{
-							const float Step = FMath::Max(1.f, CVarTrafficChaosDriveSpawnResolveStepCm.GetValueOnGameThread());
-							const float MaxLift = FMath::Max(0.f, CVarTrafficChaosDriveSpawnResolveMaxLiftCm.GetValueOnGameThread());
-							for (float Lift = Step; Lift <= MaxLift; Lift += Step)
-							{
-								const FVector Lifted = Target + FVector(0.f, 0.f, Lift);
-								const FVector Prev = VisualPawn->GetActorLocation();
-								const bool bLiftOk = VisualPawn->SetActorLocationAndRotation(Lifted, VisualXform.GetRotation(), /*bSweep=*/true, &SweepHit, ETeleportType::None);
-								const bool bLiftMoved = !Prev.Equals(VisualPawn->GetActorLocation(), 0.1f);
-								if (bLiftOk || bLiftMoved || SweepHit.bBlockingHit)
-								{
-									bPlaced = true;
-									break;
-								}
-							}
-						}
-
-						if (!bPlaced)
-						{
-							// Fallback: teleport to the requested transform.
-							VisualPawn->SetActorLocationAndRotation(VisualXform.GetLocation(), VisualXform.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
-						}
+						// Safer default: spawn at the lane pose with a small lift; do not sweep/trace at spawn time.
+						// The TrafficVehicleAdapter will keep the pawn stable and snap it onto the road once collision is ready.
+						FTransform SpawnXformLifted = VisualXform;
+						SpawnXformLifted.SetRotation(FQuat(FRotator(0.f, SpawnXformLifted.GetRotation().Rotator().Yaw, 0.f)));
+						SpawnXformLifted.AddToTranslation(FVector(0.f, 0.f, SpawnZOffset + InitialLift));
 
 						if (CVarTrafficChaosDriveSpawnDebug.GetValueOnGameThread() != 0)
 						{
+							const FVector DesiredLocation = VisualXform.GetLocation();
+							const FVector SpawnLocation = SpawnXformLifted.GetLocation();
 							UE_LOG(LogTraffic, Log,
-								TEXT("[VehicleManager] ChaosDriveSpawnPlace placed=%d final=(%.1f %.1f %.1f) sweepHit=%d hit=%s"),
-								bPlaced ? 1 : 0,
-								VisualPawn->GetActorLocation().X,
-								VisualPawn->GetActorLocation().Y,
-								VisualPawn->GetActorLocation().Z,
-								SweepHit.bBlockingHit ? 1 : 0,
-								SweepHit.bBlockingHit && SweepHit.GetActor() ? *SweepHit.GetActor()->GetName() : TEXT("<none>"));
+								TEXT("[VehicleManager] ChaosDriveSpawn(no-trace) lane=%d desiredZ=%.1f spawnZ=%.1f lift=%.1f"),
+								Lane.LaneId,
+								DesiredLocation.Z,
+								SpawnLocation.Z,
+								SpawnLocation.Z - DesiredLocation.Z);
 						}
 
-						// Keep movement disabled here; the TrafficVehicleAdapter will enable it after it applies initial braking
-						// (and respects aaa.Traffic.Visual.ChaosDrive.DisableMovementSeconds).
-						// In practice, some Chaos vehicle blueprints need their movement component ticking immediately after spawn
-						// to finish internal initialization; leaving it disabled can result in "floating" inactive vehicles.
-						RestorePhysicsAndOptionallyMovement(*VisualPawn, DisabledSim, /*bRestoreMovement=*/true);
+						VisualPawn = World->SpawnActorDeferred<APawn>(VisualClass, SpawnXformLifted, this, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+						if (VisualPawn)
+						{
+							DisableAutoPossess(*VisualPawn);
+							VisualPawn->FinishSpawning(SpawnXformLifted, /*bIsDefaultTransform=*/true);
+
+							TArray<UPrimitiveComponent*> DisabledSim;
+							TemporarilyDisablePhysics(*VisualPawn, DisabledSim);
+							RestorePhysicsAndOptionallyMovement(*VisualPawn, DisabledSim, /*bRestoreMovement=*/true);
+						}
+					}
+					else
+					{
+						// Legacy: spawn placement uses traces + sweep-down.
+						FTransform SpawnXformHigh = VisualXform;
+						SpawnXformHigh.AddToTranslation(FVector(0.f, 0.f, InitialLift));
+
+						VisualPawn = World->SpawnActorDeferred<APawn>(VisualClass, SpawnXformHigh, this, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+						if (VisualPawn)
+						{
+							DisableAutoPossess(*VisualPawn);
+							VisualPawn->FinishSpawning(SpawnXformHigh, /*bIsDefaultTransform=*/true);
+
+							TArray<UPrimitiveComponent*> DisabledSim;
+							TemporarilyDisablePhysics(*VisualPawn, DisabledSim);
+
+							// Sweep down into place with real pawn collision (more accurate than our approximate spawn box).
+							// NOTE: SetActorLocationAndRotation with sweep can return false when blocked, but it will still move the
+							// actor to a safe location along the sweep. We treat that as a successful "placed on ground" outcome.
+							FHitResult SweepHit;
+							const FVector Target = VisualXform.GetLocation();
+							const FVector StartLoc = VisualPawn->GetActorLocation();
+							const bool bSetOk = VisualPawn->SetActorLocationAndRotation(Target, VisualXform.GetRotation(), /*bSweep=*/true, &SweepHit, ETeleportType::None);
+							const bool bMoved = !StartLoc.Equals(VisualPawn->GetActorLocation(), 0.1f);
+							bool bPlaced = bSetOk || bMoved || SweepHit.bBlockingHit;
+
+							// If we started in penetration (or ended up unable to move), try a small lift to clear overlaps.
+							if (!bPlaced || SweepHit.bStartPenetrating)
+							{
+								const float Step = FMath::Max(1.f, CVarTrafficChaosDriveSpawnResolveStepCm.GetValueOnGameThread());
+								const float MaxLift = FMath::Max(0.f, CVarTrafficChaosDriveSpawnResolveMaxLiftCm.GetValueOnGameThread());
+								for (float Lift = Step; Lift <= MaxLift; Lift += Step)
+								{
+									const FVector Lifted = Target + FVector(0.f, 0.f, Lift);
+									const FVector Prev = VisualPawn->GetActorLocation();
+									const bool bLiftOk = VisualPawn->SetActorLocationAndRotation(Lifted, VisualXform.GetRotation(), /*bSweep=*/true, &SweepHit, ETeleportType::None);
+									const bool bLiftMoved = !Prev.Equals(VisualPawn->GetActorLocation(), 0.1f);
+									if (bLiftOk || bLiftMoved || SweepHit.bBlockingHit)
+									{
+										bPlaced = true;
+										break;
+									}
+								}
+							}
+
+							if (!bPlaced)
+							{
+								// Fallback: teleport to the requested transform.
+								VisualPawn->SetActorLocationAndRotation(VisualXform.GetLocation(), VisualXform.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
+							}
+
+							if (CVarTrafficChaosDriveSpawnDebug.GetValueOnGameThread() != 0)
+							{
+								UE_LOG(LogTraffic, Log,
+									TEXT("[VehicleManager] ChaosDriveSpawnPlace placed=%d final=(%.1f %.1f %.1f) sweepHit=%d hit=%s"),
+									bPlaced ? 1 : 0,
+									VisualPawn->GetActorLocation().X,
+									VisualPawn->GetActorLocation().Y,
+									VisualPawn->GetActorLocation().Z,
+									SweepHit.bBlockingHit ? 1 : 0,
+									SweepHit.bBlockingHit && SweepHit.GetActor() ? *SweepHit.GetActor()->GetName() : TEXT("<none>"));
+							}
+
+							// Keep movement disabled here; the TrafficVehicleAdapter will enable it after it applies initial braking
+							// (and respects aaa.Traffic.Visual.ChaosDrive.DisableMovementSeconds).
+							// In practice, some Chaos vehicle blueprints need their movement component ticking immediately after spawn
+							// to finish internal initialization; leaving it disabled can result in "floating" inactive vehicles.
+							RestorePhysicsAndOptionallyMovement(*VisualPawn, DisabledSim, /*bRestoreMovement=*/true);
+						}
 					}
 				}
 				else
