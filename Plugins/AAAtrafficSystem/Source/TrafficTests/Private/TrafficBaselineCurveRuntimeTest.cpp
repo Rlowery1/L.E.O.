@@ -32,7 +32,7 @@
 
 namespace
 {
-	static const TCHAR* BaselineCurveMapPackage = TEXT("/AAAtrafficSystem/Maps/Traffic_BaselineCurve");
+	static const TCHAR* BaselineCurveMapPackage_Runtime = TEXT("/AAAtrafficSystem/Maps/Traffic_BaselineCurve");
 	static const float BaselineCurveSimSeconds = 5.0f;
 	static const float BaselineCurveTickSeconds = 0.1f;
 	static const float BaselineCurveMaxLateralErrorCm = 20.0f;
@@ -452,7 +452,7 @@ bool FTrafficBaselineCurveRuntimeTest::RunTest(const FString& Parameters)
 		UE_LOG(LogTraffic, Warning, TEXT("[BaselineCurveChaos] DefaultVehicleProfile is not set or VehicleClass is invalid. Continuing to rely on VehicleManager automation fallback."));
 	}
 
-	if (!AutomationOpenMap(BaselineCurveMapPackage))
+	if (!AutomationOpenMap(BaselineCurveMapPackage_Runtime))
 	{
 		UTrafficAutomationLogger::LogLine(TEXT("[TrafficBaselineCurve] Map /Plugins/AAAtrafficSystem/Maps/Traffic_BaselineCurve could not be loaded."));
 		UTrafficAutomationLogger::EndTestLog();

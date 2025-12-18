@@ -13,7 +13,7 @@
 
 namespace
 {
-	static const TCHAR* BaselineCurveMapPackage = TEXT("/AAAtrafficSystem/Maps/Traffic_BaselineCurve");
+	static const TCHAR* BaselineCurveMapPackage_SpinStability = TEXT("/AAAtrafficSystem/Maps/Traffic_BaselineCurve");
 
 	struct FSpinStabilityState
 	{
@@ -148,7 +148,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 bool FTrafficBaselineCurveSpinStabilityTest::RunTest(const FString& Parameters)
 {
-	if (!AutomationOpenMap(BaselineCurveMapPackage))
+	if (!AutomationOpenMap(BaselineCurveMapPackage_SpinStability))
 	{
 		AddError(TEXT("Failed to load /AAAtrafficSystem/Maps/Traffic_BaselineCurve."));
 		return false;

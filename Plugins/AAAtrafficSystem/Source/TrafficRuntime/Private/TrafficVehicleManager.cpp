@@ -74,20 +74,20 @@ static TAutoConsoleVariable<int32> CVarTrafficChaosDriveSpawnResolvePenetration(
 	TEXT("If non-zero, attempts to resolve spawn overlap by lifting the vehicle upward."),
 	ECVF_Default);
 
-static TAutoConsoleVariable<int32> CVarTrafficRuntimeDeferSpawnUntilCollision(
+static TAutoConsoleVariable<int32> CVarTrafficRuntimeDeferSpawnUntilCollision_VM(
 	TEXT("aaa.Traffic.Runtime.DeferSpawnUntilRoadCollision"),
 	1,
 	TEXT("If non-zero, delays ChaosDrive traffic spawning until road collision is detected (prevents vehicles falling/spawning mid-air at PIE start).\n")
 	TEXT("Default: 1"),
 	ECVF_Default);
 
-static TAutoConsoleVariable<float> CVarTrafficRuntimeDeferSpawnPollSeconds(
+static TAutoConsoleVariable<float> CVarTrafficRuntimeDeferSpawnPollSeconds_VM(
 	TEXT("aaa.Traffic.Runtime.DeferSpawnPollSeconds"),
 	0.25f,
 	TEXT("Polling interval (seconds) while waiting for road collision before spawning traffic. Default: 0.25"),
 	ECVF_Default);
 
-static TAutoConsoleVariable<float> CVarTrafficRuntimeDeferSpawnMaxWaitSeconds(
+static TAutoConsoleVariable<float> CVarTrafficRuntimeDeferSpawnMaxWaitSeconds_VM(
 	TEXT("aaa.Traffic.Runtime.DeferSpawnMaxWaitSeconds"),
 	6.0f,
 	TEXT("Max seconds to wait for road collision before spawning anyway. Default: 6.0"),
@@ -552,7 +552,7 @@ static FQuat MakeSpawnRotationFromGroundHit(const FTransform& DesiredXform, cons
 	return RotM.ToQuat();
 }
 
-static void ZeroPhysicsVelocities(APawn& Pawn)
+static void ZeroPhysicsVelocities_VM(APawn& Pawn)
 {
 	TArray<UPrimitiveComponent*> PrimComps;
 	Pawn.GetComponents(PrimComps);
@@ -775,7 +775,7 @@ bool ATrafficVehicleManager::MaybeDeferChaosDriveSpawn(bool bZoneGraph, int32 Ve
 		return false;
 	}
 
-	if (CVarTrafficRuntimeDeferSpawnUntilCollision.GetValueOnGameThread() == 0)
+	if (CVarTrafficRuntimeDeferSpawnUntilCollision_VM.GetValueOnGameThread() == 0)
 	{
 		return false;
 	}
@@ -804,7 +804,7 @@ bool ATrafficVehicleManager::MaybeDeferChaosDriveSpawn(bool bZoneGraph, int32 Ve
 			SpeedCmPerSec);
 	}
 
-	const float Poll = FMath::Max(0.05f, CVarTrafficRuntimeDeferSpawnPollSeconds.GetValueOnGameThread());
+	const float Poll = FMath::Max(0.05f, CVarTrafficRuntimeDeferSpawnPollSeconds_VM.GetValueOnGameThread());
 	World->GetTimerManager().SetTimer(
 		DeferredSpawnTimerHandle,
 		this,
@@ -826,7 +826,7 @@ void ATrafficVehicleManager::TryDeferredSpawn()
 	}
 
 	const double Elapsed = FPlatformTime::Seconds() - DeferredSpawnStartWallSeconds;
-	const float MaxWait = FMath::Max(0.f, CVarTrafficRuntimeDeferSpawnMaxWaitSeconds.GetValueOnGameThread());
+	const float MaxWait = FMath::Max(0.f, CVarTrafficRuntimeDeferSpawnMaxWaitSeconds_VM.GetValueOnGameThread());
 	++DeferredSpawnAttempts;
 
 	const ECollisionChannel WheelTraceChannel =
@@ -1344,7 +1344,7 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 					// Spawn stabilization: clear any initial velocities caused by spawn adjustment/penetration resolution.
 					if (VisualMode == 2)
 					{
-						ZeroPhysicsVelocities(*VisualPawn);
+						ZeroPhysicsVelocities_VM(*VisualPawn);
 					}
 
 					ATrafficVehicleAdapter* Adapter = World->SpawnActor<ATrafficVehicleAdapter>(Params);
@@ -1761,7 +1761,7 @@ void ATrafficVehicleManager::SpawnZoneGraphVehicles(int32 VehiclesPerLane, float
 					// Spawn stabilization: clear any initial velocities caused by spawn adjustment/penetration resolution.
 					if (VisualMode == 2)
 					{
-						ZeroPhysicsVelocities(*VisualPawn);
+						ZeroPhysicsVelocities_VM(*VisualPawn);
 					}
 
 					ATrafficVehicleAdapter* Adapter = World->SpawnActor<ATrafficVehicleAdapter>(Params);

@@ -53,7 +53,7 @@ static const TCHAR* BaselineTestName = TEXT("Traffic.Calibration.BaselineStraigh
 		bool bMonotonicS = true;
 	};
 
-	static bool FindBestLaneProjection(
+	static bool FindBestLaneProjection_BaselineRuntime(
 		const TArray<FTrafficLane>& Lanes,
 		const FVector& Location,
 		const FVector& Forward,
@@ -190,7 +190,7 @@ static const TCHAR* BaselineTestName = TEXT("Traffic.Calibration.BaselineStraigh
                                 ++State->LogicCount;
 
                                 FLaneProjectionResult Proj;
-                                if (FindBestLaneProjection(Lanes, Vehicle->GetActorLocation(), Vehicle->GetActorForwardVector(), Proj))
+                                if (FindBestLaneProjection_BaselineRuntime(Lanes, Vehicle->GetActorLocation(), Vehicle->GetActorForwardVector(), Proj))
                                 {
                                         State->MaxLateralError = FMath::Max(State->MaxLateralError, FMath::Abs(Proj.LateralOffsetCm));
                                         State->MinS = FMath::Min(State->MinS, Proj.S);

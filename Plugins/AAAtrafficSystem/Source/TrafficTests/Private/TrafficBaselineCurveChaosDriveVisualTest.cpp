@@ -15,9 +15,9 @@
 
 namespace
 {
-	static const TCHAR* BaselineCurveMapPackage = TEXT("/AAAtrafficSystem/Maps/Traffic_BaselineCurve");
+	static const TCHAR* BaselineCurveMapPackage_ChaosDriveVisual = TEXT("/AAAtrafficSystem/Maps/Traffic_BaselineCurve");
 
-	static bool FindBestLaneProjection(
+	static bool FindBestLaneProjection_ChaosDriveVisual(
 		const TArray<FTrafficLane>& Lanes,
 		const FVector& Location,
 		const FVector& Forward,
@@ -104,8 +104,8 @@ namespace
 		float MinUpZ = 1.f;
 	};
 
-	DEFINE_LATENT_AUTOMATION_COMMAND_FOUR_PARAMETER(FWaitForPIEWorld, TSharedRef<FChaosDriveVisualState>, State, FAutomationTestBase*, Test, double, TimeoutSeconds, double, StartTime);
-	bool FWaitForPIEWorld::Update()
+	DEFINE_LATENT_AUTOMATION_COMMAND_FOUR_PARAMETER(FWaitForPIEWorld_ChaosDriveVisual, TSharedRef<FChaosDriveVisualState>, State, FAutomationTestBase*, Test, double, TimeoutSeconds, double, StartTime);
+	bool FWaitForPIEWorld_ChaosDriveVisual::Update()
 	{
 		if (GEditor && GEditor->PlayWorld)
 		{
@@ -184,7 +184,7 @@ namespace
 				if (APawn* Pawn = PawnPtr.Get())
 				{
 					FLaneProjectionResult Proj;
-					if (FindBestLaneProjection(Lanes, Pawn->GetActorLocation(), Pawn->GetActorForwardVector(), Proj))
+					if (FindBestLaneProjection_ChaosDriveVisual(Lanes, Pawn->GetActorLocation(), Pawn->GetActorForwardVector(), Proj))
 					{
 						S = Proj.S;
 					}
@@ -234,7 +234,7 @@ namespace
 			}
 
 			FLaneProjectionResult Proj;
-			if (!FindBestLaneProjection(Lanes, Pawn->GetActorLocation(), Pawn->GetActorForwardVector(), Proj))
+			if (!FindBestLaneProjection_ChaosDriveVisual(Lanes, Pawn->GetActorLocation(), Pawn->GetActorForwardVector(), Proj))
 			{
 				if (Test) Test->AddError(TEXT("Failed to project Chaos pawn onto baseline curve lane network."));
 				continue;
@@ -277,8 +277,8 @@ namespace
 		return true;
 	}
 
-	DEFINE_LATENT_AUTOMATION_COMMAND_TWO_PARAMETER(FEndPIE, TSharedRef<FChaosDriveVisualState>, State, FAutomationTestBase*, Test);
-	bool FEndPIE::Update()
+	DEFINE_LATENT_AUTOMATION_COMMAND_TWO_PARAMETER(FEndPIE_ChaosDriveVisual, TSharedRef<FChaosDriveVisualState>, State, FAutomationTestBase*, Test);
+	bool FEndPIE_ChaosDriveVisual::Update()
 	{
 		if (GEditor)
 		{
@@ -295,7 +295,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 bool FTrafficBaselineCurveChaosDriveVisualTest::RunTest(const FString& Parameters)
 {
-	if (!AutomationOpenMap(BaselineCurveMapPackage))
+	if (!AutomationOpenMap(BaselineCurveMapPackage_ChaosDriveVisual))
 	{
 		AddError(TEXT("Failed to load /AAAtrafficSystem/Maps/Traffic_BaselineCurve."));
 		return false;
@@ -307,9 +307,9 @@ bool FTrafficBaselineCurveChaosDriveVisualTest::RunTest(const FString& Parameter
 	AddExpectedError(TEXT("The Editor is currently in a play mode."), EAutomationExpectedErrorFlags::Contains, 6);
 
 	ADD_LATENT_AUTOMATION_COMMAND(FStartPIECommand(false));
-	ADD_LATENT_AUTOMATION_COMMAND(FWaitForPIEWorld(State, this, 15.0, FPlatformTime::Seconds()));
+	ADD_LATENT_AUTOMATION_COMMAND(FWaitForPIEWorld_ChaosDriveVisual(State, this, 15.0, FPlatformTime::Seconds()));
 	ADD_LATENT_AUTOMATION_COMMAND(FSampleChaosDriveVisuals(State, this, 6.0f));
-	ADD_LATENT_AUTOMATION_COMMAND(FEndPIE(State, this));
+	ADD_LATENT_AUTOMATION_COMMAND(FEndPIE_ChaosDriveVisual(State, this));
 
 	return true;
 }

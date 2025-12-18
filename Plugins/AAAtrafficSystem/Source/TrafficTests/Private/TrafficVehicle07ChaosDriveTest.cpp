@@ -170,8 +170,8 @@ namespace
 		bool bSpawned = false;
 	};
 
-	DEFINE_LATENT_AUTOMATION_COMMAND_FOUR_PARAMETER(FWaitForPIEWorld, TSharedRef<FVehicle07ChaosDrivePIEState>, State, FAutomationTestBase*, Test, double, TimeoutSeconds, double, StartTime);
-	bool FWaitForPIEWorld::Update()
+	DEFINE_LATENT_AUTOMATION_COMMAND_FOUR_PARAMETER(FWaitForPIEWorld_Vehicle07, TSharedRef<FVehicle07ChaosDrivePIEState>, State, FAutomationTestBase*, Test, double, TimeoutSeconds, double, StartTime);
+	bool FWaitForPIEWorld_Vehicle07::Update()
 	{
 		if (GEditor && GEditor->PlayWorld)
 		{
@@ -423,8 +423,8 @@ namespace
 		return true;
 	}
 
-	DEFINE_LATENT_AUTOMATION_COMMAND_TWO_PARAMETER(FEndPIE, TSharedRef<FVehicle07ChaosDrivePIEState>, State, FAutomationTestBase*, Test);
-	bool FEndPIE::Update()
+	DEFINE_LATENT_AUTOMATION_COMMAND_TWO_PARAMETER(FEndPIE_Vehicle07, TSharedRef<FVehicle07ChaosDrivePIEState>, State, FAutomationTestBase*, Test);
+	bool FEndPIE_Vehicle07::Update()
 	{
 		if (GEditor)
 		{
@@ -458,9 +458,9 @@ bool FTrafficVehicle07ChaosDriveTest::RunTest(const FString& Parameters)
 	AddExpectedError(TEXT("The Editor is currently in a play mode."), EAutomationExpectedErrorFlags::Contains, 3);
 
 	ADD_LATENT_AUTOMATION_COMMAND(FStartPIECommand(false));
-	ADD_LATENT_AUTOMATION_COMMAND(FWaitForPIEWorld(State, this, 10.0, FPlatformTime::Seconds()));
+	ADD_LATENT_AUTOMATION_COMMAND(FWaitForPIEWorld_Vehicle07(State, this, 10.0, FPlatformTime::Seconds()));
 	ADD_LATENT_AUTOMATION_COMMAND(FVehicle07ChaosDriveRun(State, this));
-	ADD_LATENT_AUTOMATION_COMMAND(FEndPIE(State, this));
+	ADD_LATENT_AUTOMATION_COMMAND(FEndPIE_Vehicle07(State, this));
 
 	return true;
 }
