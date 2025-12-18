@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Engine/EngineTypes.h"
 #include "TrafficVehicleAdapter.generated.h"
 
 class ATrafficVehicleBase;
@@ -39,6 +40,7 @@ private:
 		TWeakObjectPtr<UPrimitiveComponent> Prim;
 		bool bWasSimulatingPhysics = false;
 		bool bWasGravityEnabled = true;
+		TEnumAsByte<ECollisionEnabled::Type> CollisionEnabled = ECollisionEnabled::NoCollision;
 	};
 
 	// Debug: track follow target transitions (lane <-> movement) for sampled vehicles.
@@ -74,6 +76,11 @@ private:
 	bool bChaosDriveWasHiddenForRoadCollision = false;
 	bool bChaosDriveReleasedFromRoadHold = false;
 	float ChaosDriveRoadHoldReleaseAgeSeconds = -1.f;
+	float ChaosDriveHoldStableSeconds = 0.f;
+	float ChaosDriveHoldLastAgeSeconds = -1.f;
+	bool bChaosDriveHasResolvedWheelTraceChannel = false;
+	ECollisionChannel ChaosDriveResolvedWheelTraceChannel = ECC_WorldDynamic;
+	float ChaosDriveLastWheelTraceAutoDetectAgeSeconds = -1000.f;
 
 	float PrevSteer = 0.f;
 	float PrevThrottle = 0.f;

@@ -97,8 +97,8 @@ static TAutoConsoleVariable<float> CVarTrafficRuntimeDeferSpawnPollSeconds_VM(
 
 static TAutoConsoleVariable<float> CVarTrafficRuntimeDeferSpawnMaxWaitSeconds_VM(
 	TEXT("aaa.Traffic.Runtime.DeferSpawnMaxWaitSeconds"),
-	6.0f,
-	TEXT("Max seconds to wait for road collision before spawning anyway. Default: 6.0"),
+	30.0f,
+	TEXT("Max seconds to wait for road collision before spawning anyway. Default: 30.0"),
 	ECVF_Default);
 
 static TAutoConsoleVariable<float> CVarTrafficChaosDriveSpawnResolveStepCm(
@@ -141,15 +141,6 @@ static void EnsureRoadsBlockChaosWheelTraces(UWorld& World, const UTrafficNetwor
 		return;
 	}
 
-	// Avoid repeatedly touching collision on every spawn call within the same world.
-	static TSet<uint32> FixedWorldIds;
-	const uint32 WorldId = World.GetUniqueID();
-	if (FixedWorldIds.Contains(WorldId))
-	{
-		return;
-	}
-	FixedWorldIds.Add(WorldId);
-
 	int32 ActorsTouched = 0;
 	int32 ComponentsChanged = 0;
 
@@ -165,7 +156,21 @@ static void EnsureRoadsBlockChaosWheelTraces(UWorld& World, const UTrafficNetwor
 	// If the user explicitly overrides the wheel channel, prefer that; otherwise use the hint from the vehicle class.
 	const ECollisionChannel WheelTraceChannel =
 		(Override >= 0 && Override <= 31) ? static_cast<ECollisionChannel>(Override) : WheelTraceChannelHint;
-	const bool bAlsoFixWorldDynamic = (WheelTraceChannel != ECC_WorldDynamic);
+	const bool bAlsoFixWorldDynamic = true;
+	const bool bAlsoFixWorldStatic = true;
+
+	auto IsRoadOrAttachedActor = [](const AActor* RootRoadActor, const AActor* MaybeAttached) -> bool
+	{
+		if (!RootRoadActor || !MaybeAttached)
+		{
+			return false;
+		}
+		if (MaybeAttached == RootRoadActor)
+		{
+			return true;
+		}
+		return MaybeAttached->IsAttachedTo(RootRoadActor);
+	};
 
 	for (const FTrafficRoad& Road : NetworkAsset.Network.Roads)
 	{
@@ -175,53 +180,72 @@ static void EnsureRoadsBlockChaosWheelTraces(UWorld& World, const UTrafficNetwor
 			continue;
 		}
 
-		bool bTouchedActor = false;
-		TArray<UPrimitiveComponent*> PrimComps;
-		RoadActor->GetComponents(PrimComps);
-		for (UPrimitiveComponent* Prim : PrimComps)
+		// Some road kits build collision on attached child actors (segment actors), not the root "road" actor.
+		// Treat attached actors as part of the road for wheel trace collision fixes.
+		TArray<AActor*> Attached;
+		RoadActor->GetAttachedActors(Attached);
+		Attached.Add(RoadActor);
+
+		for (AActor* ActorToFix : Attached)
 		{
-			if (!Prim)
+			if (!IsRoadOrAttachedActor(RoadActor, ActorToFix))
 			{
 				continue;
 			}
 
-			if (Prim->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
+			bool bTouchedActor = false;
+			TArray<UPrimitiveComponent*> PrimComps;
+			ActorToFix->GetComponents(PrimComps);
+			for (UPrimitiveComponent* Prim : PrimComps)
 			{
-				continue;
+				if (!Prim)
+				{
+					continue;
+				}
+
+				if (Prim->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
+				{
+					continue;
+				}
+
+				// Chaos wheeled vehicle suspension traces must hit the road collision channel. If the road ignores that channel,
+				// wheels won't detect ground and the vehicle will hover/flip and never drive correctly.
+				if (Prim->GetCollisionResponseToChannel(WheelTraceChannel) != ECR_Block)
+				{
+					Prim->SetCollisionResponseToChannel(WheelTraceChannel, ECR_Block);
+					bTouchedActor = true;
+					++ComponentsChanged;
+				}
+
+				// Robust defaults: ensure both WorldStatic and WorldDynamic block suspension traces (common vehicle defaults vary).
+				if (bAlsoFixWorldDynamic && Prim->GetCollisionResponseToChannel(ECC_WorldDynamic) != ECR_Block)
+				{
+					Prim->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
+					bTouchedActor = true;
+					++ComponentsChanged;
+				}
+				if (bAlsoFixWorldStatic && Prim->GetCollisionResponseToChannel(ECC_WorldStatic) != ECR_Block)
+				{
+					Prim->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
+					bTouchedActor = true;
+					++ComponentsChanged;
+				}
 			}
 
-			// Chaos wheeled vehicle suspension traces must hit the road collision channel. If the road ignores that channel,
-			// wheels won't detect ground and the vehicle will hover/flip and never drive correctly.
-			if (Prim->GetCollisionResponseToChannel(WheelTraceChannel) != ECR_Block)
+			if (bTouchedActor)
 			{
-				Prim->SetCollisionResponseToChannel(WheelTraceChannel, ECR_Block);
-				bTouchedActor = true;
-				++ComponentsChanged;
+				++ActorsTouched;
 			}
-
-			// Keep the legacy fix as a backup in case a given vehicle setup still uses WorldDynamic in-wheel traces.
-			if (bAlsoFixWorldDynamic && Prim->GetCollisionResponseToChannel(ECC_WorldDynamic) != ECR_Block)
-			{
-				Prim->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
-				bTouchedActor = true;
-				++ComponentsChanged;
-			}
-		}
-
-		if (bTouchedActor)
-		{
-			++ActorsTouched;
 		}
 	}
 
 	if (ComponentsChanged > 0)
 	{
 		UE_LOG(LogTraffic, Log,
-			TEXT("[VehicleManager] ChaosDrive: Updated %d components across %d road actors to Block wheel/suspension trace channel=%d (and WorldDynamic backup=%d)."),
+			TEXT("[VehicleManager] ChaosDrive: Updated %d components across %d road actors to Block wheelTraceCh=%d (also ensured WorldDynamic+WorldStatic)."),
 			ComponentsChanged,
 			ActorsTouched,
-			static_cast<int32>(WheelTraceChannel),
-			bAlsoFixWorldDynamic ? 1 : 0);
+			static_cast<int32>(WheelTraceChannel));
 	}
 }
 
@@ -746,14 +770,14 @@ bool ATrafficVehicleManager::IsRoadCollisionReadyForChaosDrive(ECollisionChannel
 			// IMPORTANT: Only count a hit that belongs to this specific road actor.
 			// A previous version mistakenly accepted "any hit with a component", which always returns true and defeats deferral.
 			const AActor* HitActor = HR.GetActor();
-			if (HitActor == RoadActor)
+			if (HitActor == RoadActor || (HitActor && HitActor->IsAttachedTo(RoadActor)))
 			{
 				++Hits;
 				break;
 			}
 
 			const UPrimitiveComponent* HitComp = HR.GetComponent();
-			if (HitComp && HitComp->GetOwner() == RoadActor)
+			if (HitComp && HitComp->GetOwner() && (HitComp->GetOwner() == RoadActor || HitComp->GetOwner()->IsAttachedTo(RoadActor)))
 			{
 				++Hits;
 				break;
