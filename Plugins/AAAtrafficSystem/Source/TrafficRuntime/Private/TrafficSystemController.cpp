@@ -779,3 +779,27 @@ void ATrafficSystemController::ReleaseIntersection(int32 IntersectionId, ATraffi
 		IntersectionReservations.Remove(IntersectionId);
 	}
 }
+
+bool ATrafficSystemController::GetIntersectionSignalSnapshot(
+	int32 IntersectionId,
+	int32& OutActivePhaseIndex,
+	int32& OutPhaseRaw,
+	float& OutPhaseEndTimeSeconds,
+	TArray<int32>& OutPhase0IncomingLaneIds,
+	TArray<int32>& OutPhase1IncomingLaneIds) const
+{
+	const FIntersectionSignalState* State = IntersectionSignals.Find(IntersectionId);
+	if (!State || !State->bHasTwoPhases)
+	{
+		return false;
+	}
+
+	OutActivePhaseIndex = State->ActivePhaseIndex;
+	OutPhaseRaw = static_cast<int32>(State->Phase);
+	OutPhaseEndTimeSeconds = State->PhaseEndTimeSeconds;
+
+	OutPhase0IncomingLaneIds = State->PhaseIncomingLaneIds[0].Array();
+	OutPhase1IncomingLaneIds = State->PhaseIncomingLaneIds[1].Array();
+
+	return true;
+}

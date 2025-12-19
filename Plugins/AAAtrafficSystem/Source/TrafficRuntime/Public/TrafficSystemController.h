@@ -45,6 +45,15 @@ public:
 	bool TryReserveIntersection(int32 IntersectionId, ATrafficVehicleBase* Vehicle, int32 MovementId, float HoldSeconds);
 	void ReleaseIntersection(int32 IntersectionId, ATrafficVehicleBase* Vehicle);
 
+	// Signal state snapshot (for tests/debug).
+	bool GetIntersectionSignalSnapshot(
+		int32 IntersectionId,
+		int32& OutActivePhaseIndex,
+		int32& OutPhaseRaw,
+		float& OutPhaseEndTimeSeconds,
+		TArray<int32>& OutPhase0IncomingLaneIds,
+		TArray<int32>& OutPhase1IncomingLaneIds) const;
+
 protected:
 	virtual void BeginPlay() override;
 

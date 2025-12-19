@@ -62,6 +62,7 @@ public:
 
 	/** Approximate length of this vehicle (cm) used for spacing/following. */
 	void SetApproxVehicleLengthCm(float InLengthCm) { ApproxVehicleLengthCm = FMath::Max(0.f, InLengthCm); }
+	float GetApproxVehicleLengthCm() const { return ApproxVehicleLengthCm; }
 
 	/** Debug spawn index (set by TrafficVehicleManager) used for sampling a few vehicles for always-on logs. */
 	void SetDebugSpawnIndex(int32 InIndex) { DebugSpawnIndex = InIndex; }
