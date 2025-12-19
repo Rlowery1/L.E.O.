@@ -108,11 +108,21 @@ private:
 		int32 ActivePhaseIndex = 0;
 		ETrafficSignalPhase Phase = ETrafficSignalPhase::Green;
 		float PhaseEndTimeSeconds = 0.f;
+		float CycleOffsetSeconds = 0.f;
 	};
 
 	TMap<int32, FIntersectionSignalState> IntersectionSignals;
 
 	void InitializeIntersectionSignals(const FTrafficNetwork& Net, float NowSeconds);
 	void UpdateIntersectionSignals(const FTrafficNetwork& Net, float NowSeconds);
+	static FVector2D ResolveCoordinationAxis2D(const FIntersectionSignalState& State);
+	static void InitSignalPhaseFromCycle(
+		FIntersectionSignalState& State,
+		float NowSeconds,
+		float GreenSeconds,
+		float YellowSeconds,
+		float AllRedSeconds,
+		float OffsetSeconds);
 	bool IsMovementAllowedBySignals(const FTrafficNetwork& Net, int32 IntersectionId, int32 MovementId) const;
+	bool ShouldYieldPermittedLeft(const FTrafficNetwork& Net, int32 IntersectionId, int32 MovementId, const ATrafficVehicleBase* Vehicle) const;
 };

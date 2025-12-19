@@ -12,6 +12,7 @@
 #include "TrafficNetworkAsset.h"
 #include "TrafficRuntimeSettings.h"
 #include "TrafficKinematicFollower.h"
+#include "HAL/IConsoleManager.h"
 #include "HAL/PlatformTime.h"
 
 #if WITH_EDITOR
@@ -24,6 +25,12 @@ namespace
 	static const float FollowingEndpointBufferCm = 500.0f;
 	static const float ScaleSimSeconds = 6.0f;
 	static const float MinMovingSpeedCmPerSec = 50.0f;
+	static const float SpeedVarianceSimSeconds = 6.0f;
+	static const float SpeedVarianceWarmupSeconds = 1.5f;
+	static const float SpeedVarianceMinSpreadCmPerSec = 40.0f;
+	static const float SpeedVarianceMinMultiplier = 0.9f;
+	static const float SpeedVarianceMaxMultiplier = 1.1f;
+	static const int32 SpeedVarianceSeed = 1337;
 
 	struct FTrafficVehicleSample
 	{
@@ -307,6 +314,25 @@ namespace
 		double StartTimeSeconds = 0.0;
 	};
 
+	struct FTrafficSpeedVarianceState
+	{
+		TWeakObjectPtr<UWorld> PIEWorld;
+		bool bSavedSettings = false;
+		FTrafficSettingsSnapshot PrevSettings;
+		int32 PrevVisualMode = 2;
+		int32 PrevVarianceEnabled = 1;
+		float PrevVarianceMin = 0.85f;
+		float PrevVarianceMax = 1.15f;
+		int32 PrevVarianceSeed = 1337;
+
+		float BaseSpeedCmPerSec = 800.f;
+		double StartTimeSeconds = 0.0;
+		float MinSpeed = TNumericLimits<float>::Max();
+		float MaxSpeed = 0.f;
+		int32 SampledVehicles = 0;
+		bool bSampled = false;
+	};
+
 	DEFINE_LATENT_AUTOMATION_COMMAND_FOUR_PARAMETER(FTrafficScaleWaitForPIEWorldCommand, TSharedRef<FTrafficScaleState>, State, FAutomationTestBase*, Test, double, TimeoutSeconds, double, StartTime);
 	bool FTrafficScaleWaitForPIEWorldCommand::Update()
 	{
@@ -409,6 +435,154 @@ namespace
 
 		return true;
 	}
+
+	DEFINE_LATENT_AUTOMATION_COMMAND_FOUR_PARAMETER(FTrafficVarianceWaitForPIEWorldCommand, TSharedRef<FTrafficSpeedVarianceState>, State, FAutomationTestBase*, Test, double, TimeoutSeconds, double, StartTime);
+	bool FTrafficVarianceWaitForPIEWorldCommand::Update()
+	{
+		if (GEditor && GEditor->PlayWorld)
+		{
+			State->PIEWorld = GEditor->PlayWorld;
+			return true;
+		}
+
+		const double Elapsed = FPlatformTime::Seconds() - StartTime;
+		if (Elapsed > TimeoutSeconds)
+		{
+			if (Test)
+			{
+				Test->AddError(TEXT("PIE world did not start for speed variance test."));
+			}
+			return true;
+		}
+
+		return false;
+	}
+
+	DEFINE_LATENT_AUTOMATION_COMMAND_TWO_PARAMETER(FTrafficVarianceSampleCommand, TSharedRef<FTrafficSpeedVarianceState>, State, FAutomationTestBase*, Test);
+	bool FTrafficVarianceSampleCommand::Update()
+	{
+		if (!State->PIEWorld.IsValid() && GEditor && GEditor->PlayWorld)
+		{
+			State->PIEWorld = GEditor->PlayWorld;
+		}
+
+		UWorld* World = State->PIEWorld.Get();
+		if (!World)
+		{
+			return false;
+		}
+
+		if (State->StartTimeSeconds <= 0.0)
+		{
+			State->StartTimeSeconds = FPlatformTime::Seconds();
+		}
+
+		const double Now = FPlatformTime::Seconds();
+		if ((Now - State->StartTimeSeconds) < SpeedVarianceWarmupSeconds)
+		{
+			return false;
+		}
+
+		float LocalMin = TNumericLimits<float>::Max();
+		float LocalMax = 0.f;
+		int32 VehicleCount = 0;
+
+		for (TActorIterator<ATrafficVehicleBase> It(World); It; ++It)
+		{
+			ATrafficVehicleBase* Vehicle = *It;
+			if (!Vehicle)
+			{
+				continue;
+			}
+
+			const float Speed = Vehicle->GetCruiseSpeedCmPerSec();
+			if (Speed <= 0.f)
+			{
+				continue;
+			}
+
+			LocalMin = FMath::Min(LocalMin, Speed);
+			LocalMax = FMath::Max(LocalMax, Speed);
+			++VehicleCount;
+		}
+
+		if (VehicleCount > 0)
+		{
+			State->MinSpeed = FMath::Min(State->MinSpeed, LocalMin);
+			State->MaxSpeed = FMath::Max(State->MaxSpeed, LocalMax);
+			State->SampledVehicles = FMath::Max(State->SampledVehicles, VehicleCount);
+			State->bSampled = true;
+		}
+
+		return (Now - State->StartTimeSeconds) >= SpeedVarianceSimSeconds;
+	}
+
+	DEFINE_LATENT_AUTOMATION_COMMAND_TWO_PARAMETER(FTrafficVarianceEndCommand, TSharedRef<FTrafficSpeedVarianceState>, State, FAutomationTestBase*, Test);
+	bool FTrafficVarianceEndCommand::Update()
+	{
+		if (State->bSavedSettings)
+		{
+			RestoreRuntimeSettings(State->PrevSettings);
+
+			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.Mode")))
+			{
+				Var->Set(State->PrevVisualMode, ECVF_SetByCode);
+			}
+			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.SpeedVariance.Enabled")))
+			{
+				Var->Set(State->PrevVarianceEnabled, ECVF_SetByCode);
+			}
+			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.SpeedVariance.MinMultiplier")))
+			{
+				Var->Set(State->PrevVarianceMin, ECVF_SetByCode);
+			}
+			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.SpeedVariance.MaxMultiplier")))
+			{
+				Var->Set(State->PrevVarianceMax, ECVF_SetByCode);
+			}
+			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.SpeedVariance.Seed")))
+			{
+				Var->Set(State->PrevVarianceSeed, ECVF_SetByCode);
+			}
+
+			State->bSavedSettings = false;
+		}
+
+		if (GEditor)
+		{
+			GEditor->EndPlayMap();
+		}
+
+		if (!State->bSampled || State->SampledVehicles < 2)
+		{
+			Test->AddError(TEXT("Speed variance test did not sample enough vehicles."));
+			return true;
+		}
+
+		const float ExpectedMin = State->BaseSpeedCmPerSec * SpeedVarianceMinMultiplier;
+		const float ExpectedMax = State->BaseSpeedCmPerSec * SpeedVarianceMaxMultiplier;
+		const float Tolerance = 5.0f;
+
+		if (State->MinSpeed < (ExpectedMin - Tolerance))
+		{
+			Test->AddError(FString::Printf(TEXT("Speed variance min below expected (min=%.1f expected>=%.1f)."),
+				State->MinSpeed, ExpectedMin));
+		}
+
+		if (State->MaxSpeed > (ExpectedMax + Tolerance))
+		{
+			Test->AddError(FString::Printf(TEXT("Speed variance max above expected (max=%.1f expected<=%.1f)."),
+				State->MaxSpeed, ExpectedMax));
+		}
+
+		const float Spread = State->MaxSpeed - State->MinSpeed;
+		if (Spread < SpeedVarianceMinSpreadCmPerSec)
+		{
+			Test->AddError(FString::Printf(TEXT("Speed variance spread too small (spread=%.1fcm/s)."), Spread));
+		}
+
+		return true;
+	}
 }
 
 #endif // WITH_EDITOR
@@ -499,6 +673,70 @@ bool FTrafficScaleBaselineTest::RunTest(const FString& Parameters)
 	ADD_LATENT_AUTOMATION_COMMAND(FTrafficScaleWaitForPIEWorldCommand(State, this, 15.0, FPlatformTime::Seconds()));
 	ADD_LATENT_AUTOMATION_COMMAND(FTrafficScaleSampleCommand(State, this));
 	ADD_LATENT_AUTOMATION_COMMAND(FTrafficScaleEndCommand(State, this));
+
+	return true;
+#else
+	return false;
+#endif
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FTrafficSpeedVarianceBaselineTest,
+	"Traffic.Behavior.SpeedVariance.BaselineCurve",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FTrafficSpeedVarianceBaselineTest::RunTest(const FString& Parameters)
+{
+#if WITH_EDITOR
+	if (!AutomationOpenMap(BehaviorMapPackage))
+	{
+		AddError(TEXT("Failed to load /AAAtrafficSystem/Maps/Traffic_BaselineCurve."));
+		return false;
+	}
+
+	TSharedRef<FTrafficSpeedVarianceState> State = MakeShared<FTrafficSpeedVarianceState>();
+	State->bSavedSettings = true;
+	SaveRuntimeSettings(State->PrevSettings);
+
+	if (UTrafficRuntimeSettings* Settings = GetMutableDefault<UTrafficRuntimeSettings>())
+	{
+		Settings->VehiclesPerLaneRuntime = 2;
+		Settings->RuntimeSpeedCmPerSec = State->BaseSpeedCmPerSec;
+		Settings->bGenerateZoneGraph = false;
+	}
+
+	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.Mode")))
+	{
+		State->PrevVisualMode = Var->GetInt();
+		Var->Set(2, ECVF_SetByCode);
+	}
+	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.SpeedVariance.Enabled")))
+	{
+		State->PrevVarianceEnabled = Var->GetInt();
+		Var->Set(1, ECVF_SetByCode);
+	}
+	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.SpeedVariance.MinMultiplier")))
+	{
+		State->PrevVarianceMin = Var->GetFloat();
+		Var->Set(SpeedVarianceMinMultiplier, ECVF_SetByCode);
+	}
+	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.SpeedVariance.MaxMultiplier")))
+	{
+		State->PrevVarianceMax = Var->GetFloat();
+		Var->Set(SpeedVarianceMaxMultiplier, ECVF_SetByCode);
+	}
+	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.SpeedVariance.Seed")))
+	{
+		State->PrevVarianceSeed = Var->GetInt();
+		Var->Set(SpeedVarianceSeed, ECVF_SetByCode);
+	}
+
+	AddExpectedError(TEXT("The Editor is currently in a play mode."), EAutomationExpectedErrorFlags::Contains, 6);
+
+	ADD_LATENT_AUTOMATION_COMMAND(FStartPIECommand(false));
+	ADD_LATENT_AUTOMATION_COMMAND(FTrafficVarianceWaitForPIEWorldCommand(State, this, 15.0, FPlatformTime::Seconds()));
+	ADD_LATENT_AUTOMATION_COMMAND(FTrafficVarianceSampleCommand(State, this));
+	ADD_LATENT_AUTOMATION_COMMAND(FTrafficVarianceEndCommand(State, this));
 
 	return true;
 #else

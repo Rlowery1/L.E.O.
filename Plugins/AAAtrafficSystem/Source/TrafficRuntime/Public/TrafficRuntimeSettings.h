@@ -24,6 +24,14 @@ enum class ETrafficTurnPolicy : uint8
 	PreferNonThrough UMETA(DisplayName="Prefer Non-Through (Turns)")
 };
 
+UENUM(BlueprintType)
+enum class ETrafficSignalCoordinationAxis : uint8
+{
+	Phase0Axis UMETA(DisplayName="Phase 0 Axis"),
+	WorldX UMETA(DisplayName="World X"),
+	WorldY UMETA(DisplayName="World Y"),
+};
+
 UCLASS(Config=Game, DefaultConfig, meta=(DisplayName="AAA Traffic Settings"))
 class TRAFFICRUNTIME_API UTrafficRuntimeSettings : public UDeveloperSettings
 {
@@ -88,6 +96,26 @@ public:
 	/** Fixed-time traffic light: all-red clearance duration (seconds) between phases. */
 	UPROPERTY(EditAnywhere, Config, Category="Intersections|Traffic Lights", meta=(ClampMin="0.0"))
 	float TrafficLightAllRedSeconds = 1.0f;
+
+	/** Enables fixed-time signal coordination (green wave) along a chosen axis. */
+	UPROPERTY(EditAnywhere, Config, Category="Intersections|Traffic Lights")
+	bool bTrafficLightCoordinationEnabled = false;
+
+	/** Coordination speed (cm/sec) used to compute phase offsets along the chosen axis. */
+	UPROPERTY(EditAnywhere, Config, Category="Intersections|Traffic Lights", meta=(ClampMin="1.0"))
+	float TrafficLightCoordinationSpeedCmPerSec = 1500.0f;
+
+	/** Axis used to compute signal offsets for coordination. */
+	UPROPERTY(EditAnywhere, Config, Category="Intersections|Traffic Lights")
+	ETrafficSignalCoordinationAxis TrafficLightCoordinationAxis = ETrafficSignalCoordinationAxis::Phase0Axis;
+
+	/** Permitted-left behavior in signalized intersections. */
+	UPROPERTY(EditAnywhere, Config, Category="Intersections|Traffic Lights", meta=(DisplayName="Permitted Left Turns Yield"))
+	bool bTrafficLightPermittedLeftYield = true;
+
+	/** Distance (cm) before the stop line to treat oncoming vehicles as priority when permitting left turns. */
+	UPROPERTY(EditAnywhere, Config, Category="Intersections|Traffic Lights", meta=(ClampMin="0.0"))
+	float TrafficLightPermittedLeftApproachDistanceCm = 1200.0f;
 
 	/** Default routing turn policy used at runtime (PIE/Game). */
 	UPROPERTY(EditAnywhere, Config, Category="Routing")

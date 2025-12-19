@@ -17,8 +17,9 @@
 namespace
 {
 	static const TCHAR* SignalizedMapPackage = TEXT("/AAAtrafficSystem/Maps/Traffic_BaselineCurve");
-	static const float SignalizedSimSeconds = 18.0f;
+	static const float SignalizedSimSeconds = 20.0f;
 	static const float MinEntrySpeedCmPerSec = 10.0f;
+	static const float TimingToleranceSeconds = 0.75f;
 
 	struct FFollowSnapshot
 	{
@@ -34,15 +35,24 @@ namespace
 
 		bool bInitialized = false;
 		bool bSawPhaseSwitch = false;
-		bool bActivePhaseEntry = false;
-		bool bSwitchedPhaseEntry = false;
+		bool bEntryOnGreen = false;
+		bool bEntryOnSwitchedPhase = false;
 		bool bChaosEntry = false;
 		bool bViolation = false;
+		bool bTimingComplete = false;
 
 		int32 InitialActivePhaseIndex = INDEX_NONE;
 		int32 InitialPhaseRaw = INDEX_NONE;
+		int32 EntryPhaseIndex = INDEX_NONE;
 
 		double StartTimeSeconds = 0.0;
+		double LastPhaseChangeTimeSeconds = 0.0;
+		int32 LastPhaseRaw = INDEX_NONE;
+		TArray<float> PhaseDurations[3];
+
+		float TargetGreenSeconds = 6.0f;
+		float TargetYellowSeconds = 1.5f;
+		float TargetAllRedSeconds = 1.0f;
 
 		TSet<int32> PhaseIncomingLaneIds[2];
 		TMap<TWeakObjectPtr<ATrafficVehicleBase>, FFollowSnapshot> PrevFollow;
@@ -54,6 +64,9 @@ namespace
 		float PrevGreenSeconds = 10.0f;
 		float PrevYellowSeconds = 2.0f;
 		float PrevAllRedSeconds = 1.0f;
+		int32 PrevCoordEnabled = 0;
+		float PrevCoordSpeed = 1500.0f;
+		int32 PrevCoordAxisMode = 0;
 	};
 
 	static bool FindControllerAndNetwork(UWorld* World, ATrafficSystemController*& OutController, const FTrafficNetwork*& OutNet)
@@ -219,6 +232,33 @@ namespace
 			State->bSawPhaseSwitch = true;
 		}
 
+		const double NowSeconds = FPlatformTime::Seconds();
+		if (State->LastPhaseRaw == INDEX_NONE)
+		{
+			State->LastPhaseRaw = PhaseRaw;
+			State->LastPhaseChangeTimeSeconds = NowSeconds;
+		}
+		else if (PhaseRaw != State->LastPhaseRaw)
+		{
+			const double Duration = NowSeconds - State->LastPhaseChangeTimeSeconds;
+			if (State->LastPhaseRaw >= 0 && State->LastPhaseRaw < 3)
+			{
+				State->PhaseDurations[State->LastPhaseRaw].Add(static_cast<float>(Duration));
+			}
+			State->LastPhaseRaw = PhaseRaw;
+			State->LastPhaseChangeTimeSeconds = NowSeconds;
+		}
+
+		if (!State->bTimingComplete)
+		{
+			if (State->PhaseDurations[0].Num() > 0 &&
+				State->PhaseDurations[1].Num() > 0 &&
+				State->PhaseDurations[2].Num() > 0)
+			{
+				State->bTimingComplete = true;
+			}
+		}
+
 		const int32 InactivePhaseIndex = (ActivePhaseIndex == 0) ? 1 : 0;
 		const TSet<int32>& ActiveLanes = State->PhaseIncomingLaneIds[ActivePhaseIndex];
 		const TSet<int32>& InactiveLanes = State->PhaseIncomingLaneIds[InactivePhaseIndex];
@@ -269,13 +309,14 @@ namespace
 						return true;
 					}
 
-					if (!State->bSawPhaseSwitch)
+					if (State->EntryPhaseIndex == INDEX_NONE)
 					{
-						State->bActivePhaseEntry = true;
+						State->EntryPhaseIndex = ActivePhaseIndex;
+						State->bEntryOnGreen = true;
 					}
-					else
+					else if (ActivePhaseIndex != State->EntryPhaseIndex)
 					{
-						State->bSwitchedPhaseEntry = true;
+						State->bEntryOnSwitchedPhase = true;
 					}
 
 					if (Chaos && Chaos->GetVelocity().Size2D() >= MinEntrySpeedCmPerSec)
@@ -291,13 +332,12 @@ namespace
 			State->PrevFollow.Add(Logic, Snapshot);
 		}
 
-		const double Now = FPlatformTime::Seconds();
-		if (Now - State->StartTimeSeconds >= SignalizedSimSeconds)
+		if (NowSeconds - State->StartTimeSeconds >= SignalizedSimSeconds)
 		{
 			return true;
 		}
 
-		if (State->bSawPhaseSwitch && State->bActivePhaseEntry && State->bSwitchedPhaseEntry && State->bChaosEntry)
+		if (State->bTimingComplete && State->bSawPhaseSwitch && State->bEntryOnGreen && State->bChaosEntry)
 		{
 			return true;
 		}
@@ -334,6 +374,18 @@ namespace
 			{
 				Var->Set(State->PrevAllRedSeconds, ECVF_SetByCode);
 			}
+			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.CoordinationEnabled")))
+			{
+				Var->Set(State->PrevCoordEnabled, ECVF_SetByCode);
+			}
+			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.CoordinationSpeedCmPerSec")))
+			{
+				Var->Set(State->PrevCoordSpeed, ECVF_SetByCode);
+			}
+			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.CoordinationAxisMode")))
+			{
+				Var->Set(State->PrevCoordAxisMode, ECVF_SetByCode);
+			}
 			State->bSavedCVars = false;
 		}
 
@@ -352,19 +404,41 @@ namespace
 			Test->AddError(TEXT("Signalized test did not observe a phase switch within the test window."));
 		}
 
-		if (!State->bActivePhaseEntry)
+		if (!State->bEntryOnGreen)
 		{
-			Test->AddError(TEXT("No movement entered during the initial green phase."));
-		}
-
-		if (!State->bSwitchedPhaseEntry)
-		{
-			Test->AddError(TEXT("No movement entered after the phase switch."));
+			Test->AddError(TEXT("No movement entered during a green phase."));
 		}
 
 		if (!State->bChaosEntry)
 		{
 			Test->AddError(TEXT("Chaos vehicles did not show motion when entering the signalized intersection."));
+		}
+
+		for (int32 PhaseIdx = 0; PhaseIdx < 3; ++PhaseIdx)
+		{
+			const TArray<float>& Samples = State->PhaseDurations[PhaseIdx];
+			if (Samples.Num() == 0)
+			{
+				Test->AddError(TEXT("Signal timing test did not capture all phase durations."));
+				break;
+			}
+
+			float Avg = 0.f;
+			for (float V : Samples)
+			{
+				Avg += V;
+			}
+			Avg /= Samples.Num();
+
+			const float Target = (PhaseIdx == 0) ? State->TargetGreenSeconds
+				: (PhaseIdx == 1) ? State->TargetYellowSeconds
+				: State->TargetAllRedSeconds;
+
+			if (FMath::Abs(Avg - Target) > TimingToleranceSeconds)
+			{
+				Test->AddError(FString::Printf(TEXT("Signal phase duration out of tolerance (phase=%d avg=%.2fs target=%.2fs)."),
+					PhaseIdx, Avg, Target));
+			}
 		}
 
 		return true;
@@ -407,14 +481,30 @@ bool FTrafficSignalizedIntersectionTest::RunTest(const FString& Parameters)
 	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.GreenSeconds")))
 	{
 		State->PrevGreenSeconds = Var->GetFloat();
+		Var->Set(State->TargetGreenSeconds, ECVF_SetByCode);
 	}
 	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.YellowSeconds")))
 	{
 		State->PrevYellowSeconds = Var->GetFloat();
+		Var->Set(State->TargetYellowSeconds, ECVF_SetByCode);
 	}
 	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.AllRedSeconds")))
 	{
 		State->PrevAllRedSeconds = Var->GetFloat();
+		Var->Set(State->TargetAllRedSeconds, ECVF_SetByCode);
+	}
+	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.CoordinationEnabled")))
+	{
+		State->PrevCoordEnabled = Var->GetInt();
+		Var->Set(0, ECVF_SetByCode);
+	}
+	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.CoordinationSpeedCmPerSec")))
+	{
+		State->PrevCoordSpeed = Var->GetFloat();
+	}
+	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.CoordinationAxisMode")))
+	{
+		State->PrevCoordAxisMode = Var->GetInt();
 	}
 
 	AddExpectedError(TEXT("The Editor is currently in a play mode."), EAutomationExpectedErrorFlags::Contains, 6);

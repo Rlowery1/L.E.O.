@@ -14,6 +14,7 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/MovementComponent.h"
 #include "HAL/IConsoleManager.h"
+#include "Math/RandomStream.h"
 #include "UObject/UnrealType.h"
 #include "UObject/SoftObjectPath.h"
 #include "Misc/AutomationTest.h"
@@ -68,6 +69,30 @@ static TAutoConsoleVariable<int32> CVarTrafficSpawnMaxVehicles(
 	TEXT("aaa.Traffic.Spawn.MaxVehicles"),
 	0,
 	TEXT("If >0, limits total spawned traffic vehicles (useful for Chaos stability debugging). Default: 0 (no limit)."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarTrafficSpeedVarianceEnabled(
+	TEXT("aaa.Traffic.SpeedVariance.Enabled"),
+	1,
+	TEXT("If non-zero, applies per-vehicle speed variance at spawn."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficSpeedVarianceMinMultiplier(
+	TEXT("aaa.Traffic.SpeedVariance.MinMultiplier"),
+	0.85f,
+	TEXT("Minimum speed multiplier applied to spawned vehicles."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficSpeedVarianceMaxMultiplier(
+	TEXT("aaa.Traffic.SpeedVariance.MaxMultiplier"),
+	1.15f,
+	TEXT("Maximum speed multiplier applied to spawned vehicles."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarTrafficSpeedVarianceSeed(
+	TEXT("aaa.Traffic.SpeedVariance.Seed"),
+	1337,
+	TEXT("Seed for deterministic per-vehicle speed variance."),
 	ECVF_Default);
 
 static TAutoConsoleVariable<int32> CVarTrafficChaosDriveSpawnDebug(
@@ -707,6 +732,32 @@ static void ComputeSpawnPositionsForLane(
 	}
 }
 
+static float ComputeSpeedVarianceScale(int32 LaneId, int32 SpawnOrdinal)
+{
+	if (CVarTrafficSpeedVarianceEnabled.GetValueOnGameThread() == 0)
+	{
+		return 1.0f;
+	}
+
+	float MinMul = CVarTrafficSpeedVarianceMinMultiplier.GetValueOnGameThread();
+	float MaxMul = CVarTrafficSpeedVarianceMaxMultiplier.GetValueOnGameThread();
+	if (MaxMul < MinMul)
+	{
+		Swap(MaxMul, MinMul);
+	}
+
+	MinMul = FMath::Max(0.f, MinMul);
+	MaxMul = FMath::Max(MinMul, MaxMul);
+	if (MaxMul <= 0.f)
+	{
+		return 1.0f;
+	}
+
+	const int32 Seed = CVarTrafficSpeedVarianceSeed.GetValueOnGameThread() + (LaneId * 31) + (SpawnOrdinal * 131);
+	FRandomStream Stream(Seed);
+	return Stream.FRandRange(MinMul, MaxMul);
+}
+
 ATrafficVehicleManager::ATrafficVehicleManager()
 {
 	PrimaryActorTick.bCanEverTick = false;
@@ -1185,11 +1236,14 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 				UE_LOG(LogTraffic, Warning, TEXT("[VehicleManager] Failed to spawn vehicle for lane %d (class %s)."), LaneIndex, *LogicClass->GetName());
 				continue;
 			}
-			Vehicle->SetDebugSpawnIndex(SpawnOrdinal++);
+			const int32 LaneKey = (Lane.LaneId >= 0) ? Lane.LaneId : LaneIndex;
+			const int32 SpawnIndex = SpawnOrdinal++;
+			const float SpeedScale = ComputeSpeedVarianceScale(LaneKey, SpawnIndex);
+			const float VehicleSpeed = SpeedCmPerSec * SpeedScale;
+
+			Vehicle->SetDebugSpawnIndex(SpawnIndex);
 			Vehicle->Tags.AddUnique(TrafficSpawnedVehicleTag);
 			Vehicle->SetApproxVehicleLengthCm(ApproxVehicleLengthCm);
-
-			const int32 LaneKey = (Lane.LaneId >= 0) ? Lane.LaneId : LaneIndex;
 			const float Now = World->GetTimeSeconds();
 			if (ActiveMetrics)
 			{
@@ -1200,7 +1254,7 @@ void ATrafficVehicleManager::SpawnTestVehicles(int32 VehiclesPerLane, float Spee
 			}
 			LastLaneSpawnTimes.Add(LaneKey, Now);
 
-			Vehicle->InitializeOnLane(&Lane, S, SpeedCmPerSec);
+			Vehicle->InitializeOnLane(&Lane, S, VehicleSpeed);
 			Vehicle->SetNetworkAsset(NetworkAsset);
 			Vehicle->SetTrafficSystemController(Controller);
 			Vehicles.Add(Vehicle);
@@ -1657,11 +1711,15 @@ void ATrafficVehicleManager::SpawnZoneGraphVehicles(int32 VehiclesPerLane, float
 				{
 					continue;
 				}
-				Vehicle->SetDebugSpawnIndex(SpawnOrdinal++);
+				const int32 SpawnIndex = SpawnOrdinal++;
+				const float SpeedScale = ComputeSpeedVarianceScale(LaneHandle.Index, SpawnIndex);
+				const float VehicleSpeed = SpeedCmPerSec * SpeedScale;
+
+				Vehicle->SetDebugSpawnIndex(SpawnIndex);
 				Vehicle->Tags.AddUnique(TrafficSpawnedVehicleTag);
 				Vehicle->SetTrafficSystemController(Controller);
 
-				Vehicle->InitializeOnZoneGraphLane(ZGS, LaneHandle, Dist, SpeedCmPerSec);
+				Vehicle->InitializeOnZoneGraphLane(ZGS, LaneHandle, Dist, VehicleSpeed);
 				Vehicles.Add(Vehicle);
 
 				if (ActiveMetrics)

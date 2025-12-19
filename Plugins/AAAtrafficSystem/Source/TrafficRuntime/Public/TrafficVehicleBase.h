@@ -45,6 +45,9 @@ public:
 	/** Planned speed from the traffic logic (cm/sec). Useful for driving a physical/visual vehicle. */
 	float GetPlannedSpeedCmPerSec() const;
 
+	/** Base cruise speed assigned at spawn (cm/sec), before follow/traffic modifiers. */
+	float GetCruiseSpeedCmPerSec() const { return bUseZoneGraphLane ? ZoneSpeedCmPerSec : CruiseSpeedCmPerSec; }
+
 	/** Returns the current lane/movement follow target (for following/spacing queries). */
 	bool GetFollowTarget(EPathFollowTargetType& OutType, int32& OutTargetId, float& OutS) const;
 

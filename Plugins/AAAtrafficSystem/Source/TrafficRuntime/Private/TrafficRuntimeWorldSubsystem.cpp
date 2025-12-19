@@ -54,6 +54,14 @@ namespace
 			return;
 		}
 
+		if (IConsoleVariable* AutoVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.StopLineOffsetAuto")))
+		{
+			if (AutoVar->GetInt() != 0)
+			{
+				return;
+			}
+		}
+
 		// Respect explicit user overrides (console/commandline/code). Project settings are intended as defaults.
 		if (IsCVarExplicitlySet(StopLineVar))
 		{
@@ -115,6 +123,11 @@ namespace
 		IConsoleVariable* GreenVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.GreenSeconds"));
 		IConsoleVariable* YellowVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.YellowSeconds"));
 		IConsoleVariable* AllRedVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.AllRedSeconds"));
+		IConsoleVariable* CoordEnabledVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.CoordinationEnabled"));
+		IConsoleVariable* CoordSpeedVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.CoordinationSpeedCmPerSec"));
+		IConsoleVariable* CoordAxisVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.CoordinationAxisMode"));
+		IConsoleVariable* PermittedLeftVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.PermittedLeftYield"));
+		IConsoleVariable* PermittedLeftDistVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.PermittedLeftApproachDistanceCm"));
 
 		if (ControlModeVar && !IsCVarExplicitlySet(ControlModeVar))
 		{
@@ -139,6 +152,26 @@ namespace
 		if (AllRedVar && !IsCVarExplicitlySet(AllRedVar))
 		{
 			AllRedVar->Set(FMath::Max(0.f, RuntimeSettings->TrafficLightAllRedSeconds), ECVF_SetByProjectSetting);
+		}
+		if (CoordEnabledVar && !IsCVarExplicitlySet(CoordEnabledVar))
+		{
+			CoordEnabledVar->Set(RuntimeSettings->bTrafficLightCoordinationEnabled ? 1 : 0, ECVF_SetByProjectSetting);
+		}
+		if (CoordSpeedVar && !IsCVarExplicitlySet(CoordSpeedVar))
+		{
+			CoordSpeedVar->Set(FMath::Max(1.f, RuntimeSettings->TrafficLightCoordinationSpeedCmPerSec), ECVF_SetByProjectSetting);
+		}
+		if (CoordAxisVar && !IsCVarExplicitlySet(CoordAxisVar))
+		{
+			CoordAxisVar->Set(static_cast<int32>(RuntimeSettings->TrafficLightCoordinationAxis), ECVF_SetByProjectSetting);
+		}
+		if (PermittedLeftVar && !IsCVarExplicitlySet(PermittedLeftVar))
+		{
+			PermittedLeftVar->Set(RuntimeSettings->bTrafficLightPermittedLeftYield ? 1 : 0, ECVF_SetByProjectSetting);
+		}
+		if (PermittedLeftDistVar && !IsCVarExplicitlySet(PermittedLeftDistVar))
+		{
+			PermittedLeftDistVar->Set(FMath::Max(0.f, RuntimeSettings->TrafficLightPermittedLeftApproachDistanceCm), ECVF_SetByProjectSetting);
 		}
 	}
 

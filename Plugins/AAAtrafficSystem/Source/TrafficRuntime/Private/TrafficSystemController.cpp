@@ -11,7 +11,9 @@
 #include "EngineUtils.h"
 #include "Engine/World.h"
 #include "TrafficVehicleBase.h"
+#include "TrafficKinematicFollower.h"
 #include "TrafficRouting.h"
+#include "TrafficLaneGeometry.h"
 #include "HAL/IConsoleManager.h"
 #include "DrawDebugHelpers.h"
 
@@ -37,6 +39,36 @@ static TAutoConsoleVariable<float> CVarTrafficLightAllRedSeconds(
 	TEXT("aaa.Traffic.Intersections.TrafficLight.AllRedSeconds"),
 	1.0f,
 	TEXT("Fixed-time traffic light all-red clearance duration (seconds)."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarTrafficLightCoordinationEnabled(
+	TEXT("aaa.Traffic.Intersections.TrafficLight.CoordinationEnabled"),
+	0,
+	TEXT("If non-zero, applies phase offsets for a simple green-wave coordination."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficLightCoordinationSpeedCmPerSec(
+	TEXT("aaa.Traffic.Intersections.TrafficLight.CoordinationSpeedCmPerSec"),
+	1500.0f,
+	TEXT("Speed (cm/sec) used to compute signal offsets along the coordination axis."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarTrafficLightCoordinationAxisMode(
+	TEXT("aaa.Traffic.Intersections.TrafficLight.CoordinationAxisMode"),
+	0,
+	TEXT("Coordination axis: 0=Phase0Axis, 1=WorldX, 2=WorldY."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarTrafficLightPermittedLeftYield(
+	TEXT("aaa.Traffic.Intersections.TrafficLight.PermittedLeftYield"),
+	1,
+	TEXT("If non-zero, left turns on green yield to conflicting priority movements."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficLightPermittedLeftApproachDistanceCm(
+	TEXT("aaa.Traffic.Intersections.TrafficLight.PermittedLeftApproachDistanceCm"),
+	1200.0f,
+	TEXT("Distance (cm) before the stop line to treat oncoming vehicles as priority for permitted left turns."),
 	ECVF_Default);
 
 static TAutoConsoleVariable<int32> CVarTrafficLightDebug(
@@ -72,6 +104,52 @@ ATrafficSystemController::ATrafficSystemController()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	BuiltNetworkAsset = nullptr;
+}
+
+static bool IsPriorityTurnType(ETrafficTurnType TurnType)
+{
+	return (TurnType == ETrafficTurnType::Through || TurnType == ETrafficTurnType::Right);
+}
+
+static float ReadFloatCVar(const TCHAR* Name, float DefaultValue)
+{
+	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(Name))
+	{
+		return Var->GetFloat();
+	}
+	return DefaultValue;
+}
+
+static int32 ReadIntCVar(const TCHAR* Name, int32 DefaultValue)
+{
+	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(Name))
+	{
+		return Var->GetInt();
+	}
+	return DefaultValue;
+}
+
+static float ComputeAutoStopLineOffsetCm(float LaneWidthCm)
+{
+	const float Width = (LaneWidthCm > KINDA_SMALL_NUMBER)
+		? LaneWidthCm
+		: FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoNominalLaneWidthCm"), 350.f));
+	const float Scale = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoWidthScale"), 0.25f));
+	const float MinCm = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMinCm"), 40.f));
+	const float MaxCm = FMath::Max(MinCm, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMaxCm"), 120.f));
+	return FMath::Clamp(Width * Scale, MinCm, MaxCm);
+}
+
+static float GetEffectiveStopLineOffsetCm(const FTrafficLane* Lane)
+{
+	const float Base = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm"), 0.f));
+	if (ReadIntCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAuto"), 0) == 0)
+	{
+		return Base;
+	}
+
+	const float LaneWidth = Lane ? Lane->Width : 0.f;
+	return ComputeAutoStopLineOffsetCm(LaneWidth);
 }
 
 void ATrafficSystemController::Tick(float DeltaSeconds)
@@ -213,12 +291,108 @@ bool ATrafficSystemController::BuildNetworkInternal(UWorld* World)
 	return Network.Roads.Num() > 0 && Network.Lanes.Num() > 0;
 }
 
+FVector2D ATrafficSystemController::ResolveCoordinationAxis2D(const FIntersectionSignalState& State)
+{
+	const int32 Mode = CVarTrafficLightCoordinationAxisMode.GetValueOnGameThread();
+	if (Mode == 1)
+	{
+		return FVector2D(1.f, 0.f);
+	}
+	if (Mode == 2)
+	{
+		return FVector2D(0.f, 1.f);
+	}
+
+	FVector2D Axis = State.PhaseAxisDirs[0];
+	if (Axis.IsNearlyZero())
+	{
+		Axis = FVector2D(1.f, 0.f);
+	}
+	Axis.Normalize();
+	return Axis;
+}
+
+void ATrafficSystemController::InitSignalPhaseFromCycle(
+	FIntersectionSignalState& State,
+	float NowSeconds,
+	float GreenSeconds,
+	float YellowSeconds,
+	float AllRedSeconds,
+	float OffsetSeconds)
+{
+	const float PhaseSeconds = GreenSeconds + YellowSeconds + AllRedSeconds;
+	const float CycleSeconds = PhaseSeconds * 2.0f;
+	if (CycleSeconds <= KINDA_SMALL_NUMBER)
+	{
+		State.ActivePhaseIndex = 0;
+		State.Phase = ETrafficSignalPhase::Green;
+		State.PhaseEndTimeSeconds = NowSeconds + GreenSeconds;
+		return;
+	}
+
+	float LocalTime = NowSeconds - OffsetSeconds;
+	float CyclePos = FMath::Fmod(LocalTime, CycleSeconds);
+	if (CyclePos < 0.f)
+	{
+		CyclePos += CycleSeconds;
+	}
+
+	const float Seg0 = GreenSeconds;
+	const float Seg1 = Seg0 + YellowSeconds;
+	const float Seg2 = Seg1 + AllRedSeconds;
+	const float Seg3 = Seg2 + GreenSeconds;
+	const float Seg4 = Seg3 + YellowSeconds;
+	const float Seg5 = Seg4 + AllRedSeconds;
+
+	if (CyclePos < Seg0)
+	{
+		State.ActivePhaseIndex = 0;
+		State.Phase = ETrafficSignalPhase::Green;
+		State.PhaseEndTimeSeconds = NowSeconds + (Seg0 - CyclePos);
+	}
+	else if (CyclePos < Seg1)
+	{
+		State.ActivePhaseIndex = 0;
+		State.Phase = ETrafficSignalPhase::Yellow;
+		State.PhaseEndTimeSeconds = NowSeconds + (Seg1 - CyclePos);
+	}
+	else if (CyclePos < Seg2)
+	{
+		State.ActivePhaseIndex = 0;
+		State.Phase = ETrafficSignalPhase::AllRed;
+		State.PhaseEndTimeSeconds = NowSeconds + (Seg2 - CyclePos);
+	}
+	else if (CyclePos < Seg3)
+	{
+		State.ActivePhaseIndex = 1;
+		State.Phase = ETrafficSignalPhase::Green;
+		State.PhaseEndTimeSeconds = NowSeconds + (Seg3 - CyclePos);
+	}
+	else if (CyclePos < Seg4)
+	{
+		State.ActivePhaseIndex = 1;
+		State.Phase = ETrafficSignalPhase::Yellow;
+		State.PhaseEndTimeSeconds = NowSeconds + (Seg4 - CyclePos);
+	}
+	else
+	{
+		State.ActivePhaseIndex = 1;
+		State.Phase = ETrafficSignalPhase::AllRed;
+		State.PhaseEndTimeSeconds = NowSeconds + (Seg5 - CyclePos);
+	}
+}
+
 void ATrafficSystemController::InitializeIntersectionSignals(const FTrafficNetwork& Net, float NowSeconds)
 {
 	if (CVarTrafficIntersectionControlMode.GetValueOnGameThread() != 2)
 	{
 		return;
 	}
+
+	const float GreenSeconds = FMath::Max(0.1f, CVarTrafficLightGreenSeconds.GetValueOnGameThread());
+	const float YellowSeconds = FMath::Max(0.f, CVarTrafficLightYellowSeconds.GetValueOnGameThread());
+	const float AllRedSeconds = FMath::Max(0.f, CVarTrafficLightAllRedSeconds.GetValueOnGameThread());
+	const bool bCoordination = (CVarTrafficLightCoordinationEnabled.GetValueOnGameThread() != 0);
 
 	for (const FTrafficIntersection& Intersection : Net.Intersections)
 	{
@@ -314,9 +488,21 @@ void ATrafficSystemController::InitializeIntersectionSignals(const FTrafficNetwo
 		}
 
 		State.bHasTwoPhases = true;
-		State.ActivePhaseIndex = 0;
-		State.Phase = ETrafficSignalPhase::Green;
-		State.PhaseEndTimeSeconds = NowSeconds + FMath::Max(0.1f, CVarTrafficLightGreenSeconds.GetValueOnGameThread());
+		if (bCoordination)
+		{
+			const float SpeedCmPerSec = FMath::Max(1.f, CVarTrafficLightCoordinationSpeedCmPerSec.GetValueOnGameThread());
+			const FVector2D Axis = ResolveCoordinationAxis2D(State);
+			const FVector2D Center2D(Intersection.Center.X, Intersection.Center.Y);
+			const float OffsetSeconds = FVector2D::DotProduct(Center2D, Axis) / SpeedCmPerSec;
+			State.CycleOffsetSeconds = OffsetSeconds;
+			InitSignalPhaseFromCycle(State, NowSeconds, GreenSeconds, YellowSeconds, AllRedSeconds, OffsetSeconds);
+		}
+		else
+		{
+			State.ActivePhaseIndex = 0;
+			State.Phase = ETrafficSignalPhase::Green;
+			State.PhaseEndTimeSeconds = NowSeconds + GreenSeconds;
+		}
 
 		IntersectionSignals.Add(State.IntersectionId, MoveTemp(State));
 	}
@@ -640,6 +826,12 @@ bool ATrafficSystemController::TryReserveIntersection(int32 IntersectionId, ATra
 		return false;
 	}
 
+	if (bTrafficLightsMode && BuiltNetworkAsset &&
+		ShouldYieldPermittedLeft(BuiltNetworkAsset->Network, IntersectionId, MovementId, Vehicle))
+	{
+		return false;
+	}
+
 	const FTrafficIntersection* Intersection = nullptr;
 	float KeepAliveRadiusCm = 0.f;
 	if (BuiltNetworkAsset)
@@ -649,11 +841,7 @@ bool ATrafficSystemController::TryReserveIntersection(int32 IntersectionId, ATra
 
 		if (Intersection)
 		{
-			float StopLineOffsetCm = 0.f;
-			if (IConsoleVariable* StopLineVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm")))
-			{
-				StopLineOffsetCm = FMath::Max(0.f, StopLineVar->GetFloat());
-			}
+			const float StopLineOffsetCm = GetEffectiveStopLineOffsetCm(nullptr);
 
 			// Avoid dropping a reservation while the vehicle is still physically near/within the intersection,
 			// even if the time-based hold expires (release should normally clear it).
@@ -750,6 +938,129 @@ bool ATrafficSystemController::TryReserveIntersection(int32 IntersectionId, ATra
 	NewRes.CreatedTimeSeconds = Now;
 	Reservations.Add(MoveTemp(NewRes));
 	return true;
+}
+
+bool ATrafficSystemController::ShouldYieldPermittedLeft(const FTrafficNetwork& Net, int32 IntersectionId, int32 MovementId, const ATrafficVehicleBase* Vehicle) const
+{
+	if (!Vehicle)
+	{
+		return false;
+	}
+
+	if (CVarTrafficLightPermittedLeftYield.GetValueOnGameThread() == 0)
+	{
+		return false;
+	}
+
+	const FTrafficMovement* Movement = TrafficRouting::FindMovementById(Net, MovementId);
+	if (!Movement || Movement->IntersectionId != IntersectionId || Movement->TurnType != ETrafficTurnType::Left)
+	{
+		return false;
+	}
+
+	const float ConflictDist = CVarTrafficIntersectionReservationConflictDistanceCm.GetValueOnGameThread();
+	TSet<int32> PriorityMovements;
+	TSet<int32> PriorityIncomingLaneIds;
+
+	for (const FTrafficMovement& Other : Net.Movements)
+	{
+		if (Other.IntersectionId != IntersectionId || Other.MovementId == MovementId)
+		{
+			continue;
+		}
+
+		if (!IsPriorityTurnType(Other.TurnType))
+		{
+			continue;
+		}
+
+		if (DoMovementsConflict2D(Net, IntersectionId, MovementId, Other.MovementId, ConflictDist))
+		{
+			PriorityMovements.Add(Other.MovementId);
+			PriorityIncomingLaneIds.Add(Other.IncomingLaneId);
+		}
+	}
+
+	if (PriorityMovements.Num() == 0)
+	{
+		return false;
+	}
+
+	if (const TArray<FIntersectionReservation>* Reservations = IntersectionReservations.Find(IntersectionId))
+	{
+		for (const FIntersectionReservation& Existing : *Reservations)
+		{
+			if (PriorityMovements.Contains(Existing.MovementId))
+			{
+				return true;
+			}
+		}
+	}
+
+	const float ApproachDistance = FMath::Max(0.f, CVarTrafficLightPermittedLeftApproachDistanceCm.GetValueOnGameThread());
+	if (ApproachDistance <= 0.f)
+	{
+		return false;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	for (TActorIterator<ATrafficVehicleBase> It(World); It; ++It)
+	{
+		ATrafficVehicleBase* OtherVehicle = *It;
+		if (!OtherVehicle || OtherVehicle == Vehicle)
+		{
+			continue;
+		}
+
+		EPathFollowTargetType OtherType = EPathFollowTargetType::None;
+		int32 OtherTargetId = INDEX_NONE;
+		float OtherS = 0.f;
+		if (!OtherVehicle->GetFollowTarget(OtherType, OtherTargetId, OtherS))
+		{
+			continue;
+		}
+
+		if (OtherType == EPathFollowTargetType::Movement)
+		{
+			if (PriorityMovements.Contains(OtherTargetId))
+			{
+				return true;
+			}
+			continue;
+		}
+
+		if (OtherType != EPathFollowTargetType::Lane || !PriorityIncomingLaneIds.Contains(OtherTargetId))
+		{
+			continue;
+		}
+
+		const FTrafficLane* Lane = TrafficRouting::FindLaneById(Net, OtherTargetId);
+		if (!Lane)
+		{
+			continue;
+		}
+
+		const float LaneLen = TrafficLaneGeometry::ComputeLaneLengthCm(*Lane);
+		if (LaneLen <= KINDA_SMALL_NUMBER)
+		{
+			continue;
+		}
+
+		const float StopLineOffset = GetEffectiveStopLineOffsetCm(Lane);
+		const float StopS = FMath::Max(0.f, LaneLen - StopLineOffset);
+		const float DistToStop = StopS - OtherS;
+		if (DistToStop <= ApproachDistance)
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 void ATrafficSystemController::ReleaseIntersection(int32 IntersectionId, ATrafficVehicleBase* Vehicle)
