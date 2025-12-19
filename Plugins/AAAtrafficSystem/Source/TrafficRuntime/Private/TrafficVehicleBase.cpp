@@ -228,6 +228,7 @@ ATrafficVehicleBase::ATrafficVehicleBase()
 
 	Body = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Body"));
 	SetRootComponent(Body);
+	Body->SetMobility(EComponentMobility::Movable);
 	// This actor represents the traffic "logic" vehicle and should not physically interact with Chaos vehicles/world.
 	Body->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	Body->SetGenerateOverlapEvents(false);

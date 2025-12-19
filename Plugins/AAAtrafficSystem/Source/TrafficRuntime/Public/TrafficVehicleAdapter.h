@@ -71,6 +71,7 @@ private:
 	bool bChaosDriveEverGrounded = false;
 	float ChaosDriveLastGroundDiagAgeSeconds = -1000.f;
 	float ChaosDriveLastHoldDiagAgeSeconds = -1000.f;
+	float ChaosDriveLastDriveDiagAgeSeconds = -1000.f;
 	bool bChaosDriveLoggedGroundMismatch = false;
 	bool bChaosDriveAwaitingRoadCollision = false;
 	bool bChaosDriveWasHiddenForRoadCollision = false;

@@ -104,7 +104,7 @@ static TAutoConsoleVariable<float> CVarTrafficChaosDriveRequireGroundedMaxSecond
 static TAutoConsoleVariable<float> CVarTrafficChaosDriveGroundedMaxGapCm(
 	TEXT("aaa.Traffic.Visual.ChaosDrive.GroundedMaxGapCm"),
 	75.0f,
-	TEXT("Max vertical gap (cm) between pawn bounds bottom and the ECC_WorldDynamic hit point to consider the pawn grounded.\n")
+	TEXT("Max vertical gap (cm) between pawn bounds bottom and the wheel trace hit point to consider the pawn grounded.\n")
 	TEXT("Default: 75"),
 	ECVF_Default);
 
@@ -263,6 +263,17 @@ static bool SetWheelTraceCollisionChannel(UMovementComponent* Move, ECollisionCh
 	}
 
 	return false;
+}
+
+static bool SupportsWheelTraceChannelProperty(UMovementComponent* Move)
+{
+	if (!Move)
+	{
+		return false;
+	}
+
+	static const FName WheelTraceChannelPropName(TEXT("WheelTraceCollisionChannel"));
+	return (Move->GetClass()->FindPropertyByName(WheelTraceChannelPropName) != nullptr);
 }
 
 static void AppendUniqueChannel(TArray<ECollisionChannel>& InOut, ECollisionChannel Channel)
@@ -660,6 +671,15 @@ static FString ListMovementComponents(APawn* Pawn)
 		}
 	}
 
+	static bool FindBestGroundHitNearExpectedZ(
+		UWorld& World,
+		const FVector& ExpectedPos,
+		const FVector& Start,
+		const FVector& End,
+		ECollisionChannel Channel,
+		const FCollisionQueryParams& Params,
+		FHitResult& OutHit);
+
 	static bool TraceDownFromPawnBounds(
 		UWorld& World,
 		const APawn& Pawn,
@@ -680,7 +700,8 @@ static FString ListMovementComponents(APawn* Pawn)
 		Params.bReturnPhysicalMaterial = false;
 		Params.AddIgnoredActor(&Pawn);
 
-		return World.LineTraceSingleByChannel(OutHit, Start, End, Channel, Params);
+		// Prefer the hit closest to the pawn (and ignore overhead collisions) to keep wheel grounding stable.
+		return FindBestGroundHitNearExpectedZ(World, Center, Start, End, Channel, Params, OutHit);
 	}
 
 	static bool FindBestGroundHitNearExpectedZ(
@@ -760,7 +781,21 @@ static bool IsGroundedByWheelTraceChannel(
 		}
 
 		const FBox Bounds = Pawn.GetComponentsBoundingBox(true);
-		const float Gap = Bounds.IsValid ? (Bounds.Min.Z - Hit.ImpactPoint.Z) : TNumericLimits<float>::Max();
+		float Gap = TNumericLimits<float>::Max();
+		if (Bounds.IsValid)
+		{
+			Gap = Bounds.Min.Z - Hit.ImpactPoint.Z;
+			const float MaxGap = FMath::Max(0.f, MaxGapCm);
+			// Bounds can be unreliable while meshes stream; fall back to actor Z if the bounds-based gap is implausible.
+			if (MaxGap > 0.f && FMath::Abs(Gap) > MaxGap * 4.0f)
+			{
+				Gap = Pawn.GetActorLocation().Z - Hit.ImpactPoint.Z;
+			}
+		}
+		else
+		{
+			Gap = Pawn.GetActorLocation().Z - Hit.ImpactPoint.Z;
+		}
 		OutGapCm = Gap;
 		if (OutHit)
 		{
@@ -872,6 +907,8 @@ static bool IsGroundedByWheelTraceChannel(
 		// Best-effort: enable auto gears when supported.
 		CallSingleParam(Move, FName(TEXT("SetUseAutoGears")), 0.f, true);
 		CallSingleParam(Move, FName(TEXT("SetUseAutomaticGears")), 0.f, true);
+		// ChaosVehicleMovementComponent ignores inputs without a controller by default; override for traffic AI.
+		CallSingleParam(Move, FName(TEXT("SetRequiresControllerForInputs")), 0.f, false);
 	}
 
 	static bool HasAnySimulatingPrimitive(APawn& Pawn)
@@ -1207,6 +1244,7 @@ void ATrafficVehicleAdapter::Initialize(ATrafficVehicleBase* InLogic, APawn* InC
 	bChaosDriveEverGrounded = false;
 	ChaosDriveLastGroundDiagAgeSeconds = -1000.f;
 	ChaosDriveLastHoldDiagAgeSeconds = -1000.f;
+	ChaosDriveLastDriveDiagAgeSeconds = -1000.f;
 	bChaosDriveLoggedGroundMismatch = false;
 	bChaosDriveAwaitingRoadCollision = false;
 	bChaosDriveWasHiddenForRoadCollision = false;
@@ -1488,6 +1526,7 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 			UMovementComponent* Move = FindChaosMovementComponent(ChaosVehicle.Get());
 			ECollisionChannel WheelTraceChannel =
 				bChaosDriveHasResolvedWheelTraceChannel ? ChaosDriveResolvedWheelTraceChannel : ResolveChaosWheelTraceChannel(Move);
+			const ECollisionChannel ChaosWheelChannel = WheelTraceChannel; // Match the vehicle's wheel trace channel.
 
 			const float MaxHoldSeconds = FMath::Max(0.f, CVarTrafficChaosDriveHoldUntilRoadCollisionMaxSeconds.GetValueOnGameThread());
 			const float MinStableSeconds = FMath::Max(0.f, CVarTrafficChaosDriveHoldUntilRoadCollisionMinStableSeconds.GetValueOnGameThread());
@@ -1505,9 +1544,30 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 			Params.AddIgnoredActor(ChaosVehicle.Get());
 
 			FHitResult GroundHit;
+			bool bHasGroundDynamic = false;
 			// Do NOT take the first hit from 50kcm above: overhead collisions (trees, signs, bridges) would be selected first
 			// and cause vehicles to be snapped up into the air. Choose the hit closest to the expected lane Z instead.
-			bool bHasGround = FindBestGroundHitNearExpectedZ(*GetWorld(), LogicPos, Start, End, WheelTraceChannel, Params, GroundHit);
+			bool bHasGround = FindBestGroundHitNearExpectedZ(*GetWorld(), LogicPos, Start, End, ChaosWheelChannel, Params, GroundHit);
+			bHasGroundDynamic = bHasGround;
+
+			FHitResult StaticGroundHit;
+			bool bHasGroundStatic = false;
+			if (!bHasGround)
+			{
+				bHasGroundStatic = FindBestGroundHitNearExpectedZ(*GetWorld(), LogicPos, Start, End, ECC_WorldStatic, Params, StaticGroundHit);
+				if (bHasGroundStatic)
+				{
+					if (UPrimitiveComponent* HitComp = StaticGroundHit.GetComponent())
+					{
+						if (HitComp->GetCollisionResponseToChannel(ECC_WorldDynamic) != ECR_Block)
+						{
+							HitComp->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
+						}
+					}
+					GroundHit = StaticGroundHit;
+					bHasGround = true;
+				}
+			}
 
 			// If the vehicle's suspension traces are not detecting ground yet, keep holding. This is the root cause behind
 			// "car flies/spins even though there's a road under it": wheels never get a stable ground hit, so Chaos goes unstable.
@@ -1515,10 +1575,11 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 			const float WheelTraceDepthCm = FMath::Max(0.f, CVarTrafficChaosDriveGroundedTraceDepthCm.GetValueOnGameThread());
 			float WheelGapCm = 0.f;
 			FHitResult WheelHit;
-			bool bWheelGrounded = IsGroundedByWheelTraceChannel(*GetWorld(), *ChaosVehicle.Get(), WheelTraceChannel, MaxGapCm, WheelTraceDepthCm, WheelGapCm, &WheelHit);
+			bool bWheelGrounded = IsGroundedByWheelTraceChannel(*GetWorld(), *ChaosVehicle.Get(), ChaosWheelChannel, MaxGapCm, WheelTraceDepthCm, WheelGapCm, &WheelHit);
 
 			// Auto-detect wheel trace channel when current configuration can't find ground under the lane.
-			if (CVarTrafficChaosDriveAutoDetectWheelTraceChannel.GetValueOnGameThread() != 0 &&
+			if (SupportsWheelTraceChannelProperty(Move) &&
+				CVarTrafficChaosDriveAutoDetectWheelTraceChannel.GetValueOnGameThread() != 0 &&
 				(!bHasGround || !bWheelGrounded) &&
 				Move &&
 				(Age - ChaosDriveLastWheelTraceAutoDetectAgeSeconds) >= 0.5f)
@@ -1612,10 +1673,10 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 
 			const float LogicGroundGap = bHasGround ? FMath::Abs(LogicPos.Z - GroundHit.ImpactPoint.Z) : TNumericLimits<float>::Max();
 			const bool bLogicGrounded = bHasGround && (LogicGroundGap <= LogicGroundMaxGapCm);
-			const bool bHoldGrounded = bWheelGrounded || (!bBoundsReliable && bLogicGrounded);
-			if (!bBoundsReliable && bLogicGrounded)
+			const bool bHoldGrounded = bWheelGrounded || (bLogicGrounded && bHasGroundDynamic);
+			if (bLogicGrounded)
 			{
-				// If bounds are unreliable but logic lane is close to the ground hit, don't require a snap to release.
+				// If the lane target is close to the ground hit, allow release even if wheel traces are still unreliable.
 				bNeedsSnap = false;
 			}
 			const bool bHoldStableCandidate = bHasGround && bHoldGrounded && !bNeedsSnap;
@@ -1638,8 +1699,8 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 					TEXT("[TrafficVehicleAdapter] Sample[%d] HoldCheck age=%.2fs enabled=1 wheelCh=%d(%s) hasGround=%d wheelGrounded=%d wheelGap=%.1f needsSnap=%d boundsValid=%d boundsReliable=%d logicGap=%.1f stable=%.2fs pawnZ=%.1f logicZ=%.1f groundZ=%.1f traceZ=[%.1f..%.1f]"),
 					DebugIndex,
 					Age,
-					static_cast<int32>(WheelTraceChannel),
-					CollisionChannelName(WheelTraceChannel),
+					static_cast<int32>(ChaosWheelChannel),
+					CollisionChannelName(ChaosWheelChannel),
 					bHasGround ? 1 : 0,
 					bWheelGrounded ? 1 : 0,
 					WheelGapCm,
@@ -2035,6 +2096,31 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 			}
 			return;
 		}
+		if (!Move->IsActive() || !Move->IsComponentTickEnabled())
+		{
+			Move->SetAutoActivate(true);
+			Move->Activate(true);
+			Move->SetComponentTickEnabled(true);
+			Move->SetActive(true, true);
+			EnsureChaosDriveTransmissionReady(Move);
+		}
+		if (UPrimitiveComponent* UpdatedPrim = Cast<UPrimitiveComponent>(Move->UpdatedComponent))
+		{
+			if (!UpdatedPrim->IsSimulatingPhysics())
+			{
+				if (UPrimitiveComponent* SimPrim = FindSimulatingPhysicsPrimitive(*ChaosVehicle.Get()))
+				{
+					Move->SetUpdatedComponent(SimPrim);
+				}
+			}
+		}
+		else
+		{
+			if (UPrimitiveComponent* SimPrim = FindSimulatingPhysicsPrimitive(*ChaosVehicle.Get()))
+			{
+				Move->SetUpdatedComponent(SimPrim);
+			}
+		}
 
 		// Spawn spin damping should apply even while we're holding full brake at startup.
 		{
@@ -2114,55 +2200,110 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 			return;
 		}
 
+		bool bDriveGroundedForLog = true;
+		bool bWheelGroundedForLog = true;
+		bool bLogicGroundedForLog = false;
+		float DebugWheelGapCm = TNumericLimits<float>::Max();
+		float DebugLogicGapCm = TNumericLimits<float>::Max();
+		float DebugMaxWaitSeconds = 0.f;
+
 		// Require ground contact (by the wheel/suspension trace channel) before attempting to drive.
 		if (CVarTrafficChaosDriveRequireGroundedToDrive.GetValueOnGameThread() != 0 && GetWorld())
 		{
 			const float MaxWaitSeconds = FMath::Max(0.f, CVarTrafficChaosDriveRequireGroundedMaxSeconds.GetValueOnGameThread());
 			const float MaxGapCm = FMath::Max(0.f, CVarTrafficChaosDriveGroundedMaxGapCm.GetValueOnGameThread());
 			const float TraceDepthCm = FMath::Max(0.f, CVarTrafficChaosDriveGroundedTraceDepthCm.GetValueOnGameThread());
+			const float LogicGroundMaxGapCm = FMath::Max(0.f, CVarTrafficChaosDriveHoldLogicGroundMaxGapCm.GetValueOnGameThread());
 
 			const ECollisionChannel WheelTraceChannel =
 				bChaosDriveHasResolvedWheelTraceChannel ? ChaosDriveResolvedWheelTraceChannel : ResolveChaosWheelTraceChannel(Move);
+			const ECollisionChannel ChaosWheelChannel = WheelTraceChannel; // Match the vehicle's wheel trace channel.
 
 			float GapCm = 0.f;
 			FHitResult DynHit;
-			const bool bGrounded = IsGroundedByWheelTraceChannel(*GetWorld(), *ChaosVehicle.Get(), WheelTraceChannel, MaxGapCm, TraceDepthCm, GapCm, &DynHit);
-			bChaosDriveEverGrounded = bChaosDriveEverGrounded || bGrounded;
+			const bool bGrounded = IsGroundedByWheelTraceChannel(*GetWorld(), *ChaosVehicle.Get(), ChaosWheelChannel, MaxGapCm, TraceDepthCm, GapCm, &DynHit);
+
+			FHitResult LogicHit;
+			bool bLogicGrounded = false;
+			float LogicGap = TNumericLimits<float>::Max();
+			if (!bGrounded || bSample)
+			{
+				const FVector LogicPos = LogicVehicle.IsValid() ? LogicVehicle->GetActorLocation() : ChaosVehicle->GetActorLocation();
+				const FVector Start = LogicPos + FVector(0.f, 0.f, 50000.f);
+				const FVector End = LogicPos - FVector(0.f, 0.f, 100000.f);
+				FCollisionQueryParams Params(SCENE_QUERY_STAT(AAA_Traffic_LogicGroundTrace), /*bTraceComplex=*/false);
+				Params.bReturnPhysicalMaterial = false;
+				Params.AddIgnoredActor(ChaosVehicle.Get());
+				const bool bLogicHasGround = FindBestGroundHitNearExpectedZ(*GetWorld(), LogicPos, Start, End, WheelTraceChannel, Params, LogicHit);
+				LogicGap = bLogicHasGround ? FMath::Abs(LogicPos.Z - LogicHit.ImpactPoint.Z) : TNumericLimits<float>::Max();
+				bLogicGrounded = bLogicHasGround && (LogicGap <= LogicGroundMaxGapCm);
+			}
+
+			const bool bDriveGrounded = bGrounded || (bLogicGrounded && DynHit.bBlockingHit);
+			bChaosDriveEverGrounded = bChaosDriveEverGrounded || bDriveGrounded;
+			bDriveGroundedForLog = bDriveGrounded;
+			bWheelGroundedForLog = bGrounded;
+			bLogicGroundedForLog = bLogicGrounded;
+			DebugWheelGapCm = GapCm;
+			DebugLogicGapCm = LogicGap;
+			DebugMaxWaitSeconds = MaxWaitSeconds;
+
+			FHitResult StaticHit;
+			bool bStaticHit = false;
+			if (!bGrounded || bSample)
+			{
+				bStaticHit = TraceDownFromPawnBounds(*GetWorld(), *ChaosVehicle.Get(), ECC_WorldStatic, TraceDepthCm, StaticHit);
+				if (!bGrounded && bStaticHit)
+				{
+					if (UPrimitiveComponent* HitComp = StaticHit.GetComponent())
+					{
+						if (HitComp->GetCollisionResponseToChannel(ECC_WorldDynamic) != ECR_Block)
+						{
+							HitComp->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
+						}
+					}
+				}
+			}
 
 			// Limited, always-on diagnostics for the first few sample vehicles.
 			if (bSample && (Age - ChaosDriveLastGroundDiagAgeSeconds) >= 0.5f)
 			{
 				ChaosDriveLastGroundDiagAgeSeconds = Age;
 
-				FHitResult StaticHit;
 				const bool bDynHit = DynHit.bBlockingHit;
-				const bool bStaticHit = TraceDownFromPawnBounds(*GetWorld(), *ChaosVehicle.Get(), ECC_WorldStatic, TraceDepthCm, StaticHit);
 
-				if (!bDynHit && bStaticHit && !bChaosDriveLoggedGroundMismatch)
+				if (!bDynHit && bStaticHit)
 				{
-					bChaosDriveLoggedGroundMismatch = true;
-
-					const UPrimitiveComponent* HitComp = StaticHit.GetComponent();
+					UPrimitiveComponent* HitComp = StaticHit.GetComponent();
 					const ECollisionResponse RespToDyn = HitComp ? HitComp->GetCollisionResponseToChannel(ECC_WorldDynamic) : ECR_MAX;
-					const int32 ObjType = HitComp ? static_cast<int32>(HitComp->GetCollisionObjectType()) : -1;
-					UE_LOG(LogTraffic, Warning,
-						TEXT("[TrafficVehicleAdapter] Sample[%d] GroundTrace mismatch: ECC_WorldDynamic MISS but ECC_WorldStatic HIT (%s.%s objType=%d respToWorldDynamic=%d). Wheels may never see the road."),
-						DebugIndex,
-						StaticHit.GetActor() ? *StaticHit.GetActor()->GetName() : TEXT("<none>"),
-						HitComp ? *HitComp->GetName() : TEXT("<none>"),
-						ObjType,
-						static_cast<int32>(RespToDyn));
+					if (HitComp && RespToDyn != ECR_Block)
+					{
+						HitComp->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
+					}
+
+					if (!bChaosDriveLoggedGroundMismatch)
+					{
+						bChaosDriveLoggedGroundMismatch = true;
+						const int32 ObjType = HitComp ? static_cast<int32>(HitComp->GetCollisionObjectType()) : -1;
+						UE_LOG(LogTraffic, Warning,
+							TEXT("[TrafficVehicleAdapter] Sample[%d] GroundTrace mismatch: ECC_WorldDynamic MISS but ECC_WorldStatic HIT (%s.%s objType=%d respToWorldDynamic=%d). Wheels may never see the road."),
+							DebugIndex,
+							StaticHit.GetActor() ? *StaticHit.GetActor()->GetName() : TEXT("<none>"),
+							HitComp ? *HitComp->GetName() : TEXT("<none>"),
+							ObjType,
+							static_cast<int32>(RespToDyn));
+					}
 				}
 
 				const FVector PawnPos = ChaosVehicle->GetActorLocation();
 				const float DynZ = bDynHit ? DynHit.ImpactPoint.Z : TNumericLimits<float>::Max();
 				const float StaticZ = bStaticHit ? StaticHit.ImpactPoint.Z : TNumericLimits<float>::Max();
 				UE_LOG(LogTraffic, Log,
-					TEXT("[TrafficVehicleAdapter] Sample[%d] GroundCheck age=%.2fs wheelCh=%d(%s) grounded=%d gap=%.1fcm dynHit=%d staticHit=%d pawnZ=%.1f dynZ=%.1f staticZ=%.1f upZ=%.2f speed=%.1f"),
+					TEXT("[TrafficVehicleAdapter] Sample[%d] GroundCheck age=%.2fs wheelCh=%d(%s) grounded=%d gap=%.1fcm dynHit=%d staticHit=%d pawnZ=%.1f dynZ=%.1f staticZ=%.1f logicGap=%.1f upZ=%.2f speed=%.1f"),
 					DebugIndex,
 					Age,
-					static_cast<int32>(WheelTraceChannel),
-					CollisionChannelName(WheelTraceChannel),
+					static_cast<int32>(ChaosWheelChannel),
+					CollisionChannelName(ChaosWheelChannel),
 					bGrounded ? 1 : 0,
 					GapCm,
 					bDynHit ? 1 : 0,
@@ -2170,13 +2311,21 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 					PawnPos.Z,
 					DynZ,
 					StaticZ,
+					LogicGap,
 					ChaosVehicle->GetActorUpVector().Z,
 					ChaosVehicle->GetVelocity().Size());
 			}
 
 			// During the early spawn window, do not drive until grounded.
-			if (!bGrounded && (Age <= MaxWaitSeconds))
+			if (!bDriveGrounded && (Age <= MaxWaitSeconds))
 			{
+				if (bSample && bLogicGrounded && !bGrounded)
+				{
+					UE_LOG(LogTraffic, Log,
+						TEXT("[TrafficVehicleAdapter] Sample[%d] Using logic-grounded fallback for drive (logicGap=%.1fcm)."),
+						DebugIndex,
+						LogicGap);
+				}
 				ApplyInitialBraking(Move);
 				CallSingleParam(Move, FName(TEXT("SetHandbrakeInput")), 0.f, false);
 				return;
@@ -2340,6 +2489,43 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 				bSteerOk ? 1 : 0,
 				bThrottleOk ? 1 : 0,
 				bBrakeOk ? 1 : 0);
+		}
+
+		if (bSample && CVarTrafficChaosDriveDebug.GetValueOnGameThread() != 0 &&
+			(Age - ChaosDriveLastDriveDiagAgeSeconds) >= 0.5f)
+		{
+			ChaosDriveLastDriveDiagAgeSeconds = Age;
+			const bool bHasSimPrim = HasAnySimulatingPrimitive(*ChaosVehicle.Get());
+			const bool bMoveActive = Move ? Move->IsActive() : false;
+			const bool bMoveTick = Move ? Move->IsComponentTickEnabled() : false;
+			const UPrimitiveComponent* MoveUpdatedPrim = Move ? Cast<UPrimitiveComponent>(Move->UpdatedComponent) : nullptr;
+			const bool bMoveUpdatedSim = MoveUpdatedPrim ? MoveUpdatedPrim->IsSimulatingPhysics() : false;
+			UE_LOG(LogTraffic, Log,
+				TEXT("[TrafficVehicleAdapter] Sample[%d] DriveInputs age=%.2fs desired=%.1f eff=%.1f cur=%.1f yaw=%.1f turn=%.2f driveScale=%.2f steer=%.2f throttle=%.2f brake=%.2f grounded=%d/%d/%d gap=%.1f logicGap=%.1f wait=%.1f inputOk=%d/%d/%d sim=%d move=%d/%d updSim=%d"),
+				DebugIndex,
+				Age,
+				DesiredSpeed,
+				EffectiveDesiredSpeed,
+				CurrentSpeed,
+				YawAbsDeg,
+				TurnScale,
+				DriveScale,
+				Steering,
+				Throttle,
+				Brake,
+				bDriveGroundedForLog ? 1 : 0,
+				bWheelGroundedForLog ? 1 : 0,
+				bLogicGroundedForLog ? 1 : 0,
+				DebugWheelGapCm,
+				DebugLogicGapCm,
+				DebugMaxWaitSeconds,
+				bSteerOk ? 1 : 0,
+				bThrottleOk ? 1 : 0,
+				bBrakeOk ? 1 : 0,
+				bHasSimPrim ? 1 : 0,
+				bMoveActive ? 1 : 0,
+				bMoveTick ? 1 : 0,
+				bMoveUpdatedSim ? 1 : 0);
 		}
 		return;
 	}
