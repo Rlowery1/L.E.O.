@@ -37,7 +37,7 @@ static TAutoConsoleVariable<float> CVarTrafficIntersectionStopLineOffsetCm(
 
 static TAutoConsoleVariable<int32> CVarTrafficIntersectionStopLineOffsetAuto(
 	TEXT("aaa.Traffic.Intersections.StopLineOffsetAuto"),
-	0,
+	1,
 	TEXT("If non-zero, compute stop-line offset automatically from lane width (ignores StopLineOffsetCm)."),
 	ECVF_Default);
 
@@ -63,6 +63,12 @@ static TAutoConsoleVariable<float> CVarTrafficIntersectionStopLineOffsetAutoNomi
 	TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoNominalLaneWidthCm"),
 	350.f,
 	TEXT("Nominal lane width (cm) used for auto stop-line offset when lane width is unavailable. Default: 350"),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarTrafficIntersectionStopLineOffsetAutoBufferCm(
+	TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoBufferCm"),
+	50.f,
+	TEXT("Additional buffer (cm) applied behind the auto stop-line offset to account for crosswalks/paint. Default: 50"),
 	ECVF_Default);
 
 static TAutoConsoleVariable<int32> CVarTrafficIntersectionDebugReservation(
@@ -152,7 +158,7 @@ static bool ShouldSampleVehicleLogs(const ATrafficVehicleBase& Vehicle)
 	return (Count > 0) && (Vehicle.GetDebugSpawnIndex() >= 0) && (Vehicle.GetDebugSpawnIndex() < Count);
 }
 
-static float ComputeAutoStopLineOffsetCm(float LaneWidthCm)
+static float ComputeAutoStopLineOffsetCm_Vehicle(float LaneWidthCm)
 {
 	const float Width = (LaneWidthCm > KINDA_SMALL_NUMBER)
 		? LaneWidthCm
@@ -160,10 +166,11 @@ static float ComputeAutoStopLineOffsetCm(float LaneWidthCm)
 	const float Scale = FMath::Max(0.f, CVarTrafficIntersectionStopLineOffsetAutoWidthScale.GetValueOnGameThread());
 	const float MinCm = FMath::Max(0.f, CVarTrafficIntersectionStopLineOffsetAutoMinCm.GetValueOnGameThread());
 	const float MaxCm = FMath::Max(MinCm, CVarTrafficIntersectionStopLineOffsetAutoMaxCm.GetValueOnGameThread());
-	return FMath::Clamp(Width * Scale, MinCm, MaxCm);
+	const float BufferCm = FMath::Max(0.f, CVarTrafficIntersectionStopLineOffsetAutoBufferCm.GetValueOnGameThread());
+	return FMath::Clamp(Width * Scale, MinCm, MaxCm) + BufferCm;
 }
 
-static float GetEffectiveStopLineOffsetCm(const FTrafficLane* Lane)
+static float GetEffectiveStopLineOffsetCm_Vehicle(const FTrafficLane* Lane)
 {
 	const float Base = FMath::Max(0.f, CVarTrafficIntersectionStopLineOffsetCm.GetValueOnGameThread());
 	if (CVarTrafficIntersectionStopLineOffsetAuto.GetValueOnGameThread() == 0)
@@ -172,7 +179,56 @@ static float GetEffectiveStopLineOffsetCm(const FTrafficLane* Lane)
 	}
 
 	const float LaneWidth = Lane ? Lane->Width : 0.f;
-	return ComputeAutoStopLineOffsetCm(LaneWidth);
+	return ComputeAutoStopLineOffsetCm_Vehicle(LaneWidth);
+}
+
+static bool IntersectRayCircle2D_Vehicle(
+	const FVector& RayOrigin,
+	const FVector& RayDir,
+	const FVector& Center,
+	float Radius,
+	float& OutT)
+{
+	FVector2D O(RayOrigin.X, RayOrigin.Y);
+	FVector2D D(RayDir.X, RayDir.Y);
+	const float DirLenSq = D.SizeSquared();
+	if (DirLenSq <= KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+	D /= FMath::Sqrt(DirLenSq);
+
+	const FVector2D C(Center.X, Center.Y);
+	const FVector2D OC = O - C;
+	const float A = FVector2D::DotProduct(D, D);
+	const float B = 2.f * FVector2D::DotProduct(OC, D);
+	const float CCoef = FVector2D::DotProduct(OC, OC) - Radius * Radius;
+	const float Disc = (B * B) - (4.f * A * CCoef);
+	if (Disc < 0.f || A <= KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+
+	const float SqrtDisc = FMath::Sqrt(Disc);
+	const float T0 = (-B - SqrtDisc) / (2.f * A);
+	const float T1 = (-B + SqrtDisc) / (2.f * A);
+
+	float BestT = TNumericLimits<float>::Max();
+	if (T0 >= 0.f)
+	{
+		BestT = T0;
+	}
+	if (T1 >= 0.f)
+	{
+		BestT = FMath::Min(BestT, T1);
+	}
+	if (!FMath::IsFinite(BestT) || BestT == TNumericLimits<float>::Max())
+	{
+		return false;
+	}
+
+	OutT = BestT;
+	return true;
 }
 
 static bool TryComputeStopSFromIntersectionBoundary(
@@ -271,6 +327,42 @@ static bool TryComputeStopSFromIntersectionBoundary(
 		const float IntersectionS = CumulativeS[i] + T;
 		OutStopS = FMath::Max(0.f, IntersectionS - StopLineOffsetCm);
 		return true;
+	}
+
+	const int32 LastIndex = Lane.CenterlinePoints.Num() - 1;
+	if (LastIndex <= 0)
+	{
+		return false;
+	}
+
+	const FVector EndPoint = Lane.CenterlinePoints[LastIndex];
+	if (FVector::DistSquared2D(EndPoint, Center) > BoundaryRadiusSq)
+	{
+		const FVector PrevPoint = Lane.CenterlinePoints[LastIndex - 1];
+		FVector2D RayDir2D(EndPoint.X - PrevPoint.X, EndPoint.Y - PrevPoint.Y);
+		FVector2D ToCenter2D(Center.X - EndPoint.X, Center.Y - EndPoint.Y);
+
+		if (RayDir2D.SizeSquared() <= KINDA_SMALL_NUMBER)
+		{
+			RayDir2D = ToCenter2D;
+		}
+
+		if (RayDir2D.SizeSquared() > KINDA_SMALL_NUMBER && FVector2D::DotProduct(RayDir2D, ToCenter2D) < 0.f)
+		{
+			RayDir2D *= -1.f;
+		}
+
+		if (RayDir2D.SizeSquared() > KINDA_SMALL_NUMBER)
+		{
+			const FVector RayDir(RayDir2D.X, RayDir2D.Y, 0.f);
+			float RayT = 0.f;
+			if (IntersectRayCircle2D_Vehicle(EndPoint, RayDir, Center, BoundaryRadius, RayT))
+			{
+				const float IntersectionS = CumulativeS[LastIndex] + RayT;
+				OutStopS = FMath::Max(0.f, IntersectionS - StopLineOffsetCm);
+				return true;
+			}
+		}
 	}
 
 	return false;
@@ -552,7 +644,7 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 			if (Lane)
 			{
 				const float LaneLen = TrafficLaneGeometry::ComputeLaneLengthCm(*Lane);
-				const float StopLineOffset = GetEffectiveStopLineOffsetCm(Lane);
+				const float StopLineOffset = GetEffectiveStopLineOffsetCm_Vehicle(Lane);
 				const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
 
 				int32 StopLineIntersectionId = INDEX_NONE;
@@ -592,7 +684,10 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 
 				if (bUsedBoundaryStopS)
 				{
-					StopS = FMath::Max(StopS, LaneEndStopS);
+					// Prefer the stop line that is closer to the intersection (larger S) to avoid stopping too far back.
+					const float PreferredStopS = FMath::Max(StopS, LaneEndStopS);
+					StopS = PreferredStopS;
+					bUsedBoundaryStopS = (StopS > LaneEndStopS + KINDA_SMALL_NUMBER);
 				}
 
 				if (CVarTrafficIntersectionDebugStopLine.GetValueOnGameThread() != 0)
@@ -873,7 +968,7 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 					// Reservation-enabled: only enter the movement when we already reserved it.
 					if (bReservationEnabled)
 					{
-						const float StopLineOffset = GetEffectiveStopLineOffsetCm(Lane);
+						const float StopLineOffset = GetEffectiveStopLineOffsetCm_Vehicle(Lane);
 						if (bHasIntersectionReservation && ReservedMovementId != INDEX_NONE)
 						{
 							if (const FTrafficMovement* ReservedMove = TrafficRouting::FindMovementById(Net, ReservedMovementId))
@@ -918,9 +1013,14 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 								float BoundaryStopS = 0.f;
 								if (TryComputeStopSFromIntersectionBoundary(Net, *Lane, NextMovement->IntersectionId, StopLineOffset, BoundaryStopS))
 								{
-									StopS = FMath::Clamp(BoundaryStopS, 0.f, LaneLen);
+									const float ClampedBoundaryStopS = FMath::Clamp(BoundaryStopS, 0.f, LaneLen);
+									// Prefer the stop line that is closer to the intersection (larger S) to avoid stopping too far back.
+									StopS = FMath::Max(ClampedBoundaryStopS, LaneEndStopS);
 								}
-								StopS = FMath::Max(StopS, LaneEndStopS);
+								else
+								{
+									StopS = LaneEndStopS;
+								}
 
 								bWaitingForIntersection = true;
 								WaitingIntersectionId = NextMovement->IntersectionId;

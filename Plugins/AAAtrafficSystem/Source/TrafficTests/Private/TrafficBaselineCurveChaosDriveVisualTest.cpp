@@ -16,6 +16,7 @@
 namespace
 {
 	static const TCHAR* BaselineCurveMapPackage_ChaosDriveVisual = TEXT("/AAAtrafficSystem/Maps/Traffic_BaselineCurve");
+	static const float MaxChaosDriftCm = 200.0f;
 
 	static bool FindBestLaneProjection_ChaosDriveVisual(
 		const TArray<FTrafficLane>& Lanes,
@@ -102,6 +103,7 @@ namespace
 		float StartTime = 0.f;
 		float MaxAltitudeCm = 0.f;
 		float MinUpZ = 1.f;
+		float MaxLateralOffsetCm = 0.f;
 	};
 
 	DEFINE_LATENT_AUTOMATION_COMMAND_FOUR_PARAMETER(FWaitForPIEWorld_ChaosDriveVisual, TSharedRef<FChaosDriveVisualState>, State, FAutomationTestBase*, Test, double, TimeoutSeconds, double, StartTime);
@@ -209,6 +211,12 @@ namespace
 				State->MaxAltitudeCm = FMath::Max(State->MaxAltitudeCm, Alt);
 			}
 
+			FLaneProjectionResult Proj;
+			if (FindBestLaneProjection_ChaosDriveVisual(Lanes, Pawn->GetActorLocation(), Pawn->GetActorForwardVector(), Proj))
+			{
+				State->MaxLateralOffsetCm = FMath::Max(State->MaxLateralOffsetCm, FMath::Abs(Proj.LateralOffsetCm));
+			}
+
 			State->MinUpZ = FMath::Min(State->MinUpZ, Pawn->GetActorUpVector().Z);
 		}
 
@@ -268,6 +276,10 @@ namespace
 		if (State->MaxAltitudeCm > 400.f && Test)
 		{
 			Test->AddError(FString::Printf(TEXT("ChaosDrive pawn got too far above ground (max altitude %.1fcm)."), State->MaxAltitudeCm));
+		}
+		if (State->MaxLateralOffsetCm > MaxChaosDriftCm && Test)
+		{
+			Test->AddError(FString::Printf(TEXT("ChaosDrive pawn drifted %.1fcm off lane centerline."), State->MaxLateralOffsetCm));
 		}
 		if (State->MinUpZ < 0.2f && Test)
 		{

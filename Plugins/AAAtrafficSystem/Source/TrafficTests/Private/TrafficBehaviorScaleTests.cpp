@@ -4,6 +4,7 @@
 #include "Editor.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "TrafficChaosTestUtils.h"
 #include "TrafficSystemController.h"
 #include "TrafficVehicleAdapter.h"
 #include "TrafficVehicleBase.h"
@@ -31,6 +32,7 @@ namespace
 	static const float SpeedVarianceMinMultiplier = 0.9f;
 	static const float SpeedVarianceMaxMultiplier = 1.1f;
 	static const int32 SpeedVarianceSeed = 1337;
+	static const float MaxChaosPathErrorCm = 200.0f;
 
 	struct FTrafficVehicleSample
 	{
@@ -39,14 +41,14 @@ namespace
 		float Length = 0.f;
 	};
 
-	struct FTrafficSettingsSnapshot
+	struct FTrafficBehaviorSettingsSnapshot
 	{
 		int32 VehiclesPerLaneRuntime = 1;
 		float RuntimeSpeedCmPerSec = 800.f;
 		bool bGenerateZoneGraph = false;
 	};
 
-	static void SaveRuntimeSettings(FTrafficSettingsSnapshot& OutSnapshot)
+	static void SaveRuntimeSettings_Behavior(FTrafficBehaviorSettingsSnapshot& OutSnapshot)
 	{
 		if (UTrafficRuntimeSettings* Settings = GetMutableDefault<UTrafficRuntimeSettings>())
 		{
@@ -56,7 +58,7 @@ namespace
 		}
 	}
 
-	static void RestoreRuntimeSettings(const FTrafficSettingsSnapshot& Snapshot)
+	static void RestoreRuntimeSettings_Behavior(const FTrafficBehaviorSettingsSnapshot& Snapshot)
 	{
 		if (UTrafficRuntimeSettings* Settings = GetMutableDefault<UTrafficRuntimeSettings>())
 		{
@@ -70,18 +72,21 @@ namespace
 	{
 		TWeakObjectPtr<UWorld> PIEWorld;
 		bool bSavedSettings = false;
-		FTrafficSettingsSnapshot PrevSettings;
+		FTrafficBehaviorSettingsSnapshot PrevSettings;
 		int32 PrevVisualMode = 2;
 		int32 PrevFollowingEnabled = 1;
 
 		double StartTimeSeconds = 0.0;
 		float MinGapCm = TNumericLimits<float>::Max();
+		float MaxChaosPathErrorCm = 0.0f;
 		bool bObservedPair = false;
+		bool bChaosMissing = false;
+		bool bChaosProjectionFailed = false;
 		int32 LaneCount = 0;
 		int32 VehicleCount = 0;
 	};
 
-	static bool FindControllerAndNetwork(UWorld* World, ATrafficSystemController*& OutController, const FTrafficNetwork*& OutNet)
+	static bool FindControllerAndNetwork_Behavior(UWorld* World, ATrafficSystemController*& OutController, const FTrafficNetwork*& OutNet)
 	{
 		OutController = nullptr;
 		OutNet = nullptr;
@@ -107,8 +112,8 @@ namespace
 		return true;
 	}
 
-	DEFINE_LATENT_AUTOMATION_COMMAND_FOUR_PARAMETER(FTrafficWaitForPIEWorldCommand, TSharedRef<FTrafficFollowingState>, State, FAutomationTestBase*, Test, double, TimeoutSeconds, double, StartTime);
-	bool FTrafficWaitForPIEWorldCommand::Update()
+	DEFINE_LATENT_AUTOMATION_COMMAND_FOUR_PARAMETER(FTrafficBehaviorWaitForPIEWorldCommand, TSharedRef<FTrafficFollowingState>, State, FAutomationTestBase*, Test, double, TimeoutSeconds, double, StartTime);
+	bool FTrafficBehaviorWaitForPIEWorldCommand::Update()
 	{
 		if (GEditor && GEditor->PlayWorld)
 		{
@@ -145,7 +150,7 @@ namespace
 
 		ATrafficSystemController* Controller = nullptr;
 		const FTrafficNetwork* Net = nullptr;
-		if (!FindControllerAndNetwork(World, Controller, Net))
+		if (!FindControllerAndNetwork_Behavior(World, Controller, Net))
 		{
 			return false;
 		}
@@ -157,6 +162,9 @@ namespace
 
 		TMap<int32, TArray<FTrafficVehicleSample>> LaneVehicles; // LaneId -> [(S, Speed, Length)]
 		int32 VehicleCount = 0;
+		float LocalMaxChaosError = State->MaxChaosPathErrorCm;
+		bool bChaosMissing = State->bChaosMissing;
+		bool bChaosProjectionFailed = State->bChaosProjectionFailed;
 
 		for (TActorIterator<ATrafficVehicleAdapter> It(World); It; ++It)
 		{
@@ -180,6 +188,24 @@ namespace
 				continue;
 			}
 
+			if (!Adapter->ChaosVehicle.IsValid())
+			{
+				bChaosMissing = true;
+			}
+			else if (Net)
+			{
+				float ChaosS = 0.f;
+				float ChaosError = 0.f;
+				if (!TrafficChaosTestUtils::ProjectChaosOntoFollowTarget(*Net, *Adapter->ChaosVehicle.Get(), FollowType, FollowId, ChaosS, ChaosError))
+				{
+					bChaosProjectionFailed = true;
+				}
+				else
+				{
+					LocalMaxChaosError = FMath::Max(LocalMaxChaosError, ChaosError);
+				}
+			}
+
 			if (FollowType != EPathFollowTargetType::Lane)
 			{
 				continue;
@@ -197,6 +223,9 @@ namespace
 
 		State->VehicleCount = FMath::Max(State->VehicleCount, VehicleCount);
 		State->LaneCount = Net ? Net->Lanes.Num() : 0;
+		State->MaxChaosPathErrorCm = LocalMaxChaosError;
+		State->bChaosMissing = bChaosMissing;
+		State->bChaosProjectionFailed = bChaosProjectionFailed;
 
 		float LocalMinGap = State->MinGapCm;
 		const double Now = FPlatformTime::Seconds();
@@ -264,7 +293,7 @@ namespace
 	{
 		if (State->bSavedSettings)
 		{
-			RestoreRuntimeSettings(State->PrevSettings);
+			RestoreRuntimeSettings_Behavior(State->PrevSettings);
 
 			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.Mode")))
 			{
@@ -288,6 +317,21 @@ namespace
 			Test->AddError(TEXT("Following test did not observe any lane with multiple moving vehicles."));
 		}
 
+		if (State->bChaosMissing)
+		{
+			Test->AddError(TEXT("Following test detected logic vehicles without Chaos adapters."));
+		}
+
+		if (State->bChaosProjectionFailed)
+		{
+			Test->AddError(TEXT("Following test failed to project Chaos vehicles onto follow targets."));
+		}
+
+		if (State->MaxChaosPathErrorCm > MaxChaosPathErrorCm)
+		{
+			Test->AddError(FString::Printf(TEXT("Following Chaos path error too large (max=%.1fcm)."), State->MaxChaosPathErrorCm));
+		}
+
 		if (State->MinGapCm < 0.f)
 		{
 			Test->AddError(FString::Printf(TEXT("Following gap overlap detected (min gap %.1fcm)."), State->MinGapCm));
@@ -306,11 +350,14 @@ namespace
 	{
 		TWeakObjectPtr<UWorld> PIEWorld;
 		bool bSavedSettings = false;
-		FTrafficSettingsSnapshot PrevSettings;
+		FTrafficBehaviorSettingsSnapshot PrevSettings;
 		int32 PrevVisualMode = 2;
 		int32 ExpectedVehiclesPerLane = 2;
 		int32 LaneCount = 0;
 		int32 VehicleCount = 0;
+		float MaxChaosPathErrorCm = 0.0f;
+		bool bChaosMissing = false;
+		bool bChaosProjectionFailed = false;
 		double StartTimeSeconds = 0.0;
 	};
 
@@ -318,7 +365,7 @@ namespace
 	{
 		TWeakObjectPtr<UWorld> PIEWorld;
 		bool bSavedSettings = false;
-		FTrafficSettingsSnapshot PrevSettings;
+		FTrafficBehaviorSettingsSnapshot PrevSettings;
 		int32 PrevVisualMode = 2;
 		int32 PrevVarianceEnabled = 1;
 		float PrevVarianceMin = 0.85f;
@@ -329,8 +376,11 @@ namespace
 		double StartTimeSeconds = 0.0;
 		float MinSpeed = TNumericLimits<float>::Max();
 		float MaxSpeed = 0.f;
+		float MaxChaosPathErrorCm = 0.0f;
 		int32 SampledVehicles = 0;
 		bool bSampled = false;
+		bool bChaosMissing = false;
+		bool bChaosProjectionFailed = false;
 	};
 
 	DEFINE_LATENT_AUTOMATION_COMMAND_FOUR_PARAMETER(FTrafficScaleWaitForPIEWorldCommand, TSharedRef<FTrafficScaleState>, State, FAutomationTestBase*, Test, double, TimeoutSeconds, double, StartTime);
@@ -371,7 +421,7 @@ namespace
 
 		ATrafficSystemController* Controller = nullptr;
 		const FTrafficNetwork* Net = nullptr;
-		if (!FindControllerAndNetwork(World, Controller, Net))
+		if (!FindControllerAndNetwork_Behavior(World, Controller, Net))
 		{
 			return false;
 		}
@@ -382,17 +432,54 @@ namespace
 		}
 
 		int32 VehicleCount = 0;
+		float LocalMaxChaosError = State->MaxChaosPathErrorCm;
+		bool bChaosMissing = State->bChaosMissing;
+		bool bChaosProjectionFailed = State->bChaosProjectionFailed;
 		for (TActorIterator<ATrafficVehicleAdapter> It(World); It; ++It)
 		{
 			ATrafficVehicleAdapter* Adapter = *It;
-			if (Adapter && Adapter->LogicVehicle.IsValid())
+			if (!Adapter || !Adapter->LogicVehicle.IsValid())
 			{
-				++VehicleCount;
+				continue;
+			}
+
+			++VehicleCount;
+
+			ATrafficVehicleBase* Logic = Adapter->LogicVehicle.Get();
+			EPathFollowTargetType FollowType = EPathFollowTargetType::None;
+			int32 FollowId = INDEX_NONE;
+			float FollowS = 0.f;
+			if (!Logic || !Logic->GetFollowTarget(FollowType, FollowId, FollowS))
+			{
+				continue;
+			}
+
+			if (!Adapter->ChaosVehicle.IsValid())
+			{
+				bChaosMissing = true;
+				continue;
+			}
+
+			if (Net)
+			{
+				float ChaosS = 0.f;
+				float ChaosError = 0.f;
+				if (!TrafficChaosTestUtils::ProjectChaosOntoFollowTarget(*Net, *Adapter->ChaosVehicle.Get(), FollowType, FollowId, ChaosS, ChaosError))
+				{
+					bChaosProjectionFailed = true;
+				}
+				else
+				{
+					LocalMaxChaosError = FMath::Max(LocalMaxChaosError, ChaosError);
+				}
 			}
 		}
 
 		State->LaneCount = Net ? Net->Lanes.Num() : 0;
 		State->VehicleCount = VehicleCount;
+		State->MaxChaosPathErrorCm = LocalMaxChaosError;
+		State->bChaosMissing = bChaosMissing;
+		State->bChaosProjectionFailed = bChaosProjectionFailed;
 
 		const double Now = FPlatformTime::Seconds();
 		return (Now - State->StartTimeSeconds) >= ScaleSimSeconds;
@@ -403,7 +490,7 @@ namespace
 	{
 		if (State->bSavedSettings)
 		{
-			RestoreRuntimeSettings(State->PrevSettings);
+			RestoreRuntimeSettings_Behavior(State->PrevSettings);
 
 			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.Mode")))
 			{
@@ -422,6 +509,21 @@ namespace
 		{
 			Test->AddError(TEXT("Scale test did not detect any lanes."));
 			return true;
+		}
+
+		if (State->bChaosMissing)
+		{
+			Test->AddError(TEXT("Scale test detected logic vehicles without Chaos adapters."));
+		}
+
+		if (State->bChaosProjectionFailed)
+		{
+			Test->AddError(TEXT("Scale test failed to project Chaos vehicles onto follow targets."));
+		}
+
+		if (State->MaxChaosPathErrorCm > MaxChaosPathErrorCm)
+		{
+			Test->AddError(FString::Printf(TEXT("Scale test Chaos path error too large (max=%.1fcm)."), State->MaxChaosPathErrorCm));
 		}
 
 		const int32 ExpectedMinVehicles = FMath::Max(1, State->LaneCount * State->ExpectedVehiclesPerLane);
@@ -472,6 +574,13 @@ namespace
 			return false;
 		}
 
+		ATrafficSystemController* Controller = nullptr;
+		const FTrafficNetwork* Net = nullptr;
+		if (!FindControllerAndNetwork_Behavior(World, Controller, Net))
+		{
+			return false;
+		}
+
 		if (State->StartTimeSeconds <= 0.0)
 		{
 			State->StartTimeSeconds = FPlatformTime::Seconds();
@@ -486,6 +595,9 @@ namespace
 		float LocalMin = TNumericLimits<float>::Max();
 		float LocalMax = 0.f;
 		int32 VehicleCount = 0;
+		float LocalMaxChaosError = State->MaxChaosPathErrorCm;
+		bool bChaosMissing = State->bChaosMissing;
+		bool bChaosProjectionFailed = State->bChaosProjectionFailed;
 
 		for (TActorIterator<ATrafficVehicleBase> It(World); It; ++It)
 		{
@@ -501,6 +613,31 @@ namespace
 				continue;
 			}
 
+			ATrafficVehicleAdapter* Adapter = TrafficChaosTestUtils::FindAdapterForLogicVehicle(*World, *Vehicle);
+			if (!Adapter || !Adapter->ChaosVehicle.IsValid())
+			{
+				bChaosMissing = true;
+			}
+			else if (Net)
+			{
+				EPathFollowTargetType FollowType = EPathFollowTargetType::None;
+				int32 FollowId = INDEX_NONE;
+				float FollowS = 0.f;
+				if (Vehicle->GetFollowTarget(FollowType, FollowId, FollowS))
+				{
+					float ChaosS = 0.f;
+					float ChaosError = 0.f;
+					if (!TrafficChaosTestUtils::ProjectChaosOntoFollowTarget(*Net, *Adapter->ChaosVehicle.Get(), FollowType, FollowId, ChaosS, ChaosError))
+					{
+						bChaosProjectionFailed = true;
+					}
+					else
+					{
+						LocalMaxChaosError = FMath::Max(LocalMaxChaosError, ChaosError);
+					}
+				}
+			}
+
 			LocalMin = FMath::Min(LocalMin, Speed);
 			LocalMax = FMath::Max(LocalMax, Speed);
 			++VehicleCount;
@@ -514,6 +651,10 @@ namespace
 			State->bSampled = true;
 		}
 
+		State->MaxChaosPathErrorCm = LocalMaxChaosError;
+		State->bChaosMissing = bChaosMissing;
+		State->bChaosProjectionFailed = bChaosProjectionFailed;
+
 		return (Now - State->StartTimeSeconds) >= SpeedVarianceSimSeconds;
 	}
 
@@ -522,7 +663,7 @@ namespace
 	{
 		if (State->bSavedSettings)
 		{
-			RestoreRuntimeSettings(State->PrevSettings);
+			RestoreRuntimeSettings_Behavior(State->PrevSettings);
 
 			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.Mode")))
 			{
@@ -557,6 +698,21 @@ namespace
 		{
 			Test->AddError(TEXT("Speed variance test did not sample enough vehicles."));
 			return true;
+		}
+
+		if (State->bChaosMissing)
+		{
+			Test->AddError(TEXT("Speed variance test detected logic vehicles without Chaos adapters."));
+		}
+
+		if (State->bChaosProjectionFailed)
+		{
+			Test->AddError(TEXT("Speed variance test failed to project Chaos vehicles onto follow targets."));
+		}
+
+		if (State->MaxChaosPathErrorCm > MaxChaosPathErrorCm)
+		{
+			Test->AddError(FString::Printf(TEXT("Speed variance Chaos path error too large (max=%.1fcm)."), State->MaxChaosPathErrorCm));
 		}
 
 		const float ExpectedMin = State->BaseSpeedCmPerSec * SpeedVarianceMinMultiplier;
@@ -603,7 +759,7 @@ bool FTrafficFollowingBaselineTest::RunTest(const FString& Parameters)
 
 	TSharedRef<FTrafficFollowingState> State = MakeShared<FTrafficFollowingState>();
 	State->bSavedSettings = true;
-	SaveRuntimeSettings(State->PrevSettings);
+	SaveRuntimeSettings_Behavior(State->PrevSettings);
 
 	if (UTrafficRuntimeSettings* Settings = GetMutableDefault<UTrafficRuntimeSettings>())
 	{
@@ -626,7 +782,7 @@ bool FTrafficFollowingBaselineTest::RunTest(const FString& Parameters)
 	AddExpectedError(TEXT("The Editor is currently in a play mode."), EAutomationExpectedErrorFlags::Contains, 6);
 
 	ADD_LATENT_AUTOMATION_COMMAND(FStartPIECommand(false));
-	ADD_LATENT_AUTOMATION_COMMAND(FTrafficWaitForPIEWorldCommand(State, this, 15.0, FPlatformTime::Seconds()));
+	ADD_LATENT_AUTOMATION_COMMAND(FTrafficBehaviorWaitForPIEWorldCommand(State, this, 15.0, FPlatformTime::Seconds()));
 	ADD_LATENT_AUTOMATION_COMMAND(FTrafficFollowingSampleCommand(State, this));
 	ADD_LATENT_AUTOMATION_COMMAND(FTrafficFollowingEndCommand(State, this));
 
@@ -652,7 +808,7 @@ bool FTrafficScaleBaselineTest::RunTest(const FString& Parameters)
 
 	TSharedRef<FTrafficScaleState> State = MakeShared<FTrafficScaleState>();
 	State->bSavedSettings = true;
-	SaveRuntimeSettings(State->PrevSettings);
+	SaveRuntimeSettings_Behavior(State->PrevSettings);
 
 	if (UTrafficRuntimeSettings* Settings = GetMutableDefault<UTrafficRuntimeSettings>())
 	{
@@ -696,7 +852,7 @@ bool FTrafficSpeedVarianceBaselineTest::RunTest(const FString& Parameters)
 
 	TSharedRef<FTrafficSpeedVarianceState> State = MakeShared<FTrafficSpeedVarianceState>();
 	State->bSavedSettings = true;
-	SaveRuntimeSettings(State->PrevSettings);
+	SaveRuntimeSettings_Behavior(State->PrevSettings);
 
 	if (UTrafficRuntimeSettings* Settings = GetMutableDefault<UTrafficRuntimeSettings>())
 	{

@@ -56,3 +56,12 @@ const FRoadFamilyDefinition* UTrafficRoadFamilySettings::FindFamilyByName(FName 
 			return Def.FamilyName == FamilyName;
 		});
 }
+
+FRoadFamilyDefinition* UTrafficRoadFamilySettings::FindFamilyByNameMutable(FName FamilyName)
+{
+	return Families.FindByPredicate(
+		[FamilyName](const FRoadFamilyDefinition& Def)
+		{
+			return Def.FamilyName == FamilyName;
+		});
+}

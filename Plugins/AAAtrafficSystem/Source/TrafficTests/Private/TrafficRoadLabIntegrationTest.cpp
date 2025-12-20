@@ -25,11 +25,13 @@
 #include "TrafficNetworkAsset.h"
 #include "GameFramework/PlayerStart.h"
 #include "EngineUtils.h"
+#include "TrafficChaosTestUtils.h"
 #include "TrafficLaneCalibration.h"
 #include "RoadFamilyRegistry.h"
 #include "TrafficVehicleBase.h"
 #include "TrafficCalibrationTestUtils.h"
 #include "Components/PrimitiveComponent.h"
+#include "HAL/IConsoleManager.h"
 #include "HAL/PlatformTime.h"
 
 namespace
@@ -40,6 +42,8 @@ namespace
 		FString FailureMessage;
 		UWorld* PIEWorld = nullptr;
 		FTrafficRunMetrics Metrics;
+		bool bSavedVisualMode = false;
+		int32 PrevVisualMode = INDEX_NONE;
 	};
 
 	static void TickEditorWorld(UWorld* World, float DeltaSeconds)
@@ -139,8 +143,8 @@ namespace
 	}
 }
 
-DEFINE_LATENT_AUTOMATION_COMMAND_FOUR_PARAMETER(FTrafficWaitForPIEWorldCommand, TSharedRef<FTrafficPIETestState>, State, FAutomationTestBase*, Test, double, TimeoutSeconds, double, StartTime);
-bool FTrafficWaitForPIEWorldCommand::Update()
+DEFINE_LATENT_AUTOMATION_COMMAND_FOUR_PARAMETER(FTrafficRoadLabWaitForPIEWorldCommand, TSharedRef<FTrafficPIETestState>, State, FAutomationTestBase*, Test, double, TimeoutSeconds, double, StartTime);
+bool FTrafficRoadLabWaitForPIEWorldCommand::Update()
 {
 	if (GEditor && GEditor->PlayWorld)
 	{
@@ -275,7 +279,32 @@ bool FTrafficPIESpawnAndRunCommand::Update()
 		}
 		return true;
 	}
-	Manager->SetForceLogicOnlyForTests(true);
+
+	TSharedRef<FTrafficPIETestState> LocalState = State;
+	auto RestoreVisualMode = [LocalState]()
+	{
+		if (!LocalState->bSavedVisualMode)
+		{
+			return;
+		}
+		if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.Mode")))
+		{
+			Var->Set(LocalState->PrevVisualMode, ECVF_SetByCode);
+		}
+		LocalState->bSavedVisualMode = false;
+	};
+
+	if (!State->bSavedVisualMode)
+	{
+		if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.Mode")))
+		{
+			State->PrevVisualMode = Var->GetInt();
+			State->bSavedVisualMode = true;
+			Var->Set(2, ECVF_SetByCode);
+		}
+	}
+
+	Manager->SetForceLogicOnlyForTests(false);
 	Manager->SetActiveRunMetrics(&State->Metrics);
 	Manager->SpawnTestVehicles(3, 800.f);
 
@@ -301,12 +330,39 @@ bool FTrafficPIESpawnAndRunCommand::Update()
 		{
 			Test->AddError(TEXT("No vehicles spawned in PIE test."));
 		}
+		RestoreVisualMode();
 		return true;
 	}
 
         UTrafficAutomationLogger::LogLine(FString::Printf(TEXT("PIE_VehicleCount=%d"), VehicleCount));
 
         State->Metrics.VehiclesSpawned = VehicleCount;
+
+        bool bChaosMissing = false;
+        for (TActorIterator<ATrafficVehicleBase> It(PIEWorld); It; ++It)
+        {
+                ATrafficVehicleAdapter* Adapter = nullptr;
+                APawn* Chaos = nullptr;
+                FString ChaosError;
+                if (!TrafficChaosTestUtils::EnsureChaosForLogicVehicle(*PIEWorld, **It, Adapter, Chaos, ChaosError))
+                {
+                        bChaosMissing = true;
+                        if (Test)
+                        {
+                                Test->AddError(FString::Printf(TEXT("PIE Chaos missing: %s"), *ChaosError));
+                        }
+                        break;
+                }
+        }
+        if (bChaosMissing)
+        {
+                State->bFailed = true;
+                State->FailureMessage = TEXT("ChaosMissing");
+                UTrafficAutomationLogger::LogLine(TEXT("Error=ChaosMissing"));
+                RestoreVisualMode();
+                return true;
+        }
+
         const float SimDuration = 3.0f;
         const float SimStep = 0.1f;
         float Simulated = 0.0f;
@@ -345,6 +401,7 @@ bool FTrafficPIESpawnAndRunCommand::Update()
         State->Metrics.SimulatedSeconds = Simulated;
         State->Metrics.Finalize();
         UTrafficAutomationLogger::LogRunMetrics(TEXT("Traffic.Calibration.RoadLab.PIE"), State->Metrics);
+        RestoreVisualMode();
 
 	UTrafficAutomationLogger::LogLine(TEXT("PIE_Result=Success"));
 #endif
@@ -400,6 +457,34 @@ bool FTrafficRoadLabIntegrationTest::RunTest(const FString& Parameters)
 	UTrafficAutomationLogger::LogLine(FString::Printf(TEXT("[AAA Traffic] Version=%s"), TEXT(AAA_TRAFFIC_PLUGIN_VERSION)));
 	UTrafficAutomationLogger::LogLine(TEXT("# RoadLab Integration Test"));
 	UTrafficAutomationLogger::LogLine(TEXT("VisualBaseline=UserRoadsOnly_NoSynthetic"));
+
+	int32 PrevVisualMode = INDEX_NONE;
+	bool bSavedVisualMode = false;
+	auto RestoreVisualMode = [&]()
+	{
+		if (!bSavedVisualMode)
+		{
+			return;
+		}
+		if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.Mode")))
+		{
+			Var->Set(PrevVisualMode, ECVF_SetByCode);
+		}
+		bSavedVisualMode = false;
+	};
+	auto SetChaosVisualMode = [&]()
+	{
+		if (bSavedVisualMode)
+		{
+			return;
+		}
+		if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.Mode")))
+		{
+			PrevVisualMode = Var->GetInt();
+			bSavedVisualMode = true;
+			Var->Set(2, ECVF_SetByCode);
+		}
+	};
 
 	UTrafficSystemEditorSubsystem* Subsys = GEditor->GetEditorSubsystem<UTrafficSystemEditorSubsystem>();
 	if (!Subsys)
@@ -563,8 +648,9 @@ bool FTrafficRoadLabIntegrationTest::RunTest(const FString& Parameters)
 	}
 	if (Manager)
 	{
+		SetChaosVisualMode();
 		Manager->SetActiveRunMetrics(&Metrics);
-		Manager->SetForceLogicOnlyForTests(true);
+		Manager->SetForceLogicOnlyForTests(false);
 	}
 
 	// Log network summary for human-like verification.
@@ -604,6 +690,24 @@ bool FTrafficRoadLabIntegrationTest::RunTest(const FString& Parameters)
 
 	Metrics.VehiclesSpawned = VehicleCount;
 
+	bool bChaosMissing = false;
+	for (TActorIterator<ATrafficVehicleBase> It(World); It; ++It)
+	{
+		ATrafficVehicleAdapter* Adapter = nullptr;
+		APawn* Chaos = nullptr;
+		FString ChaosError;
+		if (!TrafficChaosTestUtils::EnsureChaosForLogicVehicle(*World, **It, Adapter, Chaos, ChaosError))
+		{
+			bChaosMissing = true;
+			AddError(FString::Printf(TEXT("RoadLab Chaos missing: %s"), *ChaosError));
+			break;
+		}
+	}
+	if (bChaosMissing)
+	{
+		UTrafficAutomationLogger::LogLine(TEXT("Error=ChaosMissing"));
+	}
+
         // Run a short simulated loop to gather motion metrics.
         const float SimDuration = 3.0f;
         const float SimStep = 0.1f;
@@ -631,10 +735,11 @@ bool FTrafficRoadLabIntegrationTest::RunTest(const FString& Parameters)
                 AddError(TEXT("RoadLab integration simulation stopped before expected duration."));
         }
         Metrics.SimulatedSeconds = Simulated;
-        Metrics.Finalize();
-        UTrafficAutomationLogger::LogRunMetrics(LocalTestName, Metrics);
+	Metrics.Finalize();
+	UTrafficAutomationLogger::LogRunMetrics(LocalTestName, Metrics);
 
 	UTrafficAutomationLogger::LogLine(TEXT("Result=Success"));
+	RestoreVisualMode();
 	UTrafficAutomationLogger::EndTestLog();
 	UE_LOG(LogTraffic, Display, TEXT("[Automation] RoadLab Integration Test Complete."));
 
@@ -763,7 +868,7 @@ bool FTrafficRoadLabIntegrationPIETest::RunTest(const FString& Parameters)
 	UTrafficAutomationLogger::LogLine(TEXT("PIE_PreCalibration=Pass"));
 
 	ADD_LATENT_AUTOMATION_COMMAND(FStartPIECommand(false));
-	ADD_LATENT_AUTOMATION_COMMAND(FTrafficWaitForPIEWorldCommand(State, this, 10.0, FPlatformTime::Seconds()));
+	ADD_LATENT_AUTOMATION_COMMAND(FTrafficRoadLabWaitForPIEWorldCommand(State, this, 10.0, FPlatformTime::Seconds()));
 	ADD_LATENT_AUTOMATION_COMMAND(FTrafficPIESpawnAndRunCommand(State, this));
 	ADD_LATENT_AUTOMATION_COMMAND(FTrafficPIEEndCommand(State));
 	return true;

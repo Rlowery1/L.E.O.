@@ -7,10 +7,10 @@
 #include "TrafficSystemController.h"
 #include "TrafficVehicleAdapter.h"
 #include "TrafficVehicleBase.h"
+#include "TrafficChaosTestUtils.h"
 #include "TrafficKinematicFollower.h"
-#include "TrafficNetworkAsset.h"
 #include "TrafficLaneGeometry.h"
-#include "TrafficMovementGeometry.h"
+#include "TrafficNetworkAsset.h"
 #include "TrafficRoadTypes.h"
 #include "TrafficRouting.h"
 #include "TrafficRuntimeModule.h"
@@ -67,59 +67,6 @@ namespace
 
 		TMap<ATrafficVehicleAdapter*, FPerVehicleSnapshot> StartSnapshots;
 	};
-
-	static bool ProjectChaosOntoFollowTarget(
-		const FTrafficNetwork& Net,
-		const APawn& ChaosPawn,
-		EPathFollowTargetType FollowType,
-		int32 FollowId,
-		float& OutS,
-		float& OutPathErrorCm)
-	{
-		const FVector ChaosPos = ChaosPawn.GetActorLocation();
-		const FVector ChaosFwd = ChaosPawn.GetActorForwardVector();
-
-		if (FollowType == EPathFollowTargetType::Lane)
-		{
-			if (const FTrafficLane* Lane = TrafficRouting::FindLaneById(Net, FollowId))
-			{
-				FLaneProjectionResult Proj;
-				if (TrafficLaneGeometry::ProjectPointOntoLane(*Lane, ChaosPos, ChaosFwd, Proj))
-				{
-					OutS = Proj.S;
-					OutPathErrorCm = FMath::Abs(Proj.LateralOffsetCm);
-					return true;
-				}
-			}
-			return false;
-		}
-
-		if (FollowType == EPathFollowTargetType::Movement)
-		{
-			if (const FTrafficMovement* Move = TrafficRouting::FindMovementById(Net, FollowId))
-			{
-				float ProjS = 0.f;
-				if (!TrafficMovementGeometry::ProjectPointOntoMovement(*Move, ChaosPos, ProjS))
-				{
-					return false;
-				}
-
-				FVector SamplePos;
-				FVector SampleTangent;
-				if (!TrafficMovementGeometry::SamplePoseAtS(*Move, ProjS, SamplePos, SampleTangent))
-				{
-					SamplePos = Move->PathPoints.Num() > 0 ? Move->PathPoints.Last() : ChaosPos;
-				}
-
-				OutS = ProjS;
-				OutPathErrorCm = FVector::Dist2D(ChaosPos, SamplePos);
-				return true;
-			}
-			return false;
-		}
-
-		return false;
-	}
 
 	DEFINE_LATENT_AUTOMATION_COMMAND_FOUR_PARAMETER(FTrafficCoupledWaitForPIEWorldCommand, TSharedRef<FTrafficLogicChaosCoupledState>, State, FAutomationTestBase*, Test, double, TimeoutSeconds, double, StartTime);
 	bool FTrafficCoupledWaitForPIEWorldCommand::Update()
@@ -455,7 +402,7 @@ namespace
 
 			float ChaosS = 0.f;
 			float PathErrorCm = 0.f;
-			if (!ProjectChaosOntoFollowTarget(Net, *Chaos, FollowType, FollowId, ChaosS, PathErrorCm))
+			if (!TrafficChaosTestUtils::ProjectChaosOntoFollowTarget(Net, *Chaos, FollowType, FollowId, ChaosS, PathErrorCm))
 			{
 				State->bFailed = true;
 				State->FailureMessage = TEXT("ProjectionFailed");

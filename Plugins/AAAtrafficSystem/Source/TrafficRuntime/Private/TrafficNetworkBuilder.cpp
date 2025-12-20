@@ -4,9 +4,35 @@
 #include "TrafficMovementGeometry.h"
 #include "TrafficRuntimeModule.h"
 #include "HAL/IConsoleManager.h"
+#include "EngineUtils.h"
+#include "GameFramework/Actor.h"
 
 namespace
 {
+	static const TCHAR* GetCVarSetByString(const IConsoleVariable* Var)
+	{
+		if (!Var)
+		{
+			return TEXT("None");
+		}
+
+		switch (Var->GetFlags() & ECVF_SetByMask)
+		{
+		case ECVF_SetByConstructor: return TEXT("Constructor");
+		case ECVF_SetByScalability: return TEXT("Scalability");
+		case ECVF_SetByGameSetting: return TEXT("GameSetting");
+		case ECVF_SetByProjectSetting: return TEXT("ProjectSetting");
+		case ECVF_SetBySystemSettingsIni: return TEXT("SystemSettingsIni");
+		case ECVF_SetByDeviceProfile: return TEXT("DeviceProfile");
+		case ECVF_SetByConsole: return TEXT("Console");
+		case ECVF_SetByCommandline: return TEXT("Commandline");
+		case ECVF_SetByCode: return TEXT("Code");
+		default: break;
+		}
+
+		return TEXT("Unknown");
+	}
+
 	static TAutoConsoleVariable<float> CVarTrafficIntersectionSnapToLaneRadiusCm(
 		TEXT("aaa.Traffic.Intersections.SnapToLaneRadiusCm"),
 		350.f,
@@ -24,6 +50,648 @@ namespace
 		0.35f,
 		TEXT("Minimum dot product between endpoint direction and target lane tangent when snapping endpoints to lane interiors. Default: 0.35."),
 		ECVF_Default);
+
+	static TAutoConsoleVariable<float> CVarTrafficIntersectionClusterRadiusCm(
+		TEXT("aaa.Traffic.Intersections.ClusterRadiusCm"),
+		500.f,
+		TEXT("Endpoint clustering radius (cm) for building intersections. Increase if roads stop short of the intersection mesh. Default: 500."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<float> CVarTrafficIntersectionCrossSplitMinDistanceFromLaneEndsCm(
+		TEXT("aaa.Traffic.Intersections.CrossSplitMinDistanceFromLaneEndsCm"),
+		300.f,
+		TEXT("Minimum distance (cm) from lane ends when splitting lanes at road centerline crossings. Default: 300."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<float> CVarTrafficIntersectionCrossSplitMaxParallelDot(
+		TEXT("aaa.Traffic.Intersections.CrossSplitMaxParallelDot"),
+		0.98f,
+		TEXT("Skip cross splits when abs(dot) between crossing segments exceeds this (nearly parallel). Default: 0.98."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<float> CVarTrafficIntersectionCrossSplitToleranceCm(
+		TEXT("aaa.Traffic.Intersections.CrossSplitToleranceCm"),
+		75.f,
+		TEXT("Tolerance (cm) for deduplicating cross split positions on the same lane. Default: 75."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<float> CVarTrafficIntersectionCrossSplitDistanceLaneWidthScale(
+		TEXT("aaa.Traffic.Intersections.CrossSplitDistanceLaneWidthScale"),
+		4.0f,
+		TEXT("Max lateral distance from a road crossing to consider a lane for split, as a multiple of lane width. Default: 4.0."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<int32> CVarTrafficIntersectionAnchorFromActors(
+		TEXT("aaa.Traffic.Intersections.AnchorFromActors"),
+		1,
+		TEXT("If non-zero, attempt to anchor intersection centers/radii and lane endpoints using intersection mesh actors. Default: 1."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<FString> CVarTrafficIntersectionAnchorActorNameContains(
+		TEXT("aaa.Traffic.Intersections.AnchorActorNameContains"),
+		TEXT("MeshIntersection"),
+		TEXT("Case-insensitive substring to match intersection anchor actors by name. Default: MeshIntersection."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<FString> CVarTrafficIntersectionAnchorActorTag(
+		TEXT("aaa.Traffic.Intersections.AnchorActorTag"),
+		TEXT(""),
+		TEXT("Optional actor tag to match intersection anchors (empty = ignore). Default: empty."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<float> CVarTrafficIntersectionAnchorMaxDistanceCm(
+		TEXT("aaa.Traffic.Intersections.AnchorMaxDistanceCm"),
+		5000.f,
+		TEXT("Maximum distance (cm) between an intersection cluster and an anchor actor to apply anchoring. Default: 5000."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<float> CVarTrafficIntersectionAnchorMinAlignmentDot(
+		TEXT("aaa.Traffic.Intersections.AnchorMinAlignmentDot"),
+		0.1f,
+		TEXT("Minimum dot between lane end direction and vector toward anchor center to extend endpoints. Default: 0.1."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<float> CVarTrafficIntersectionAnchorRadiusScale(
+		TEXT("aaa.Traffic.Intersections.AnchorRadiusScale"),
+		1.0f,
+		TEXT("Scale applied to anchor radius derived from actor bounds. Default: 1.0."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<float> CVarTrafficIntersectionAnchorRadiusLaneWidthScale(
+		TEXT("aaa.Traffic.Intersections.AnchorRadiusLaneWidthScale"),
+		2.0f,
+		TEXT("Clamp anchor radius to (average lane width * scale). <=0 disables the clamp. Default: 2.0."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<float> CVarTrafficIntersectionRadiusLaneWidthScale(
+		TEXT("aaa.Traffic.Intersections.RadiusLaneWidthScale"),
+		1.25f,
+		TEXT("Clamp intersection radius to (average lane width * scale). <=0 disables the clamp. Default: 1.25."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<float> CVarTrafficIntersectionAnchorRadiusBiasCm(
+		TEXT("aaa.Traffic.Intersections.AnchorRadiusBiasCm"),
+		0.0f,
+		TEXT("Bias (cm) added to anchor radius derived from actor bounds (can be negative). Default: 0."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<float> CVarTrafficIntersectionAnchorExtendMaxCm(
+		TEXT("aaa.Traffic.Intersections.AnchorExtendMaxCm"),
+		5000.f,
+		TEXT("Maximum distance (cm) to extend a lane endpoint toward an anchor. Default: 5000."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<float> CVarTrafficIntersectionAnchorEndpointToleranceCm(
+		TEXT("aaa.Traffic.Intersections.AnchorEndpointToleranceCm"),
+		150.f,
+		TEXT("Tolerance (cm) used when snapping endpoints to anchor boundaries. Default: 150."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<int32> CVarTrafficIntersectionAnchorDebug(
+		TEXT("aaa.Traffic.Intersections.AnchorDebug"),
+		0,
+		TEXT("If non-zero, log anchor radius clamp diagnostics per intersection. Default: 0."),
+		ECVF_Default);
+
+	struct FIntersectionAnchor
+	{
+		FVector Center = FVector::ZeroVector;
+		float Radius = 0.f;
+		FString DebugName;
+	};
+
+	static bool IntersectRayCircle2D(
+		const FVector& RayOrigin,
+		const FVector& RayDir,
+		const FVector& Center,
+		float Radius,
+		float& OutT)
+	{
+		FVector2D O(RayOrigin.X, RayOrigin.Y);
+		FVector2D D(RayDir.X, RayDir.Y);
+		const float DirLenSq = D.SizeSquared();
+		if (DirLenSq <= KINDA_SMALL_NUMBER)
+		{
+			return false;
+		}
+		D /= FMath::Sqrt(DirLenSq);
+
+		const FVector2D C(Center.X, Center.Y);
+		const FVector2D OC = O - C;
+		const float A = FVector2D::DotProduct(D, D);
+		const float B = 2.f * FVector2D::DotProduct(OC, D);
+		const float CCoef = FVector2D::DotProduct(OC, OC) - Radius * Radius;
+		const float Disc = (B * B) - (4.f * A * CCoef);
+		if (Disc < 0.f || A <= KINDA_SMALL_NUMBER)
+		{
+			return false;
+		}
+
+		const float SqrtDisc = FMath::Sqrt(Disc);
+		const float T0 = (-B - SqrtDisc) / (2.f * A);
+		const float T1 = (-B + SqrtDisc) / (2.f * A);
+
+		float BestT = TNumericLimits<float>::Max();
+		if (T0 >= 0.f)
+		{
+			BestT = T0;
+		}
+		if (T1 >= 0.f)
+		{
+			BestT = FMath::Min(BestT, T1);
+		}
+		if (!FMath::IsFinite(BestT) || BestT == TNumericLimits<float>::Max())
+		{
+			return false;
+		}
+
+		OutT = BestT;
+		return true;
+	}
+
+	static float Cross2D(const FVector2D& A, const FVector2D& B)
+	{
+		return A.X * B.Y - A.Y * B.X;
+	}
+
+	static bool IntersectSegments2D(
+		const FVector& A0,
+		const FVector& A1,
+		const FVector& B0,
+		const FVector& B1,
+		float& OutTA,
+		float& OutTB,
+		FVector& OutPoint)
+	{
+		const FVector2D P(A0.X, A0.Y);
+		const FVector2D R(A1.X - A0.X, A1.Y - A0.Y);
+		const FVector2D Q(B0.X, B0.Y);
+		const FVector2D S(B1.X - B0.X, B1.Y - B0.Y);
+
+		const float Rxs = Cross2D(R, S);
+		const FVector2D QMinusP = Q - P;
+
+		if (FMath::Abs(Rxs) <= KINDA_SMALL_NUMBER)
+		{
+			return false;
+		}
+
+		const float T = Cross2D(QMinusP, S) / Rxs;
+		const float U = Cross2D(QMinusP, R) / Rxs;
+
+		if (T < 0.f || T > 1.f || U < 0.f || U > 1.f)
+		{
+			return false;
+		}
+
+		OutTA = T;
+		OutTB = U;
+		OutPoint = A0 + (A1 - A0) * T;
+		return true;
+	}
+
+	static void RefreshRoadLaneCopies(FTrafficNetwork& OutNetwork)
+	{
+		for (FTrafficRoad& Road : OutNetwork.Roads)
+		{
+			Road.Lanes.Reset();
+			for (const FTrafficLane& Lane : OutNetwork.Lanes)
+			{
+				if (Lane.RoadId == Road.RoadId)
+				{
+					Road.Lanes.Add(Lane);
+				}
+			}
+		}
+	}
+
+	static void CollectIntersectionAnchors(UWorld* World, TArray<FIntersectionAnchor>& OutAnchors)
+	{
+		OutAnchors.Reset();
+		if (!World)
+		{
+			return;
+		}
+
+		const FString NameContains = CVarTrafficIntersectionAnchorActorNameContains.GetValueOnGameThread();
+		const FString TagString = CVarTrafficIntersectionAnchorActorTag.GetValueOnGameThread();
+		const bool bUseTag = !TagString.IsEmpty();
+		const FName TagName(*TagString);
+		const float RadiusScale = FMath::Max(0.f, CVarTrafficIntersectionAnchorRadiusScale.GetValueOnGameThread());
+		const float RadiusBias = CVarTrafficIntersectionAnchorRadiusBiasCm.GetValueOnGameThread();
+
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			AActor* Actor = *It;
+			if (!Actor)
+			{
+				continue;
+			}
+
+			const bool bTagMatch = bUseTag && Actor->Tags.Contains(TagName);
+			bool bNameMatch = !NameContains.IsEmpty() && Actor->GetName().Contains(NameContains, ESearchCase::IgnoreCase);
+			if (!bNameMatch && !NameContains.IsEmpty())
+			{
+				const UClass* ActorClass = Actor->GetClass();
+				const FString ClassName = ActorClass ? ActorClass->GetName() : FString();
+				bNameMatch = !ClassName.IsEmpty() && ClassName.Contains(NameContains, ESearchCase::IgnoreCase);
+			}
+#if WITH_EDITOR
+			if (!bNameMatch && !NameContains.IsEmpty())
+			{
+				const FString Label = Actor->GetActorLabel();
+				bNameMatch = !Label.IsEmpty() && Label.Contains(NameContains, ESearchCase::IgnoreCase);
+			}
+#endif
+			if (!bTagMatch && !bNameMatch)
+			{
+				continue;
+			}
+
+			FBox Bounds = Actor->GetComponentsBoundingBox(false);
+			if (!Bounds.IsValid)
+			{
+				Bounds = Actor->GetComponentsBoundingBox(true);
+			}
+			if (!Bounds.IsValid)
+			{
+				continue;
+			}
+
+			const FVector Center = Bounds.GetCenter();
+			const FVector Extent = Bounds.GetExtent();
+			const float RawRadius = FMath::Max(Extent.X, Extent.Y);
+			const float Radius = FMath::Max(0.f, RawRadius * RadiusScale + RadiusBias);
+			if (Radius <= KINDA_SMALL_NUMBER)
+			{
+				continue;
+			}
+
+			FIntersectionAnchor Anchor;
+			Anchor.Center = Center;
+			Anchor.Radius = Radius;
+			Anchor.DebugName = Actor->GetName();
+			OutAnchors.Add(Anchor);
+		}
+	}
+
+	static int32 FindNearestAnchorIndex(
+		const TArray<FIntersectionAnchor>& Anchors,
+		const FVector& Query,
+		float MaxDistanceCm)
+	{
+		int32 BestIndex = INDEX_NONE;
+		float BestDistSq = FMath::Square(MaxDistanceCm);
+		for (int32 Index = 0; Index < Anchors.Num(); ++Index)
+		{
+			const FIntersectionAnchor& Anchor = Anchors[Index];
+			const float DistSq = FVector::DistSquared2D(Anchor.Center, Query);
+			if (DistSq <= BestDistSq)
+			{
+				BestDistSq = DistSq;
+				BestIndex = Index;
+			}
+		}
+		return BestIndex;
+	}
+
+	static const FIntersectionAnchor* FindNearestAnchor(
+		const TArray<FIntersectionAnchor>& Anchors,
+		const FVector& Query,
+		float MaxDistanceCm)
+	{
+		const int32 BestIndex = FindNearestAnchorIndex(Anchors, Query, MaxDistanceCm);
+		return Anchors.IsValidIndex(BestIndex) ? &Anchors[BestIndex] : nullptr;
+	}
+
+	static const FTrafficLane* FindLaneById(const FTrafficNetwork& Network, int32 LaneId)
+	{
+		for (const FTrafficLane& Lane : Network.Lanes)
+		{
+			if (Lane.LaneId == LaneId)
+			{
+				return &Lane;
+			}
+		}
+		return nullptr;
+	}
+
+	static float ComputeAverageLaneWidthCm(const FTrafficNetwork& Network, const FTrafficIntersection& Intersection)
+	{
+		double Sum = 0.0;
+		int32 Count = 0;
+		for (int32 LaneId : Intersection.IncomingLaneIds)
+		{
+			if (const FTrafficLane* Lane = FindLaneById(Network, LaneId))
+			{
+				if (Lane->Width > KINDA_SMALL_NUMBER)
+				{
+					Sum += Lane->Width;
+					++Count;
+				}
+			}
+		}
+		for (int32 LaneId : Intersection.OutgoingLaneIds)
+		{
+			if (const FTrafficLane* Lane = FindLaneById(Network, LaneId))
+			{
+				if (Lane->Width > KINDA_SMALL_NUMBER)
+				{
+					Sum += Lane->Width;
+					++Count;
+				}
+			}
+		}
+		if (Count <= 0)
+		{
+			return 350.f;
+		}
+		return static_cast<float>(Sum / static_cast<double>(Count));
+	}
+
+	static float ApplyAnchorRadiusClamp(float AnchorRadius, float AverageLaneWidthCm)
+	{
+		const float Scale = CVarTrafficIntersectionAnchorRadiusLaneWidthScale.GetValueOnGameThread();
+		if (Scale <= 0.f || AverageLaneWidthCm <= KINDA_SMALL_NUMBER)
+		{
+			return AnchorRadius;
+		}
+		const float MaxRadius = AverageLaneWidthCm * Scale;
+		return FMath::Min(AnchorRadius, MaxRadius);
+	}
+
+	static float ComputeAverageLaneWidthNearAnchor(
+		const FTrafficNetwork& Network,
+		const FVector& AnchorCenter,
+		float MaxDistanceCm)
+	{
+		double Sum = 0.0;
+		int32 Count = 0;
+		const bool bUseDistance = MaxDistanceCm > 0.f;
+		const float MaxDistSq = bUseDistance ? FMath::Square(MaxDistanceCm) : 0.f;
+		const FVector2D Anchor2D(AnchorCenter.X, AnchorCenter.Y);
+
+		for (const FTrafficLane& Lane : Network.Lanes)
+		{
+			if (Lane.Width <= KINDA_SMALL_NUMBER || Lane.CenterlinePoints.Num() < 2)
+			{
+				continue;
+			}
+
+			if (bUseDistance)
+			{
+				float MinDistSq = TNumericLimits<float>::Max();
+				for (int32 i = 0; i < Lane.CenterlinePoints.Num() - 1; ++i)
+				{
+					const FVector2D A(Lane.CenterlinePoints[i].X, Lane.CenterlinePoints[i].Y);
+					const FVector2D B(Lane.CenterlinePoints[i + 1].X, Lane.CenterlinePoints[i + 1].Y);
+					const FVector2D AB = B - A;
+					const float LenSq = AB.SizeSquared();
+					const float T = (LenSq > KINDA_SMALL_NUMBER)
+						? FMath::Clamp(FVector2D::DotProduct(Anchor2D - A, AB) / LenSq, 0.f, 1.f)
+						: 0.f;
+					const FVector2D Closest = A + AB * T;
+					MinDistSq = FMath::Min(MinDistSq, FVector2D::DistSquared(Anchor2D, Closest));
+					if (MinDistSq <= MaxDistSq)
+					{
+						break;
+					}
+				}
+
+				if (MinDistSq > MaxDistSq)
+				{
+					continue;
+				}
+			}
+
+			Sum += Lane.Width;
+			++Count;
+		}
+
+		if (Count <= 0)
+		{
+			return 0.f;
+		}
+		return static_cast<float>(Sum / static_cast<double>(Count));
+	}
+
+	static void ComputeAnchorEffectiveRadii(
+		const FTrafficNetwork& Network,
+		const TArray<FIntersectionAnchor>& Anchors,
+		TArray<float>& OutRadii)
+	{
+		OutRadii.Reset(Anchors.Num());
+		OutRadii.Reserve(Anchors.Num());
+
+		const float MaxDistance = FMath::Max(0.f, CVarTrafficIntersectionAnchorMaxDistanceCm.GetValueOnGameThread());
+
+		for (const FIntersectionAnchor& Anchor : Anchors)
+		{
+			const float AvgLaneWidth = ComputeAverageLaneWidthNearAnchor(Network, Anchor.Center, MaxDistance);
+			const float EffectiveRadius = ApplyAnchorRadiusClamp(Anchor.Radius, AvgLaneWidth);
+			OutRadii.Add(EffectiveRadius);
+		}
+	}
+
+	static void ClampIntersectionRadiiByLaneWidth(FTrafficNetwork& OutNetwork)
+	{
+		const float Scale = CVarTrafficIntersectionRadiusLaneWidthScale.GetValueOnGameThread();
+		if (Scale <= 0.f || OutNetwork.Intersections.Num() == 0)
+		{
+			return;
+		}
+
+		for (FTrafficIntersection& Intersection : OutNetwork.Intersections)
+		{
+			const float AvgLaneWidth = ComputeAverageLaneWidthCm(OutNetwork, Intersection);
+			if (AvgLaneWidth <= KINDA_SMALL_NUMBER)
+			{
+				continue;
+			}
+
+			const float MaxRadius = AvgLaneWidth * Scale;
+			if (Intersection.Radius > MaxRadius)
+			{
+				Intersection.Radius = MaxRadius;
+			}
+		}
+	}
+
+	static int32 AdjustLaneEndpointsToAnchors(
+		FTrafficNetwork& OutNetwork,
+		const TArray<FIntersectionAnchor>& Anchors,
+		const TArray<float>& AnchorEffectiveRadii)
+	{
+		if (Anchors.Num() == 0 || OutNetwork.Lanes.Num() == 0 || Anchors.Num() != AnchorEffectiveRadii.Num())
+		{
+			return 0;
+		}
+
+		const float MaxDistance = FMath::Max(0.f, CVarTrafficIntersectionAnchorMaxDistanceCm.GetValueOnGameThread());
+		const float MinAlignDot = FMath::Clamp(CVarTrafficIntersectionAnchorMinAlignmentDot.GetValueOnGameThread(), -1.f, 1.f);
+		const float ExtendMax = FMath::Max(0.f, CVarTrafficIntersectionAnchorExtendMaxCm.GetValueOnGameThread());
+		const float EndpointTolerance = FMath::Max(0.f, CVarTrafficIntersectionAnchorEndpointToleranceCm.GetValueOnGameThread());
+		const bool bDebug = CVarTrafficIntersectionAnchorDebug.GetValueOnGameThread() != 0;
+
+		int32 AdjustedLanes = 0;
+		TSet<int32> AdjustedLaneIds;
+		TSet<int32> AdjustedEndpointKeys;
+
+		auto AdjustLaneEndpoint = [&](FTrafficLane& Lane, bool bIsEnd)
+		{
+			if (Lane.CenterlinePoints.Num() < 2)
+			{
+				return false;
+			}
+
+			const int32 EndpointKey = (Lane.LaneId << 1) | (bIsEnd ? 1 : 0);
+			if (AdjustedEndpointKeys.Contains(EndpointKey))
+			{
+				return false;
+			}
+
+			const int32 Index = bIsEnd ? (Lane.CenterlinePoints.Num() - 1) : 0;
+			const int32 Adjacent = bIsEnd ? (Lane.CenterlinePoints.Num() - 2) : 1;
+			const FVector End = Lane.CenterlinePoints[Index];
+			const FVector Prev = Lane.CenterlinePoints[Adjacent];
+			const FVector Dir = (End - Prev).GetSafeNormal();
+			if (Dir.IsNearlyZero())
+			{
+				return false;
+			}
+
+			const int32 AnchorIndex = FindNearestAnchorIndex(Anchors, End, MaxDistance);
+			if (!Anchors.IsValidIndex(AnchorIndex))
+			{
+				return false;
+			}
+
+			const FIntersectionAnchor& Anchor = Anchors[AnchorIndex];
+			const float EffectiveRadius = AnchorEffectiveRadii[AnchorIndex];
+
+			const float DistToCenter = FVector::Dist2D(End, Anchor.Center);
+			if (EndpointTolerance > 0.f && FMath::Abs(DistToCenter - EffectiveRadius) <= EndpointTolerance)
+			{
+				return false;
+			}
+
+			auto TryApplyNewEnd = [&](const FVector& Candidate, const TCHAR* Reason)
+			{
+				const float Delta2D = FVector::Dist2D(End, Candidate);
+				if (ExtendMax > 0.f && Delta2D > ExtendMax)
+				{
+					return false;
+				}
+
+				const float DistToBoundary = FMath::Abs(FVector::Dist2D(Candidate, Anchor.Center) - EffectiveRadius);
+				if (EndpointTolerance > 0.f && DistToBoundary > EndpointTolerance)
+				{
+					return false;
+				}
+
+				Lane.CenterlinePoints[Index] = Candidate;
+				AdjustedLaneIds.Add(Lane.LaneId);
+				AdjustedEndpointKeys.Add(EndpointKey);
+
+				if (bDebug)
+				{
+					UE_LOG(LogTraffic, Log, TEXT("[FTrafficNetworkBuilder] AnchorAdjust lane=%d reason=%s delta=%.1fcm distToBoundary=%.1fcm anchor=%s"),
+						Lane.LaneId, Reason, Delta2D, DistToBoundary, *Anchor.DebugName);
+				}
+
+				return true;
+			};
+
+			FVector ToCenter = Anchor.Center - End;
+			FVector ToCenter2D(ToCenter.X, ToCenter.Y, 0.f);
+			if (ToCenter2D.IsNearlyZero())
+			{
+				return false;
+			}
+
+			const FVector ToCenterDir = ToCenter2D.GetSafeNormal();
+			float AlignDot = FVector::DotProduct(Dir, ToCenterDir);
+			FVector RayDir = Dir;
+			if (AlignDot < -MinAlignDot)
+			{
+				RayDir = -Dir;
+				AlignDot = -AlignDot;
+			}
+
+			auto TryRadialCandidate = [&]() -> bool
+			{
+				const FVector Candidate = Anchor.Center - (ToCenterDir * EffectiveRadius);
+				return TryApplyNewEnd(Candidate, TEXT("radial"));
+			};
+
+			if (AlignDot < MinAlignDot)
+			{
+				return TryRadialCandidate();
+			}
+
+			float T = 0.f;
+			if (!IntersectRayCircle2D(End, RayDir, Anchor.Center, EffectiveRadius, T))
+			{
+				return TryRadialCandidate();
+			}
+
+			const FVector NewEnd = End + RayDir * T;
+			return TryApplyNewEnd(NewEnd, TEXT("ray"));
+		};
+
+		for (FTrafficLane& Lane : OutNetwork.Lanes)
+		{
+			AdjustLaneEndpoint(Lane, /*bIsEnd=*/false);
+			AdjustLaneEndpoint(Lane, /*bIsEnd=*/true);
+		}
+
+		AdjustedLanes = AdjustedLaneIds.Num();
+		if (AdjustedLanes > 0)
+		{
+			RefreshRoadLaneCopies(OutNetwork);
+		}
+
+		return AdjustedLanes;
+	}
+
+	static int32 ApplyAnchorCentersToIntersections(
+		FTrafficNetwork& OutNetwork,
+		const TArray<FIntersectionAnchor>& Anchors,
+		const TArray<float>& AnchorEffectiveRadii)
+	{
+		if (Anchors.Num() == 0 || OutNetwork.Intersections.Num() == 0 || Anchors.Num() != AnchorEffectiveRadii.Num())
+		{
+			return 0;
+		}
+
+		const float MaxDistance = FMath::Max(0.f, CVarTrafficIntersectionAnchorMaxDistanceCm.GetValueOnGameThread());
+		const bool bDebug = CVarTrafficIntersectionAnchorDebug.GetValueOnGameThread() != 0;
+		int32 AnchoredCount = 0;
+
+		for (FTrafficIntersection& Intersection : OutNetwork.Intersections)
+		{
+			const int32 AnchorIndex = FindNearestAnchorIndex(Anchors, Intersection.Center, MaxDistance);
+			if (!Anchors.IsValidIndex(AnchorIndex))
+			{
+				continue;
+			}
+
+			const FIntersectionAnchor& Anchor = Anchors[AnchorIndex];
+			const float EffectiveRadius = AnchorEffectiveRadii[AnchorIndex];
+			if (bDebug)
+			{
+				const float AvgLaneWidth = ComputeAverageLaneWidthCm(OutNetwork, Intersection);
+				UE_LOG(LogTraffic, Log, TEXT("[FTrafficNetworkBuilder] AnchorApply int=%d anchor=%s rawRadius=%.1f effRadius=%.1f avgLaneWidth=%.1f"),
+					Intersection.IntersectionId, *Anchor.DebugName, Anchor.Radius, EffectiveRadius, AvgLaneWidth);
+			}
+
+			Intersection.Center = Anchor.Center;
+			Intersection.Radius = EffectiveRadius;
+			++AnchoredCount;
+		}
+
+		return AnchoredCount;
+	}
 
 	struct FPolylineClosestPoint
 	{
@@ -158,6 +826,185 @@ namespace
 		}
 		SplitsCm = MoveTemp(Unique);
 	}
+
+	struct FLaneSegmentData
+	{
+		TArray<float> StartS;
+		TArray<float> Lengths;
+		float TotalLength = 0.f;
+	};
+
+	static void BuildLaneSegmentData(const TArray<FVector>& Points, FLaneSegmentData& OutData)
+	{
+		OutData.StartS.Reset();
+		OutData.Lengths.Reset();
+		OutData.TotalLength = 0.f;
+
+		if (Points.Num() < 2)
+		{
+			return;
+		}
+
+		const int32 NumSegments = Points.Num() - 1;
+		OutData.StartS.SetNumZeroed(NumSegments);
+		OutData.Lengths.SetNumZeroed(NumSegments);
+
+		float Accumulated = 0.f;
+		for (int32 i = 0; i < NumSegments; ++i)
+		{
+			OutData.StartS[i] = Accumulated;
+			const float SegLen = FVector::Dist(Points[i], Points[i + 1]);
+			OutData.Lengths[i] = SegLen;
+			Accumulated += SegLen;
+		}
+		OutData.TotalLength = Accumulated;
+	}
+
+	static int32 ApplyLaneSplits(
+		FTrafficNetwork& OutNetwork,
+		const TMap<int32, TArray<float>>& SplitsByLaneId,
+		float SplitToleranceCm,
+		const TCHAR* DebugLabel)
+	{
+		if (SplitsByLaneId.Num() == 0)
+		{
+			return 0;
+		}
+
+		int32 NextLaneId = 0;
+		for (const FTrafficLane& L : OutNetwork.Lanes)
+		{
+			NextLaneId = FMath::Max(NextLaneId, (L.LaneId >= 0) ? (L.LaneId + 1) : NextLaneId);
+		}
+
+		int32 NumSplitsApplied = 0;
+		TArray<FTrafficLane> NewLanes;
+		NewLanes.Reserve(OutNetwork.Lanes.Num() + SplitsByLaneId.Num());
+
+		for (const FTrafficLane& Lane : OutNetwork.Lanes)
+		{
+			const TArray<float>* SplitsPtr = SplitsByLaneId.Find(Lane.LaneId);
+			if (!SplitsPtr || SplitsPtr->Num() == 0)
+			{
+				NewLanes.Add(Lane);
+				continue;
+			}
+
+			TArray<float> Splits = *SplitsPtr;
+			UniqueSortSplits(Splits, SplitToleranceCm);
+
+			TArray<FVector> CurrentPoints = Lane.CenterlinePoints;
+			float ConsumedS = 0.f;
+			int32 SegmentId = Lane.LaneId;
+			int32 PrevId = Lane.PrevLaneId;
+
+			for (int32 SplitIndex = 0; SplitIndex < Splits.Num(); ++SplitIndex)
+			{
+				const float SplitS = Splits[SplitIndex];
+				const float LocalS = SplitS - ConsumedS;
+				TArray<FVector> A, B;
+				if (!SplitPolylineAtS(CurrentPoints, LocalS, A, B))
+				{
+					continue;
+				}
+
+				const int32 NextId = NextLaneId++;
+
+				FTrafficLane Segment = Lane;
+				Segment.LaneId = SegmentId;
+				Segment.CenterlinePoints = MoveTemp(A);
+				Segment.PrevLaneId = PrevId;
+				Segment.NextLaneId = NextId;
+				NewLanes.Add(MoveTemp(Segment));
+
+				PrevId = SegmentId;
+				SegmentId = NextId;
+				CurrentPoints = MoveTemp(B);
+				ConsumedS = SplitS;
+				++NumSplitsApplied;
+			}
+
+			FTrafficLane Tail = Lane;
+			Tail.LaneId = SegmentId;
+			Tail.CenterlinePoints = MoveTemp(CurrentPoints);
+			Tail.PrevLaneId = PrevId;
+			Tail.NextLaneId = Lane.NextLaneId;
+			NewLanes.Add(MoveTemp(Tail));
+		}
+
+		if (NumSplitsApplied > 0)
+		{
+			OutNetwork.Lanes = MoveTemp(NewLanes);
+			RefreshRoadLaneCopies(OutNetwork);
+			if (DebugLabel)
+			{
+				UE_LOG(LogTraffic, Log,
+					TEXT("[FTrafficNetworkBuilder] %s: applied %d lane split(s)."),
+					DebugLabel,
+					NumSplitsApplied);
+			}
+		}
+
+		return NumSplitsApplied;
+	}
+
+	struct FRoadCrossing
+	{
+		int32 RoadAId = INDEX_NONE;
+		int32 RoadBId = INDEX_NONE;
+		FVector Point = FVector::ZeroVector;
+	};
+
+	static void CollectRoadCrossings(
+		const TArray<FTrafficRoad>& Roads,
+		TArray<FRoadCrossing>& OutCrossings)
+	{
+		OutCrossings.Reset();
+
+		for (int32 i = 0; i < Roads.Num(); ++i)
+		{
+			const FTrafficRoad& RoadA = Roads[i];
+			if (RoadA.CenterlinePoints.Num() < 2)
+			{
+				continue;
+			}
+
+			for (int32 j = i + 1; j < Roads.Num(); ++j)
+			{
+				const FTrafficRoad& RoadB = Roads[j];
+				if (RoadB.CenterlinePoints.Num() < 2)
+				{
+					continue;
+				}
+
+				for (int32 a = 0; a < RoadA.CenterlinePoints.Num() - 1; ++a)
+				{
+					const FVector A0 = RoadA.CenterlinePoints[a];
+					const FVector A1 = RoadA.CenterlinePoints[a + 1];
+
+					for (int32 b = 0; b < RoadB.CenterlinePoints.Num() - 1; ++b)
+					{
+						const FVector B0 = RoadB.CenterlinePoints[b];
+						const FVector B1 = RoadB.CenterlinePoints[b + 1];
+
+						float TA = 0.f;
+						float TB = 0.f;
+						FVector Point = FVector::ZeroVector;
+						if (!IntersectSegments2D(A0, A1, B0, B1, TA, TB, Point))
+						{
+							continue;
+						}
+
+						FRoadCrossing Crossing;
+						Crossing.RoadAId = RoadA.RoadId;
+						Crossing.RoadBId = RoadB.RoadId;
+						Crossing.Point = Point;
+						OutCrossings.Add(Crossing);
+					}
+				}
+			}
+		}
+	}
 }
 
 void FTrafficNetworkBuilder::BuildNetworkFromRoads(
@@ -205,7 +1052,9 @@ void FTrafficNetworkBuilder::BuildNetworkFromRoads(
 			RoadLanes.Num());
 	}
 
-	BuildIntersectionsAndMovements(OutNetwork, 500.0f);
+	const float ClusterRadiusCm = FMath::Max(0.f, CVarTrafficIntersectionClusterRadiusCm.GetValueOnGameThread());
+	BuildIntersectionsAndMovements(OutNetwork, ClusterRadiusCm);
+	ClampIntersectionRadiiByLaneWidth(OutNetwork);
 }
 
 void FTrafficNetworkBuilder::BuildNetworkFromWorld(
@@ -226,6 +1075,62 @@ void FTrafficNetworkBuilder::BuildNetworkFromWorld(
 	UE_LOG(LogTraffic, Log, TEXT("[FTrafficNetworkBuilder] BuildNetworkFromWorld: Collected %d roads."), Roads.Num());
 
 	BuildNetworkFromRoads(Roads, FamilySettings, OutNetwork);
+
+	const int32 AnchorFromActors = CVarTrafficIntersectionAnchorFromActors.GetValueOnGameThread();
+	IConsoleVariable* AnchorVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.AnchorFromActors"));
+	UE_LOG(LogTraffic, Log,
+		TEXT("[FTrafficNetworkBuilder] AnchorFromActors=%d (setBy=%s)"),
+		AnchorFromActors,
+		GetCVarSetByString(AnchorVar));
+
+	if (AnchorFromActors != 0)
+	{
+		TArray<FIntersectionAnchor> Anchors;
+		CollectIntersectionAnchors(World, Anchors);
+		const FString NameContains = CVarTrafficIntersectionAnchorActorNameContains.GetValueOnGameThread();
+		const FString TagString = CVarTrafficIntersectionAnchorActorTag.GetValueOnGameThread();
+
+		UE_LOG(LogTraffic, Log,
+			TEXT("[FTrafficNetworkBuilder] Intersection anchors: Found=%d NameContains='%s' Tag='%s'"),
+			Anchors.Num(),
+			*NameContains,
+			*TagString);
+
+		if (Anchors.Num() > 0)
+		{
+			TArray<float> AnchorEffectiveRadii;
+			ComputeAnchorEffectiveRadii(OutNetwork, Anchors, AnchorEffectiveRadii);
+
+			const int32 Adjusted = AdjustLaneEndpointsToAnchors(OutNetwork, Anchors, AnchorEffectiveRadii);
+			float ClusterRadiusCm = FMath::Max(0.f, CVarTrafficIntersectionClusterRadiusCm.GetValueOnGameThread());
+			float MaxAnchorRadius = 0.f;
+			for (float Radius : AnchorEffectiveRadii)
+			{
+				MaxAnchorRadius = FMath::Max(MaxAnchorRadius, Radius);
+			}
+			const float EndpointTolerance = FMath::Max(0.f, CVarTrafficIntersectionAnchorEndpointToleranceCm.GetValueOnGameThread());
+			const float AnchorClusterRadius = FMath::Max(ClusterRadiusCm, MaxAnchorRadius + EndpointTolerance);
+
+			if (Adjusted > 0 || AnchorClusterRadius > ClusterRadiusCm + KINDA_SMALL_NUMBER)
+			{
+				BuildIntersectionsAndMovements(OutNetwork, AnchorClusterRadius);
+			}
+
+			const int32 Anchored = ApplyAnchorCentersToIntersections(OutNetwork, Anchors, AnchorEffectiveRadii);
+			ClampIntersectionRadiiByLaneWidth(OutNetwork);
+			UE_LOG(LogTraffic, Log,
+				TEXT("[FTrafficNetworkBuilder] Intersection anchors: Found=%d Adjusted=%d Anchored=%d ClusterRadius=%.1f"),
+				Anchors.Num(),
+				Adjusted,
+				Anchored,
+				AnchorClusterRadius);
+		}
+	}
+	else
+	{
+		UE_LOG(LogTraffic, Log,
+			TEXT("[FTrafficNetworkBuilder] Intersection anchoring disabled; lane endpoints may remain at road mesh ends."));
+	}
 }
 
 void FTrafficNetworkBuilder::GenerateLanesForRoad(
@@ -343,6 +1248,60 @@ void FTrafficNetworkBuilder::BuildIntersectionsAndMovements(
 		}
 	};
 
+	// Split lanes at road centerline crossings so mid-spline intersections are represented in the endpoint graph.
+	TArray<FRoadCrossing> RoadCrossings;
+	CollectRoadCrossings(OutNetwork.Roads, RoadCrossings);
+
+	if (RoadCrossings.Num() > 0)
+	{
+		TMap<int32, TArray<float>> CrossSplitsByLaneId;
+		const float MinFromEnds = FMath::Max(0.f, CVarTrafficIntersectionCrossSplitMinDistanceFromLaneEndsCm.GetValueOnGameThread());
+		const float MaxParallelDot = FMath::Clamp(CVarTrafficIntersectionCrossSplitMaxParallelDot.GetValueOnGameThread(), 0.f, 1.f);
+		const float LaneWidthScale = FMath::Max(0.f, CVarTrafficIntersectionCrossSplitDistanceLaneWidthScale.GetValueOnGameThread());
+		const float SplitToleranceCm = FMath::Max(0.f, CVarTrafficIntersectionCrossSplitToleranceCm.GetValueOnGameThread());
+
+		for (const FRoadCrossing& Crossing : RoadCrossings)
+		{
+			for (const FTrafficLane& Lane : OutNetwork.Lanes)
+			{
+				if (Lane.RoadId != Crossing.RoadAId && Lane.RoadId != Crossing.RoadBId)
+				{
+					continue;
+				}
+
+				const FPolylineClosestPoint Closest = FindClosestPointOnPolyline(Lane.CenterlinePoints, Crossing.Point);
+				if (!Closest.bValid)
+				{
+					continue;
+				}
+
+				const float LaneLen = TrafficLaneGeometry::ComputeLaneLengthCm(Lane);
+				if (LaneLen <= KINDA_SMALL_NUMBER)
+				{
+					continue;
+				}
+
+				if (MinFromEnds > 0.f && (Closest.SAlongCm < MinFromEnds || Closest.SAlongCm > (LaneLen - MinFromEnds)))
+				{
+					continue;
+				}
+
+				const float MaxDistance = FMath::Max(200.f, Lane.Width * LaneWidthScale);
+				if (Closest.DistanceSq > FMath::Square(MaxDistance))
+				{
+					continue;
+				}
+
+				CrossSplitsByLaneId.FindOrAdd(Lane.LaneId).Add(Closest.SAlongCm);
+			}
+		}
+
+		if (CrossSplitsByLaneId.Num() > 0)
+		{
+			ApplyLaneSplits(OutNetwork, CrossSplitsByLaneId, SplitToleranceCm, TEXT("Cross-split"));
+		}
+	}
+
 	TArray<FLaneEndpoint> AllEndpoints;
 	BuildEndpoints(OutNetwork.Lanes, AllEndpoints);
 
@@ -437,88 +1396,17 @@ void FTrafficNetworkBuilder::BuildIntersectionsAndMovements(
 			}
 		}
 
-		int32 NextLaneId = 0;
-		for (const FTrafficLane& L : OutNetwork.Lanes)
-		{
-			NextLaneId = FMath::Max(NextLaneId, (L.LaneId >= 0) ? (L.LaneId + 1) : NextLaneId);
-		}
-
-		int32 NumSplitsApplied = 0;
 		if (SplitsByLaneId.Num() > 0)
 		{
-			TArray<FTrafficLane> NewLanes;
-			NewLanes.Reserve(OutNetwork.Lanes.Num() + SplitsByLaneId.Num());
-
-			for (const FTrafficLane& Lane : OutNetwork.Lanes)
-			{
-				const TArray<float>* SplitsPtr = SplitsByLaneId.Find(Lane.LaneId);
-				if (!SplitsPtr || SplitsPtr->Num() == 0)
-				{
-					NewLanes.Add(Lane);
-					continue;
-				}
-
-				TArray<float> Splits = *SplitsPtr;
-				UniqueSortSplits(Splits, /*ToleranceCm=*/75.f);
-
-				TArray<FVector> CurrentPoints = Lane.CenterlinePoints;
-				float ConsumedS = 0.f;
-				int32 SegmentId = Lane.LaneId;
-				int32 PrevId = Lane.PrevLaneId;
-
-				for (int32 SplitIndex = 0; SplitIndex < Splits.Num(); ++SplitIndex)
-				{
-					const float SplitS = Splits[SplitIndex];
-					const float LocalS = SplitS - ConsumedS;
-					TArray<FVector> A, B;
-					if (!SplitPolylineAtS(CurrentPoints, LocalS, A, B))
-					{
-						continue;
-					}
-
-					const int32 NextId = NextLaneId++;
-
-					FTrafficLane Segment = Lane;
-					Segment.LaneId = SegmentId;
-					Segment.CenterlinePoints = MoveTemp(A);
-					Segment.PrevLaneId = PrevId;
-					Segment.NextLaneId = NextId;
-					NewLanes.Add(MoveTemp(Segment));
-
-					PrevId = SegmentId;
-					SegmentId = NextId;
-					CurrentPoints = MoveTemp(B);
-					ConsumedS = SplitS;
-					++NumSplitsApplied;
-				}
-
-				FTrafficLane Tail = Lane;
-				Tail.LaneId = SegmentId;
-				Tail.CenterlinePoints = MoveTemp(CurrentPoints);
-				Tail.PrevLaneId = PrevId;
-				Tail.NextLaneId = Lane.NextLaneId;
-				NewLanes.Add(MoveTemp(Tail));
-			}
+			const int32 NumSplitsApplied = ApplyLaneSplits(
+				OutNetwork,
+				SplitsByLaneId,
+				/*SplitToleranceCm=*/75.f,
+				TEXT("Snap-to-lane"));
 
 			if (NumSplitsApplied > 0)
 			{
-				OutNetwork.Lanes = MoveTemp(NewLanes);
-				for (FTrafficRoad& Road : OutNetwork.Roads)
-				{
-					Road.Lanes.Reset();
-					for (const FTrafficLane& Lane : OutNetwork.Lanes)
-					{
-						if (Lane.RoadId == Road.RoadId)
-						{
-							Road.Lanes.Add(Lane);
-						}
-					}
-				}
-
 				BuildEndpoints(OutNetwork.Lanes, AllEndpoints);
-				UE_LOG(LogTraffic, Log,
-					TEXT("[FTrafficNetworkBuilder] Snap-to-lane: applied %d lane split(s) to support mid-spline merges/diverges."),
-					NumSplitsApplied);
 			}
 		}
 	}

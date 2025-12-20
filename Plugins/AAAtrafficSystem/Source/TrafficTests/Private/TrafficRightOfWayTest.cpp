@@ -4,7 +4,9 @@
 #include "Editor.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "TrafficChaosTestUtils.h"
 #include "TrafficSystemController.h"
+#include "TrafficVehicleAdapter.h"
 #include "TrafficVehicleBase.h"
 #include "TrafficNetworkAsset.h"
 #include "TrafficRouting.h"
@@ -22,14 +24,14 @@ namespace
 	static const float ReservationHoldSeconds = 2.0f;
 	static const float PermittedLeftApproachDistanceCm = 1500.0f;
 
-	struct FTrafficSettingsSnapshot
+	struct FTrafficRightOfWaySettingsSnapshot
 	{
 		int32 VehiclesPerLaneRuntime = 1;
 		float RuntimeSpeedCmPerSec = 800.f;
 		bool bGenerateZoneGraph = false;
 	};
 
-	static void SaveRuntimeSettings(FTrafficSettingsSnapshot& OutSnapshot)
+	static void SaveRuntimeSettings_RightOfWay(FTrafficRightOfWaySettingsSnapshot& OutSnapshot)
 	{
 		if (UTrafficRuntimeSettings* Settings = GetMutableDefault<UTrafficRuntimeSettings>())
 		{
@@ -39,7 +41,7 @@ namespace
 		}
 	}
 
-	static void RestoreRuntimeSettings(const FTrafficSettingsSnapshot& Snapshot)
+	static void RestoreRuntimeSettings_RightOfWay(const FTrafficRightOfWaySettingsSnapshot& Snapshot)
 	{
 		if (UTrafficRuntimeSettings* Settings = GetMutableDefault<UTrafficRuntimeSettings>())
 		{
@@ -88,7 +90,7 @@ namespace
 		double PhaseWaitStartSeconds = 0.0;
 
 		bool bSavedSettings = false;
-		FTrafficSettingsSnapshot PrevSettings;
+		FTrafficRightOfWaySettingsSnapshot PrevSettings;
 
 		int32 PrevControlMode = 0;
 		int32 PrevReservationEnabled = 1;
@@ -99,7 +101,7 @@ namespace
 		int32 PrevCoordinationEnabled = 0;
 	};
 
-	static bool FindControllerAndNetwork(UWorld* World, ATrafficSystemController*& OutController, const FTrafficNetwork*& OutNet)
+	static bool FindControllerAndNetwork_RightOfWay(UWorld* World, ATrafficSystemController*& OutController, const FTrafficNetwork*& OutNet)
 	{
 		OutController = nullptr;
 		OutNet = nullptr;
@@ -293,7 +295,7 @@ namespace
 
 		ATrafficSystemController* Controller = nullptr;
 		const FTrafficNetwork* Net = nullptr;
-		if (!FindControllerAndNetwork(World, Controller, Net))
+		if (!FindControllerAndNetwork_RightOfWay(World, Controller, Net))
 		{
 			return false;
 		}
@@ -357,6 +359,21 @@ namespace
 		State->ThroughVehicle->SetTrafficSystemController(Controller);
 		State->LeftVehicle->InitializeOnLane(LeftLane, LeftStartS, 0.f);
 		State->ThroughVehicle->InitializeOnLane(ThroughLane, ThroughStartS, 0.f);
+
+		ATrafficVehicleAdapter* LeftAdapter = nullptr;
+		ATrafficVehicleAdapter* ThroughAdapter = nullptr;
+		APawn* LeftChaos = nullptr;
+		APawn* ThroughChaos = nullptr;
+		FString ChaosError;
+		if (!TrafficChaosTestUtils::EnsureChaosForLogicVehicle(*World, *State->LeftVehicle, LeftAdapter, LeftChaos, ChaosError) ||
+			!TrafficChaosTestUtils::EnsureChaosForLogicVehicle(*World, *State->ThroughVehicle, ThroughAdapter, ThroughChaos, ChaosError))
+		{
+			if (Test)
+			{
+				Test->AddError(ChaosError.IsEmpty() ? TEXT("Right-of-way test failed to spawn Chaos vehicles.") : *ChaosError);
+			}
+			return true;
+		}
 
 		State->LeftVehicle->SetActorTickEnabled(false);
 		State->ThroughVehicle->SetActorTickEnabled(false);
@@ -445,7 +462,7 @@ namespace
 		const FTrafficNetwork* Net = nullptr;
 		{
 			ATrafficSystemController* Tmp = nullptr;
-			if (!FindControllerAndNetwork(State->PIEWorld.Get(), Tmp, Net) || !Net)
+			if (!FindControllerAndNetwork_RightOfWay(State->PIEWorld.Get(), Tmp, Net) || !Net)
 			{
 				if (Test)
 				{
@@ -475,7 +492,7 @@ namespace
 	{
 		if (State->bSavedSettings)
 		{
-			RestoreRuntimeSettings(State->PrevSettings);
+			RestoreRuntimeSettings_RightOfWay(State->PrevSettings);
 
 			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.ControlMode")))
 			{
@@ -546,7 +563,7 @@ bool FTrafficRightOfWayTest::RunTest(const FString& Parameters)
 
 	TSharedRef<FTrafficRightOfWayState> State = MakeShared<FTrafficRightOfWayState>();
 	State->bSavedSettings = true;
-	SaveRuntimeSettings(State->PrevSettings);
+	SaveRuntimeSettings_RightOfWay(State->PrevSettings);
 
 	if (UTrafficRuntimeSettings* Settings = GetMutableDefault<UTrafficRuntimeSettings>())
 	{

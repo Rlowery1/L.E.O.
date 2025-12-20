@@ -75,4 +75,5 @@ public:
 	virtual FName GetSectionName() const override;
 
 	const FRoadFamilyDefinition* FindFamilyByName(FName FamilyName) const;
+	FRoadFamilyDefinition* FindFamilyByNameMutable(FName FamilyName);
 };

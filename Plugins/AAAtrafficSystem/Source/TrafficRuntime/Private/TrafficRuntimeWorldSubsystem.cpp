@@ -11,6 +11,10 @@
 #include "TrafficRuntimeModule.h"
 #include "TrafficNetworkAsset.h"
 
+#include "Components/DynamicMeshComponent.h"
+#include "DynamicMesh/DynamicMesh3.h"
+#include "VectorTypes.h"
+
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -46,6 +50,39 @@ namespace
 			(SetBy == ECVF_SetByCode);
 	}
 
+	static const TCHAR* GetCVarSetByString(const IConsoleVariable* Var)
+	{
+		if (!Var)
+		{
+			return TEXT("None");
+		}
+
+		switch (Var->GetFlags() & ECVF_SetByMask)
+		{
+		case ECVF_SetByConstructor: return TEXT("Constructor");
+		case ECVF_SetByScalability: return TEXT("Scalability");
+		case ECVF_SetByGameSetting: return TEXT("GameSetting");
+		case ECVF_SetByProjectSetting: return TEXT("ProjectSetting");
+		case ECVF_SetBySystemSettingsIni: return TEXT("SystemSettingsIni");
+		case ECVF_SetByDeviceProfile: return TEXT("DeviceProfile");
+		case ECVF_SetByConsole: return TEXT("Console");
+		case ECVF_SetByCommandline: return TEXT("Commandline");
+		case ECVF_SetByCode: return TEXT("Code");
+		default: break;
+		}
+
+		return TEXT("Unknown");
+	}
+
+	static float ReadFloatCVar(const TCHAR* Name, float DefaultValue)
+	{
+		if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(Name))
+		{
+			return Var->GetFloat();
+		}
+		return DefaultValue;
+	}
+
 	static void ApplyIntersectionStopLineDefaultsForWorld(UWorld& World)
 	{
 		IConsoleVariable* StopLineVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm"));
@@ -56,7 +93,30 @@ namespace
 
 		if (IConsoleVariable* AutoVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.StopLineOffsetAuto")))
 		{
+			const bool bAutoExplicit = IsCVarExplicitlySet(AutoVar);
+			const int32 AutoValue = AutoVar->GetInt();
+			const float AutoScale = ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoWidthScale"), 0.25f);
+			const float AutoMinCm = ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMinCm"), 40.f);
+			const float AutoMaxCm = ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMaxCm"), 120.f);
+			const float AutoNominalCm = ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoNominalLaneWidthCm"), 350.f);
+			const float AutoBufferCm = ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoBufferCm"), 50.f);
+
+			UE_LOG(LogTraffic, Log, TEXT("[TrafficRuntimeWorldSubsystem] StopLineAuto=%d (setBy=%s) scale=%.2f min=%.1f max=%.1f buffer=%.1f nominal=%.1f"),
+				AutoValue,
+				GetCVarSetByString(AutoVar),
+				AutoScale,
+				AutoMinCm,
+				AutoMaxCm,
+				AutoBufferCm,
+				AutoNominalCm);
+
 			if (AutoVar->GetInt() != 0)
+			{
+				return;
+			}
+
+			// If auto is disabled explicitly, we keep using StopLineOffsetCm.
+			if (bAutoExplicit)
 			{
 				return;
 			}
@@ -461,6 +521,148 @@ namespace
 		RoadSettings->Families.Add(NewDef);
 	}
 
+	static bool CollectCityBLDDynamicMeshVertices_Runtime(const AActor* Actor, TArray<FVector>& OutVertices)
+	{
+		OutVertices.Reset();
+		if (!Actor)
+		{
+			return false;
+		}
+
+		TArray<UDynamicMeshComponent*> DynMeshComps;
+		Actor->GetComponents<UDynamicMeshComponent>(DynMeshComps);
+		if (DynMeshComps.Num() == 0)
+		{
+			return false;
+		}
+
+		for (UDynamicMeshComponent* Comp : DynMeshComps)
+		{
+			if (!Comp || !Comp->GetDynamicMesh())
+			{
+				continue;
+			}
+
+			const FTransform Xform = Comp->GetComponentTransform();
+			const UDynamicMesh* DynMesh = Comp->GetDynamicMesh();
+			const UE::Geometry::FDynamicMesh3* Mesh = DynMesh ? DynMesh->GetMeshPtr() : nullptr;
+			if (!Mesh)
+			{
+				continue;
+			}
+
+			for (int32 Vid : Mesh->VertexIndicesItr())
+			{
+				const FVector3d PosD = Mesh->GetVertex(Vid);
+				OutVertices.Add(Xform.TransformPosition(static_cast<FVector>(PosD)));
+			}
+		}
+
+		return OutVertices.Num() >= 16;
+	}
+
+	static bool EstimateLaneWidthFromCityBLDMesh_Runtime(
+		const TArray<FVector>& CenterlinePoints,
+		const TArray<FVector>& Vertices,
+		int32 TotalLanes,
+		float& OutLaneWidthCm)
+	{
+		OutLaneWidthCm = 0.f;
+
+		if (CenterlinePoints.Num() < 2 || Vertices.Num() < 16 || TotalLanes <= 0)
+		{
+			return false;
+		}
+
+		float TotalLength = 0.f;
+		for (int32 i = 1; i < CenterlinePoints.Num(); ++i)
+		{
+			TotalLength += FVector::Dist(CenterlinePoints[i - 1], CenterlinePoints[i]);
+		}
+
+		const int32 SampleCount = FMath::Clamp(static_cast<int32>(TotalLength / 300.f), 8, 40);
+		const float StepLength = (SampleCount > 1) ? (TotalLength / static_cast<float>(SampleCount - 1)) : 300.f;
+		const float SliceHalfLength = FMath::Clamp(StepLength * 1.5f, 100.f, 600.f);
+		const FVector Up(0.f, 0.f, 1.f);
+
+		TArray<float> WidthSamples;
+		WidthSamples.Reserve(SampleCount);
+
+		const float MinRoadWidth = 150.f * static_cast<float>(TotalLanes);
+		const float MaxRoadWidth = 800.f * static_cast<float>(TotalLanes);
+
+		for (int32 SampleIdx = 0; SampleIdx < SampleCount; ++SampleIdx)
+		{
+			const float Alpha = (SampleCount > 1) ? (static_cast<float>(SampleIdx) / static_cast<float>(SampleCount - 1)) : 0.f;
+			const int32 IndexF = FMath::Clamp(static_cast<int32>(Alpha * static_cast<float>(CenterlinePoints.Num() - 1)), 0, CenterlinePoints.Num() - 1);
+			const int32 PrevIdx = FMath::Max(0, IndexF - 1);
+			const int32 NextIdx = FMath::Min(CenterlinePoints.Num() - 1, IndexF + 1);
+
+			const FVector Pos = CenterlinePoints[IndexF];
+			FVector Tangent = CenterlinePoints[NextIdx] - CenterlinePoints[PrevIdx];
+			Tangent.Z = 0.f;
+			if (!Tangent.Normalize())
+			{
+				continue;
+			}
+
+			FVector Right = FVector::CrossProduct(Tangent, Up);
+			if (!Right.Normalize())
+			{
+				continue;
+			}
+
+			float MinDist = FLT_MAX;
+			float MaxDist = -FLT_MAX;
+			int32 InSlice = 0;
+
+			for (const FVector& V : Vertices)
+			{
+				const FVector Delta = V - Pos;
+				const float Along = FVector::DotProduct(Delta, Tangent);
+				if (FMath::Abs(Along) > SliceHalfLength)
+				{
+					continue;
+				}
+
+				const float D = FVector::DotProduct(Delta, Right);
+				MinDist = FMath::Min(MinDist, D);
+				MaxDist = FMath::Max(MaxDist, D);
+				++InSlice;
+			}
+
+			if (InSlice < 16 || !(MinDist < MaxDist))
+			{
+				continue;
+			}
+
+			const float Width = MaxDist - MinDist;
+			if (Width < MinRoadWidth || Width > MaxRoadWidth)
+			{
+				continue;
+			}
+
+			WidthSamples.Add(Width);
+		}
+
+		if (WidthSamples.Num() < 3)
+		{
+			return false;
+		}
+
+		WidthSamples.Sort();
+		const int32 KeepCount = FMath::Max(1, FMath::FloorToInt(static_cast<float>(WidthSamples.Num()) * 0.6f));
+		float SumWidth = 0.f;
+		for (int32 i = 0; i < KeepCount; ++i)
+		{
+			SumWidth += WidthSamples[i];
+		}
+
+		const float RoadWidth = SumWidth / static_cast<float>(KeepCount);
+		OutLaneWidthCm = RoadWidth / static_cast<float>(TotalLanes);
+		return OutLaneWidthCm > 1.f;
+	}
+
 	static void Runtime_PrepareCityBLDRoadMetadata(UWorld& World)
 	{
 		const UTrafficRuntimeSettings* RuntimeSettings = GetDefault<UTrafficRuntimeSettings>();
@@ -477,11 +679,15 @@ namespace
 		int32 FamilyAssignedFromVariant = 0;
 		int32 MissingFamiliesAdded = 0;
 		int32 RampRoleRemapped = 0;
+		int32 CalibratedActors = 0;
+		int32 CalibratedFamilies = 0;
 
 		// Collect highway polylines for ramp role classification (best-effort; only for CityBLD modular highway setups).
 		UCityBLDRoadGeometryProvider* Provider = NewObject<UCityBLDRoadGeometryProvider>();
 		TArray<AActor*> HighwayActors;
 		TArray<AActor*> RampActors;
+		TArray<AActor*> RoadActorsForCalibration;
+		TMap<FName, TArray<float>> FamilyLaneWidthSamples;
 
 		for (TActorIterator<AActor> It(&World); It; ++It)
 		{
@@ -502,6 +708,7 @@ namespace
 			}
 
 			++CityBLDActorsProcessed;
+			RoadActorsForCalibration.Add(Actor);
 
 			const FString VariantKey = TryGetCityBLDVariantKeyFromActor_Runtime(Actor);
 			const bool bLooksLikeRamp = VariantKey.Contains(TEXT("Ramp"), ESearchCase::IgnoreCase);
@@ -660,15 +867,109 @@ namespace
 			}
 		}
 
+		// Calibrate CityBLD lane widths from dynamic mesh geometry (best-effort, runtime only).
+		if (RoadActorsForCalibration.Num() > 0 && RoadSettings && Provider)
+		{
+			for (AActor* RoadActor : RoadActorsForCalibration)
+			{
+				if (!RoadActor)
+				{
+					continue;
+				}
+
+				UTrafficRoadMetadataComponent* Meta = RoadActor->FindComponentByClass<UTrafficRoadMetadataComponent>();
+				if (!Meta || !Meta->bIncludeInTraffic || Meta->FamilyName.IsNone())
+				{
+					continue;
+				}
+
+				FRoadFamilyDefinition* FamilyDef = RoadSettings->FindFamilyByNameMutable(Meta->FamilyName);
+				if (!FamilyDef)
+				{
+					continue;
+				}
+
+				const int32 TotalLanes = FMath::Max(1, FamilyDef->Forward.NumLanes + FamilyDef->Backward.NumLanes);
+
+				TArray<FVector> Centerline;
+				if (!Provider->GetDisplayCenterlineForActor(RoadActor, Centerline) || Centerline.Num() < 2)
+				{
+					continue;
+				}
+
+				TArray<FVector> MeshVertices;
+				if (!CollectCityBLDDynamicMeshVertices_Runtime(RoadActor, MeshVertices))
+				{
+					continue;
+				}
+
+				float LaneWidthCm = 0.f;
+				if (!EstimateLaneWidthFromCityBLDMesh_Runtime(Centerline, MeshVertices, TotalLanes, LaneWidthCm))
+				{
+					continue;
+				}
+
+				FamilyLaneWidthSamples.FindOrAdd(Meta->FamilyName).Add(LaneWidthCm);
+				++CalibratedActors;
+			}
+
+			for (auto& Pair : FamilyLaneWidthSamples)
+			{
+				TArray<float>& Samples = Pair.Value;
+				if (Samples.Num() == 0)
+				{
+					continue;
+				}
+
+				Samples.Sort();
+				const int32 KeepCount = FMath::Max(1, FMath::FloorToInt(static_cast<float>(Samples.Num()) * 0.6f));
+				float Sum = 0.f;
+				for (int32 i = 0; i < KeepCount; ++i)
+				{
+					Sum += Samples[i];
+				}
+
+				const float Avg = Sum / static_cast<float>(KeepCount);
+				const float LaneWidthCm = FMath::Clamp(Avg, 200.f, 500.f);
+
+				FRoadFamilyDefinition* FamilyDef = RoadSettings->FindFamilyByNameMutable(Pair.Key);
+				if (!FamilyDef)
+				{
+					continue;
+				}
+
+				if (FamilyDef->Forward.NumLanes > 0)
+				{
+					FamilyDef->Forward.LaneWidthCm = LaneWidthCm;
+					FamilyDef->Forward.InnerLaneCenterOffsetCm = LaneWidthCm * 0.5f;
+				}
+				if (FamilyDef->Backward.NumLanes > 0)
+				{
+					FamilyDef->Backward.LaneWidthCm = LaneWidthCm;
+					FamilyDef->Backward.InnerLaneCenterOffsetCm = LaneWidthCm * 0.5f;
+				}
+
+				++CalibratedFamilies;
+				UE_LOG(LogTraffic, Log,
+					TEXT("[TrafficRuntimeWorldSubsystem] CityBLD lane width calibrated: Family=%s Lanes=%d Width=%.1fcm Samples=%d"),
+					*Pair.Key.ToString(),
+					FamilyDef->Forward.NumLanes + FamilyDef->Backward.NumLanes,
+					LaneWidthCm,
+					Samples.Num());
+			}
+		}
+
 		if (CityBLDActorsProcessed > 0)
 		{
 			UE_LOG(LogTraffic, Log,
-				TEXT("[TrafficRuntimeWorldSubsystem] CityBLD runtime prepare: Actors=%d MetaCreated=%d FamilyFromVariant=%d FamiliesAdded=%d RampRoleRemapped=%d"),
+				TEXT("[TrafficRuntimeWorldSubsystem] CityBLD runtime prepare: Actors=%d MetaCreated=%d FamilyFromVariant=%d FamiliesAdded=%d RampRoleRemapped=%d CalibratedActors=%d CalibratedFamilies=%d"),
 				CityBLDActorsProcessed,
 				MetadataCreated,
 				FamilyAssignedFromVariant,
 				MissingFamiliesAdded,
-				RampRoleRemapped);
+				RampRoleRemapped,
+				CalibratedActors,
+				CalibratedFamilies);
 		}
 	}
 }

@@ -4,12 +4,14 @@
 #include "Editor.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "TrafficChaosTestUtils.h"
 #include "TrafficSystemController.h"
 #include "TrafficVehicleAdapter.h"
 #include "TrafficVehicleBase.h"
 #include "TrafficNetworkAsset.h"
 #include "TrafficRouting.h"
 #include "TrafficKinematicFollower.h"
+#include "HAL/IConsoleManager.h"
 #include "HAL/PlatformTime.h"
 
 #if WITH_EDITOR
@@ -20,6 +22,7 @@ namespace
 	static const float SignalizedSimSeconds = 20.0f;
 	static const float MinEntrySpeedCmPerSec = 10.0f;
 	static const float TimingToleranceSeconds = 0.75f;
+	static const float SignalizedMaxChaosPathErrorCm = 200.0f;
 
 	struct FFollowSnapshot
 	{
@@ -38,6 +41,7 @@ namespace
 		bool bEntryOnGreen = false;
 		bool bEntryOnSwitchedPhase = false;
 		bool bChaosEntry = false;
+		bool bChaosChecked = false;
 		bool bViolation = false;
 		bool bTimingComplete = false;
 
@@ -58,9 +62,11 @@ namespace
 		TMap<TWeakObjectPtr<ATrafficVehicleBase>, FFollowSnapshot> PrevFollow;
 
 		bool bSavedCVars = false;
+		bool bSavedVisualMode = false;
 		int32 PrevReservationEnabled = 1;
 		int32 PrevRequireFullStop = 0;
 		int32 PrevControlMode = 0;
+		int32 PrevVisualMode = 0;
 		float PrevGreenSeconds = 10.0f;
 		float PrevYellowSeconds = 2.0f;
 		float PrevAllRedSeconds = 1.0f;
@@ -69,7 +75,7 @@ namespace
 		int32 PrevCoordAxisMode = 0;
 	};
 
-	static bool FindControllerAndNetwork(UWorld* World, ATrafficSystemController*& OutController, const FTrafficNetwork*& OutNet)
+	static bool FindControllerAndNetwork_Signalized(UWorld* World, ATrafficSystemController*& OutController, const FTrafficNetwork*& OutNet)
 	{
 		OutController = nullptr;
 		OutNet = nullptr;
@@ -133,7 +139,7 @@ namespace
 
 		ATrafficSystemController* Controller = nullptr;
 		const FTrafficNetwork* Net = nullptr;
-		if (!FindControllerAndNetwork(World, Controller, Net))
+		if (!FindControllerAndNetwork_Signalized(World, Controller, Net))
 		{
 			return false;
 		}
@@ -162,7 +168,7 @@ namespace
 			State->InitialPhaseRaw = PhaseRaw;
 			State->PhaseIncomingLaneIds[0] = TSet<int32>(Phase0);
 			State->PhaseIncomingLaneIds[1] = TSet<int32>(Phase1);
-			State->StartTimeSeconds = FPlatformTime::Seconds();
+			State->StartTimeSeconds = World->GetTimeSeconds();
 			State->bInitialized = true;
 			return true;
 		}
@@ -206,9 +212,48 @@ namespace
 		const FTrafficNetwork* Net = nullptr;
 		{
 			ATrafficSystemController* Tmp = nullptr;
-			if (!FindControllerAndNetwork(World, Tmp, Net) || !Net)
+			if (!FindControllerAndNetwork_Signalized(World, Tmp, Net) || !Net)
 			{
 				return false;
+			}
+		}
+
+		if (!State->bChaosChecked)
+		{
+			int32 LogicCount = 0;
+			bool bChaosOk = true;
+			for (TActorIterator<ATrafficVehicleBase> It(World); It; ++It)
+			{
+				ATrafficVehicleBase* Logic = *It;
+				if (!Logic)
+				{
+					continue;
+				}
+
+				++LogicCount;
+				ATrafficVehicleAdapter* Adapter = nullptr;
+				APawn* Chaos = nullptr;
+				FString Error;
+				if (!TrafficChaosTestUtils::EnsureChaosForLogicVehicle(*World, *Logic, Adapter, Chaos, Error))
+				{
+					bChaosOk = false;
+					if (Test)
+					{
+						Test->AddError(Error);
+					}
+				}
+			}
+
+			if (LogicCount == 0)
+			{
+				return false;
+			}
+
+			State->bChaosChecked = true;
+			if (!bChaosOk)
+			{
+				State->bViolation = true;
+				return true;
 			}
 		}
 
@@ -224,7 +269,7 @@ namespace
 
 		if (State->StartTimeSeconds <= 0.0)
 		{
-			State->StartTimeSeconds = FPlatformTime::Seconds();
+			State->StartTimeSeconds = World->GetTimeSeconds();
 		}
 
 		if (ActivePhaseIndex != State->InitialActivePhaseIndex)
@@ -232,7 +277,7 @@ namespace
 			State->bSawPhaseSwitch = true;
 		}
 
-		const double NowSeconds = FPlatformTime::Seconds();
+		const double NowSeconds = World->GetTimeSeconds();
 		if (State->LastPhaseRaw == INDEX_NONE)
 		{
 			State->LastPhaseRaw = PhaseRaw;
@@ -321,6 +366,28 @@ namespace
 
 					if (Chaos && Chaos->GetVelocity().Size2D() >= MinEntrySpeedCmPerSec)
 					{
+						float ChaosS = 0.f;
+						float PathErrorCm = 0.f;
+						if (!TrafficChaosTestUtils::ProjectChaosOntoFollowTarget(*Net, *Chaos, FollowType, FollowId, ChaosS, PathErrorCm))
+						{
+							State->bViolation = true;
+							if (Test)
+							{
+								Test->AddError(TEXT("Chaos projection failed while entering signalized intersection movement."));
+							}
+							return true;
+						}
+
+						if (PathErrorCm > SignalizedMaxChaosPathErrorCm)
+						{
+							State->bViolation = true;
+							if (Test)
+							{
+								Test->AddError(FString::Printf(TEXT("Chaos vehicle deviated %.1fcm from movement path at signalized entry."), PathErrorCm));
+							}
+							return true;
+						}
+
 						State->bChaosEntry = true;
 					}
 				}
@@ -387,6 +454,15 @@ namespace
 				Var->Set(State->PrevCoordAxisMode, ECVF_SetByCode);
 			}
 			State->bSavedCVars = false;
+		}
+
+		if (State->bSavedVisualMode)
+		{
+			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.Mode")))
+			{
+				Var->Set(State->PrevVisualMode, ECVF_SetByCode);
+			}
+			State->bSavedVisualMode = false;
 		}
 
 		if (GEditor)
@@ -505,6 +581,12 @@ bool FTrafficSignalizedIntersectionTest::RunTest(const FString& Parameters)
 	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.TrafficLight.CoordinationAxisMode")))
 	{
 		State->PrevCoordAxisMode = Var->GetInt();
+	}
+	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.Mode")))
+	{
+		State->PrevVisualMode = Var->GetInt();
+		Var->Set(2, ECVF_SetByCode);
+		State->bSavedVisualMode = true;
 	}
 
 	AddExpectedError(TEXT("The Editor is currently in a play mode."), EAutomationExpectedErrorFlags::Contains, 6);

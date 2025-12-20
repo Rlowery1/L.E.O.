@@ -129,7 +129,7 @@ static int32 ReadIntCVar(const TCHAR* Name, int32 DefaultValue)
 	return DefaultValue;
 }
 
-static float ComputeAutoStopLineOffsetCm(float LaneWidthCm)
+static float ComputeAutoStopLineOffsetCm_Controller(float LaneWidthCm)
 {
 	const float Width = (LaneWidthCm > KINDA_SMALL_NUMBER)
 		? LaneWidthCm
@@ -137,10 +137,11 @@ static float ComputeAutoStopLineOffsetCm(float LaneWidthCm)
 	const float Scale = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoWidthScale"), 0.25f));
 	const float MinCm = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMinCm"), 40.f));
 	const float MaxCm = FMath::Max(MinCm, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMaxCm"), 120.f));
-	return FMath::Clamp(Width * Scale, MinCm, MaxCm);
+	const float BufferCm = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoBufferCm"), 50.f));
+	return FMath::Clamp(Width * Scale, MinCm, MaxCm) + BufferCm;
 }
 
-static float GetEffectiveStopLineOffsetCm(const FTrafficLane* Lane)
+static float GetEffectiveStopLineOffsetCm_Controller(const FTrafficLane* Lane)
 {
 	const float Base = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm"), 0.f));
 	if (ReadIntCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAuto"), 0) == 0)
@@ -149,7 +150,7 @@ static float GetEffectiveStopLineOffsetCm(const FTrafficLane* Lane)
 	}
 
 	const float LaneWidth = Lane ? Lane->Width : 0.f;
-	return ComputeAutoStopLineOffsetCm(LaneWidth);
+	return ComputeAutoStopLineOffsetCm_Controller(LaneWidth);
 }
 
 void ATrafficSystemController::Tick(float DeltaSeconds)
@@ -287,6 +288,36 @@ bool ATrafficSystemController::BuildNetworkInternal(UWorld* World)
 		Network.Lanes.Num(),
 		Network.Intersections.Num(),
 		Network.Movements.Num());
+
+	const int32 StopLineAuto = ReadIntCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAuto"), 0);
+	if (StopLineAuto != 0)
+	{
+		const float Scale = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoWidthScale"), 0.15f));
+		const float MinCm = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMinCm"), 40.f));
+		const float MaxCm = FMath::Max(MinCm, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMaxCm"), 90.f));
+		const float NominalCm = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoNominalLaneWidthCm"), 350.f));
+		const float BufferCm = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoBufferCm"), 20.f));
+
+		const FTrafficLane* SampleLane = Network.Lanes.Num() > 0 ? &Network.Lanes[0] : nullptr;
+		const float LaneWidth = SampleLane ? SampleLane->Width : 0.f;
+		const float AutoOffset = ComputeAutoStopLineOffsetCm_Controller(LaneWidth);
+
+		UE_LOG(LogTraffic, Log,
+			TEXT("[TrafficSystemController] StopLineAuto enabled=1 laneWidth=%.1f autoOffset=%.1f scale=%.2f min=%.1f max=%.1f buffer=%.1f nominal=%.1f"),
+			LaneWidth,
+			AutoOffset,
+			Scale,
+			MinCm,
+			MaxCm,
+			BufferCm,
+			NominalCm);
+	}
+	else
+	{
+		const float BaseOffset = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm"), 0.f));
+		UE_LOG(LogTraffic, Log, TEXT("[TrafficSystemController] StopLineAuto enabled=0 baseOffset=%.1f (auto settings ignored)"),
+			BaseOffset);
+	}
 
 	return Network.Roads.Num() > 0 && Network.Lanes.Num() > 0;
 }
@@ -841,7 +872,7 @@ bool ATrafficSystemController::TryReserveIntersection(int32 IntersectionId, ATra
 
 		if (Intersection)
 		{
-			const float StopLineOffsetCm = GetEffectiveStopLineOffsetCm(nullptr);
+			const float StopLineOffsetCm = GetEffectiveStopLineOffsetCm_Controller(nullptr);
 
 			// Avoid dropping a reservation while the vehicle is still physically near/within the intersection,
 			// even if the time-based hold expires (release should normally clear it).
@@ -1051,7 +1082,7 @@ bool ATrafficSystemController::ShouldYieldPermittedLeft(const FTrafficNetwork& N
 			continue;
 		}
 
-		const float StopLineOffset = GetEffectiveStopLineOffsetCm(Lane);
+		const float StopLineOffset = GetEffectiveStopLineOffsetCm_Controller(Lane);
 		const float StopS = FMath::Max(0.f, LaneLen - StopLineOffset);
 		const float DistToStop = StopS - OtherS;
 		if (DistToStop <= ApproachDistance)

@@ -1,6 +1,7 @@
 #include "Misc/AutomationTest.h"
 #include "Modules/ModuleManager.h"
 #include "TrafficAutomationLogger.h"
+#include "TrafficChaosTestUtils.h"
 #include "TrafficRuntimeModule.h"
 #include "TrafficSystemController.h"
 #include "TrafficVehicleManager.h"
@@ -10,6 +11,7 @@
 #include "EngineUtils.h"
 #include "Tests/AutomationEditorCommon.h"
 #include "Engine/World.h"
+#include "HAL/IConsoleManager.h"
 #include "UObject/Class.h"
 #include "UObject/UnrealType.h"
 
@@ -117,9 +119,23 @@ bool FTrafficSpawnShortLaneTest::RunTest(const FString& Parameters)
 	const FString LocalTestName = TEXT("Traffic.Spawn.ShortLane");
 	UTrafficAutomationLogger::BeginTestLog(LocalTestName);
 	UTrafficAutomationLogger::LogLine(FString::Printf(TEXT("[AAA Traffic] Version=%s"), TEXT(AAA_TRAFFIC_PLUGIN_VERSION)));
+	bool bSavedVisualMode = false;
+	int32 PrevVisualMode = 0;
+	auto RestoreVisualMode = [&]()
+	{
+		if (bSavedVisualMode)
+		{
+			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.Mode")))
+			{
+				Var->Set(PrevVisualMode, ECVF_SetByCode);
+			}
+			bSavedVisualMode = false;
+		}
+	};
 
 	if (!ValidateRuntimeModuleLoaded(this))
 	{
+		RestoreVisualMode();
 		UTrafficAutomationLogger::EndTestLog();
 		return false;
 	}
@@ -128,8 +144,16 @@ bool FTrafficSpawnShortLaneTest::RunTest(const FString& Parameters)
 	if (!World)
 	{
 		AddError(TEXT("No editor world available."));
+		RestoreVisualMode();
 		UTrafficAutomationLogger::EndTestLog();
 		return false;
+	}
+
+	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.Mode")))
+	{
+		PrevVisualMode = Var->GetInt();
+		Var->Set(2, ECVF_SetByCode);
+		bSavedVisualMode = true;
 	}
 
 	FTrafficNetwork Network;
@@ -142,22 +166,38 @@ bool FTrafficSpawnShortLaneTest::RunTest(const FString& Parameters)
 	ATrafficVehicleManager* Manager = SpawnManagerWithNetwork(World, Network, this);
 	if (!Manager)
 	{
+		RestoreVisualMode();
 		UTrafficAutomationLogger::EndTestLog();
 		return false;
 	}
 
-	Manager->SetForceLogicOnlyForTests(true);
+	Manager->SetForceLogicOnlyForTests(false);
 	Manager->SpawnTestVehicles(3, 800.f);
 
 	int32 NumVehicles = 0;
+	bool bChaosOk = true;
 	for (TActorIterator<ATrafficVehicleBase> It(World); It; ++It)
 	{
+		ATrafficVehicleBase* Logic = *It;
+		if (Logic)
+		{
+			ATrafficVehicleAdapter* Adapter = nullptr;
+			APawn* Chaos = nullptr;
+			FString Error;
+			if (!TrafficChaosTestUtils::EnsureChaosForLogicVehicle(*World, *Logic, Adapter, Chaos, Error))
+			{
+				bChaosOk = false;
+				AddError(Error);
+			}
+		}
 		++NumVehicles;
 	}
 
 	UTrafficAutomationLogger::LogMetric(TEXT("ShortLaneSpawnCount"), FString::FromInt(NumVehicles));
+	TestTrue(TEXT("Short lane spawn requires Chaos for logic vehicles"), bChaosOk);
 	TestTrue(TEXT("Short lane should spawn at most 1 vehicle"), NumVehicles <= 1);
 
+	RestoreVisualMode();
 	UTrafficAutomationLogger::EndTestLog();
 	return true;
 }
@@ -167,9 +207,23 @@ bool FTrafficSpawnNormalLaneTest::RunTest(const FString& Parameters)
 	const FString LocalTestName = TEXT("Traffic.Spawn.NormalLane");
 	UTrafficAutomationLogger::BeginTestLog(LocalTestName);
 	UTrafficAutomationLogger::LogLine(FString::Printf(TEXT("[AAA Traffic] Version=%s"), TEXT(AAA_TRAFFIC_PLUGIN_VERSION)));
+	bool bSavedVisualMode = false;
+	int32 PrevVisualMode = 0;
+	auto RestoreVisualMode = [&]()
+	{
+		if (bSavedVisualMode)
+		{
+			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.Mode")))
+			{
+				Var->Set(PrevVisualMode, ECVF_SetByCode);
+			}
+			bSavedVisualMode = false;
+		}
+	};
 
 	if (!ValidateRuntimeModuleLoaded(this))
 	{
+		RestoreVisualMode();
 		UTrafficAutomationLogger::EndTestLog();
 		return false;
 	}
@@ -178,8 +232,16 @@ bool FTrafficSpawnNormalLaneTest::RunTest(const FString& Parameters)
 	if (!World)
 	{
 		AddError(TEXT("No editor world available."));
+		RestoreVisualMode();
 		UTrafficAutomationLogger::EndTestLog();
 		return false;
+	}
+
+	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.Mode")))
+	{
+		PrevVisualMode = Var->GetInt();
+		Var->Set(2, ECVF_SetByCode);
+		bSavedVisualMode = true;
 	}
 
 	const int32 DesiredVehiclesPerLane = 3;
@@ -194,22 +256,38 @@ bool FTrafficSpawnNormalLaneTest::RunTest(const FString& Parameters)
 	ATrafficVehicleManager* Manager = SpawnManagerWithNetwork(World, Network, this);
 	if (!Manager)
 	{
+		RestoreVisualMode();
 		UTrafficAutomationLogger::EndTestLog();
 		return false;
 	}
 
-	Manager->SetForceLogicOnlyForTests(true);
+	Manager->SetForceLogicOnlyForTests(false);
 	Manager->SpawnTestVehicles(DesiredVehiclesPerLane, 800.f);
 
 	int32 NumVehicles = 0;
+	bool bChaosOk = true;
 	for (TActorIterator<ATrafficVehicleBase> It(World); It; ++It)
 	{
+		ATrafficVehicleBase* Logic = *It;
+		if (Logic)
+		{
+			ATrafficVehicleAdapter* Adapter = nullptr;
+			APawn* Chaos = nullptr;
+			FString Error;
+			if (!TrafficChaosTestUtils::EnsureChaosForLogicVehicle(*World, *Logic, Adapter, Chaos, Error))
+			{
+				bChaosOk = false;
+				AddError(Error);
+			}
+		}
 		++NumVehicles;
 	}
 
 	UTrafficAutomationLogger::LogMetric(TEXT("NormalLaneSpawnCount"), FString::FromInt(NumVehicles));
+	TestTrue(TEXT("Normal lane spawn requires Chaos for logic vehicles"), bChaosOk);
 	TestEqual(TEXT("Normal lane should spawn desired vehicles"), NumVehicles, DesiredVehiclesPerLane);
 
+	RestoreVisualMode();
 	UTrafficAutomationLogger::EndTestLog();
 	return true;
 }

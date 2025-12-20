@@ -19,9 +19,12 @@ namespace
 		FString Failure;
 		UWorld* PIEWorld = nullptr;
 		float LastSampleWorldTime = -1000.f;
+		double LastSampleRealTime = -1000.0;
 		float EndWorldTime = -1.f;
+		double EndRealTime = -1.0;
 		int32 Samples = 0;
 		float StartWorldTime = -1.f;
+		double StartRealTime = -1.0;
 		int32 ConsecutiveBadSamples = 0;
 	};
 
@@ -93,21 +96,31 @@ namespace
 		}
 
 		const float Now = World->GetTimeSeconds();
+		const double NowReal = FPlatformTime::Seconds();
 		if (State->StartWorldTime < 0.f)
 		{
 			State->StartWorldTime = Now;
+		}
+		if (State->StartRealTime < 0.0)
+		{
+			State->StartRealTime = NowReal;
 		}
 		if (State->EndWorldTime < 0.f)
 		{
 			State->EndWorldTime = Now + FMath::Max(0.f, DurationSeconds);
 		}
+		if (State->EndRealTime < 0.0)
+		{
+			State->EndRealTime = NowReal + FMath::Max(0.f, DurationSeconds);
+		}
 
 		static const float SampleInterval = 0.2f;
-		if ((Now - State->LastSampleWorldTime) < SampleInterval)
+		if ((NowReal - State->LastSampleRealTime) < SampleInterval)
 		{
 			return false;
 		}
 		State->LastSampleWorldTime = Now;
+		State->LastSampleRealTime = NowReal;
 		State->Samples++;
 
 		int32 Checked = 0;
@@ -125,7 +138,7 @@ namespace
 			Checked++;
 
 			// Allow a brief initial window where visual + logic actors may not yet be aligned (streaming / first tick ordering).
-			const bool bPastWarmup = (Now - State->StartWorldTime) >= 2.0f;
+			const bool bPastWarmup = (NowReal - State->StartRealTime) >= 2.0;
 
 			// This catches the exact "snapped into the air / violently flying" failure: Chaos pawn Z diverges from
 			// the lane-following logic vehicle by a large margin for multiple consecutive samples.
@@ -157,7 +170,7 @@ namespace
 		}
 
 		// If we couldn't find any adapters at all, fail (map/config regression).
-		if (Checked == 0 && Now > 2.0f)
+		if (Checked == 0 && (NowReal - State->StartRealTime) > 2.0)
 		{
 			State->bFailed = true;
 			State->Failure = TEXT("No TrafficVehicleAdapter actors found to validate.");
@@ -168,7 +181,7 @@ namespace
 			return true;
 		}
 
-		if (Now >= State->EndWorldTime)
+		if (NowReal >= State->EndRealTime)
 		{
 			if (Test && !State->bFailed)
 			{
