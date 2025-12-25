@@ -64,6 +64,12 @@ static TAutoConsoleVariable<int32> CVarTrafficLogAllIntersectionSummaries(
 	TEXT("If non-zero and DrawAllIntersectionDebug=1, logs IntersectionId/In/Out/Mov summaries to the Output Log (helps when viewport labels are hard to read)."),
 	ECVF_Default);
 
+static TAutoConsoleVariable<int32> CVarTrafficLogIntersectionLaneEndDistances(
+	TEXT("aaa.Traffic.Debug.LogIntersectionLaneEndDistances"),
+	0,
+	TEXT("If non-zero, logs per-lane 2D distance (cm) from each lane endpoint to the focused intersection center (helps quantify lane truncation vs intersection anchor)."),
+	ECVF_Default);
+
 static TAutoConsoleVariable<int32> CVarTrafficEditorVehiclesPerLane(
 	TEXT("aaa.Traffic.EditorTest.VehiclesPerLane"),
 	1,
@@ -2055,10 +2061,51 @@ void UTrafficSystemEditorSubsystem::DoDrawIntersectionDebug()
 		}
 
 		UE_LOG(LogTraffic, Log,
-			TEXT("[TrafficEditor] IntersectionDebug: Focus IntersectionId=%d (In=%d Out=%d). Use aaa.Traffic.Debug.DrawAllIntersectionDebug=1 to draw all."),
+			TEXT("[TrafficEditor] IntersectionDebug: Focus IntersectionId=%d Center=(%.0f,%.0f,%.0f) Radius=%.1fcm (In=%d Out=%d). Use aaa.Traffic.Debug.DrawAllIntersectionDebug=1 to draw all."),
 			TargetIntersection->IntersectionId,
+			TargetIntersection->Center.X,
+			TargetIntersection->Center.Y,
+			TargetIntersection->Center.Z,
+			TargetIntersection->Radius,
 			TargetIntersection->IncomingLaneIds.Num(),
 			TargetIntersection->OutgoingLaneIds.Num());
+
+		if (CVarTrafficLogIntersectionLaneEndDistances.GetValueOnGameThread() != 0)
+		{
+			UE_LOG(LogTraffic, Log, TEXT("[TrafficEditor] IntersectionDebug: Lane end distances to center (cm):"));
+			for (const int32 LaneId : RelevantLaneIds)
+			{
+				const FTrafficLane* LanePtr = Network.Lanes.FindByPredicate([&](const FTrafficLane& L) { return L.LaneId == LaneId; });
+				if (!LanePtr || LanePtr->CenterlinePoints.Num() < 2)
+				{
+					continue;
+				}
+
+				const FVector StartPos = LanePtr->CenterlinePoints[0];
+				const FVector EndPos = LanePtr->CenterlinePoints.Last();
+				const float StartDistCm = FVector::Dist2D(StartPos, TargetIntersection->Center);
+				const float EndDistCm = FVector::Dist2D(EndPos, TargetIntersection->Center);
+				const bool bStartIsNear = StartDistCm <= EndDistCm;
+				const FVector NearPos = bStartIsNear ? StartPos : EndPos;
+				const float NearDistCm = bStartIsNear ? StartDistCm : EndDistCm;
+				const TCHAR* NearEndpoint = bStartIsNear ? TEXT("start") : TEXT("end");
+				const TCHAR* InOut =
+					TargetIntersection->IncomingLaneIds.Contains(LaneId) ? TEXT("IN") :
+					TargetIntersection->OutgoingLaneIds.Contains(LaneId) ? TEXT("OUT") :
+					TEXT("UNK");
+
+				UE_LOG(LogTraffic, Log,
+					TEXT("[TrafficEditor]  %s LaneId=%d near=%s dist=%.1f width=%.1f endPos=(%.0f,%.0f,%.0f)"),
+					InOut,
+					LaneId,
+					NearEndpoint,
+					NearDistCm,
+					LanePtr->Width,
+					NearPos.X,
+					NearPos.Y,
+					NearPos.Z);
+			}
+		}
 
 		// Refresh selectable endpoint markers for this intersection to allow "click an endpoint" workflows.
 		for (TActorIterator<ATrafficLaneEndpointMarkerActor> It(World); It; ++It)
@@ -2166,11 +2213,12 @@ void UTrafficSystemEditorSubsystem::DoDrawIntersectionDebug()
 		if (bDrawAll && CVarTrafficLogAllIntersectionSummaries.GetValueOnGameThread() != 0)
 		{
 			UE_LOG(LogTraffic, Log,
-				TEXT("[TrafficEditor] Intersection %d @ (%.0f, %.0f, %.0f) In=%d Out=%d Mov=%d"),
+				TEXT("[TrafficEditor] Intersection %d @ (%.0f, %.0f, %.0f) R=%.1fcm In=%d Out=%d Mov=%d"),
 				Intersection.IntersectionId,
 				Intersection.Center.X,
 				Intersection.Center.Y,
 				Intersection.Center.Z,
+				Intersection.Radius,
 				Intersection.IncomingLaneIds.Num(),
 				Intersection.OutgoingLaneIds.Num(),
 				MovementCount);
@@ -2179,8 +2227,9 @@ void UTrafficSystemEditorSubsystem::DoDrawIntersectionDebug()
 		DrawDebugString(
 			World,
 			Intersection.Center + FVector(0.f, 0.f, ZOffsetMovement + 60.f),
-			FString::Printf(TEXT("Intersection %d\nIn=%d Out=%d Mov=%d"),
+			FString::Printf(TEXT("Intersection %d\nR=%.0fcm In=%d Out=%d Mov=%d"),
 				Intersection.IntersectionId,
+				Intersection.Radius,
 				Intersection.IncomingLaneIds.Num(),
 				Intersection.OutgoingLaneIds.Num(),
 				MovementCount),

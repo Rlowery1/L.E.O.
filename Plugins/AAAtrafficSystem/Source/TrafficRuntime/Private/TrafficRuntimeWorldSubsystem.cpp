@@ -83,6 +83,45 @@ namespace
 		return DefaultValue;
 	}
 
+	static void LogIntersectionCVarSnapshot(const TCHAR* Context)
+	{
+		auto LogInt = [](const TCHAR* Name, int32 Fallback)
+		{
+			IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(Name);
+			UE_LOG(LogTraffic, Log, TEXT("[TrafficRuntimeWorldSubsystem] CVar %s=%d (setBy=%s)"), Name, Var ? Var->GetInt() : Fallback, GetCVarSetByString(Var));
+		};
+		auto LogFloat = [](const TCHAR* Name, float Fallback)
+		{
+			IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(Name);
+			UE_LOG(LogTraffic, Log, TEXT("[TrafficRuntimeWorldSubsystem] CVar %s=%.3f (setBy=%s)"), Name, Var ? Var->GetFloat() : Fallback, GetCVarSetByString(Var));
+		};
+
+		UE_LOG(LogTraffic, Log, TEXT("[TrafficRuntimeWorldSubsystem] Intersection CVar snapshot (%s):"), Context ? Context : TEXT("Unknown"));
+
+		LogFloat(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm"), 300.f);
+		LogInt(TEXT("aaa.Traffic.Intersections.StopLineOffsetAuto"), 1);
+		LogFloat(TEXT("aaa.Traffic.Intersections.ClusterRadiusCm"), 500.f);
+		LogInt(TEXT("aaa.Traffic.Intersections.AnchorFromActors"), 1);
+		LogFloat(TEXT("aaa.Traffic.Intersections.RadiusLaneWidthScale"), 1.25f);
+
+		// Extra context for stop-line auto behavior.
+		LogFloat(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoWidthScale"), 0.25f);
+		LogFloat(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMinCm"), 40.f);
+		LogFloat(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMaxCm"), 120.f);
+		LogFloat(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoNominalLaneWidthCm"), 350.f);
+		LogFloat(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoBufferCm"), 50.f);
+	}
+
+	static void DumpIntersectionCVarSnapshot_Console()
+	{
+		LogIntersectionCVarSnapshot(TEXT("Console"));
+	}
+
+	static FAutoConsoleCommand CCmdDumpIntersectionCVars(
+		TEXT("aaa.Traffic.Debug.DumpIntersectionCVars"),
+		TEXT("Logs key intersection-related console variables (stop line offset, clustering radius, anchoring, radius clamps)."),
+		FConsoleCommandDelegate::CreateStatic(&DumpIntersectionCVarSnapshot_Console));
+
 	static void ApplyIntersectionStopLineDefaultsForWorld(UWorld& World)
 	{
 		IConsoleVariable* StopLineVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm"));
@@ -990,6 +1029,7 @@ void UTrafficRuntimeWorldSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	ApplyIntersectionStopLineDefaultsForWorld(InWorld);
 	ApplyIntersectionControlDefaultsForWorld(InWorld);
 	ApplyRoutingDefaultsForWorld(InWorld);
+	LogIntersectionCVarSnapshot(TEXT("BeginPlay"));
 
 	// Always log the effective runtime defaults once per PIE/Game session to make debugging "press play and send logs" easy.
 	auto ReadIntCVar = [](const TCHAR* Name, int32 Fallback) -> int32

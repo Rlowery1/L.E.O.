@@ -4,6 +4,8 @@
 #include "TrafficMovementGeometry.h"
 #include "TrafficRuntimeModule.h"
 #include "HAL/IConsoleManager.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
 
@@ -159,6 +161,12 @@ namespace
 		TEXT("If non-zero, log anchor radius clamp diagnostics per intersection. Default: 0."),
 		ECVF_Default);
 
+	static TAutoConsoleVariable<int32> CVarTrafficIntersectionAnchorDebugMaxActors(
+		TEXT("aaa.Traffic.Intersections.AnchorDebugMaxActors"),
+		50,
+		TEXT("Max number of anchor actors to log when AnchorDebug=1 (prevents extremely large logs). Default: 50."),
+		ECVF_Default);
+
 	struct FIntersectionAnchor
 	{
 		FVector Center = FVector::ZeroVector;
@@ -285,6 +293,10 @@ namespace
 		const FName TagName(*TagString);
 		const float RadiusScale = FMath::Max(0.f, CVarTrafficIntersectionAnchorRadiusScale.GetValueOnGameThread());
 		const float RadiusBias = CVarTrafficIntersectionAnchorRadiusBiasCm.GetValueOnGameThread();
+		const bool bDebug = CVarTrafficIntersectionAnchorDebug.GetValueOnGameThread() != 0;
+		const int32 MaxLoggedActors = FMath::Max(0, CVarTrafficIntersectionAnchorDebugMaxActors.GetValueOnGameThread());
+		int32 LoggedActors = 0;
+		bool bLogTruncated = false;
 
 		for (TActorIterator<AActor> It(World); It; ++It)
 		{
@@ -331,6 +343,57 @@ namespace
 			if (Radius <= KINDA_SMALL_NUMBER)
 			{
 				continue;
+			}
+
+			if (bDebug && MaxLoggedActors > 0 && LoggedActors < MaxLoggedActors)
+			{
+				const FString ActorName = Actor->GetName();
+				const FString ClassName = Actor->GetClass() ? Actor->GetClass()->GetName() : FString(TEXT("None"));
+#if WITH_EDITOR
+				const FString Label = Actor->GetActorLabel();
+#else
+				const FString Label;
+#endif
+				UE_LOG(LogTraffic, Log,
+					TEXT("[FTrafficNetworkBuilder] AnchorActor name=%s class=%s label=%s center=(%.1f,%.1f,%.1f) extent=(%.1f,%.1f,%.1f) rawRadius=%.1f radiusScale=%.2f radiusBias=%.1f finalRadius=%.1f"),
+					*ActorName,
+					*ClassName,
+					*Label,
+					Center.X, Center.Y, Center.Z,
+					Extent.X, Extent.Y, Extent.Z,
+					RawRadius,
+					RadiusScale,
+					RadiusBias,
+					Radius);
+
+				TArray<UStaticMeshComponent*> MeshComponents;
+				Actor->GetComponents<UStaticMeshComponent>(MeshComponents);
+				for (UStaticMeshComponent* SMC : MeshComponents)
+				{
+					if (!SMC)
+					{
+						continue;
+					}
+
+					const FBoxSphereBounds CompBounds = SMC->CalcBounds(SMC->GetComponentTransform());
+					const UStaticMesh* Mesh = SMC->GetStaticMesh();
+					const FBoxSphereBounds MeshBounds = Mesh ? Mesh->GetBounds() : FBoxSphereBounds(FVector::ZeroVector, FVector::ZeroVector, 0.f);
+					UE_LOG(LogTraffic, Log,
+						TEXT("[FTrafficNetworkBuilder]  - StaticMeshComponent name=%s mesh=%s worldExtent=(%.1f,%.1f,%.1f) meshExtent=(%.1f,%.1f,%.1f)"),
+						*SMC->GetName(),
+						Mesh ? *Mesh->GetName() : TEXT("None"),
+						CompBounds.BoxExtent.X, CompBounds.BoxExtent.Y, CompBounds.BoxExtent.Z,
+						MeshBounds.BoxExtent.X, MeshBounds.BoxExtent.Y, MeshBounds.BoxExtent.Z);
+				}
+
+				++LoggedActors;
+			}
+			else if (bDebug && !bLogTruncated && MaxLoggedActors > 0)
+			{
+				bLogTruncated = true;
+				UE_LOG(LogTraffic, Warning,
+					TEXT("[FTrafficNetworkBuilder] AnchorDebug: actor logging truncated (max=%d). Increase aaa.Traffic.Intersections.AnchorDebugMaxActors if needed."),
+					MaxLoggedActors);
 			}
 
 			FIntersectionAnchor Anchor;
@@ -1075,6 +1138,14 @@ void FTrafficNetworkBuilder::BuildNetworkFromRoads(
 	}
 
 	const float ClusterRadiusCm = FMath::Max(0.f, CVarTrafficIntersectionClusterRadiusCm.GetValueOnGameThread());
+	IConsoleVariable* ClusterVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.ClusterRadiusCm"));
+	IConsoleVariable* RadiusClampVar = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.RadiusLaneWidthScale"));
+	UE_LOG(LogTraffic, Log,
+		TEXT("[FTrafficNetworkBuilder] ClusterRadiusCm=%.1f (setBy=%s) RadiusLaneWidthScale=%.2f (setBy=%s)"),
+		ClusterRadiusCm,
+		GetCVarSetByString(ClusterVar),
+		CVarTrafficIntersectionRadiusLaneWidthScale.GetValueOnGameThread(),
+		GetCVarSetByString(RadiusClampVar));
 	BuildIntersectionsAndMovements(OutNetwork, ClusterRadiusCm);
 	ClampIntersectionRadiiByLaneWidth(OutNetwork);
 }
