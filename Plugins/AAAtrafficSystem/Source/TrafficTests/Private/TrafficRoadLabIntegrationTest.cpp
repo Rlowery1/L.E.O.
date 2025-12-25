@@ -44,6 +44,8 @@ namespace
 		FTrafficRunMetrics Metrics;
 		bool bSavedVisualMode = false;
 		int32 PrevVisualMode = INDEX_NONE;
+		bool bSavedDeferSpawn = false;
+		int32 PrevDeferSpawn = 1;
 	};
 
 	static void TickEditorWorld(UWorld* World, float DeltaSeconds)
@@ -66,6 +68,46 @@ namespace
 			It->SampleLaneTrackingError(Metrics);
 			It->SampleDynamics(Metrics, DeltaSeconds);
 		}
+	}
+
+	static int32 EnableMeshRoadCollision(UWorld* World)
+	{
+		if (!World)
+		{
+			return 0;
+		}
+
+		int32 MeshRoadCount = 0;
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			AActor* Actor = *It;
+			if (!Actor)
+			{
+				continue;
+			}
+			if (!Actor->GetClass()->GetName().Contains(TEXT("BP_MeshRoad")))
+			{
+				continue;
+			}
+
+			++MeshRoadCount;
+
+			TArray<UPrimitiveComponent*> PrimitiveComponents;
+			Actor->GetComponents<UPrimitiveComponent>(PrimitiveComponents);
+			for (UPrimitiveComponent* Primitive : PrimitiveComponents)
+			{
+				if (!Primitive)
+				{
+					continue;
+				}
+
+				Primitive->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+				Primitive->SetCollisionObjectType(ECC_WorldStatic);
+				Primitive->SetCollisionResponseToAllChannels(ECR_Block);
+			}
+		}
+
+		return MeshRoadCount;
 	}
 
 	static bool CreateAndSaveRoadLabMap(const FString& MapPackagePath)
@@ -181,17 +223,7 @@ bool FTrafficPIESpawnAndRunCommand::Update()
 	UWorld* PIEWorld = State->PIEWorld;
 	UTrafficAutomationLogger::LogLine(TEXT("PIE_Step=BuildNetwork"));
 
-	int32 MeshRoadCount = 0;
-	for (TActorIterator<AActor> It(PIEWorld); It; ++It)
-	{
-		if (AActor* Actor = *It)
-		{
-			if (Actor->GetClass()->GetName().Contains(TEXT("BP_MeshRoad")))
-			{
-				++MeshRoadCount;
-			}
-		}
-	}
+	const int32 MeshRoadCount = EnableMeshRoadCollision(PIEWorld);
 	UTrafficAutomationLogger::LogMetricInt(TEXT("PIE.MeshRoadActors"), MeshRoadCount);
 	if (MeshRoadCount == 0)
 	{
@@ -283,6 +315,14 @@ bool FTrafficPIESpawnAndRunCommand::Update()
 	TSharedRef<FTrafficPIETestState> LocalState = State;
 	auto RestoreVisualMode = [LocalState]()
 	{
+		if (LocalState->bSavedDeferSpawn)
+		{
+			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Runtime.DeferSpawnUntilRoadCollision")))
+			{
+				Var->Set(LocalState->PrevDeferSpawn, ECVF_SetByCode);
+			}
+			LocalState->bSavedDeferSpawn = false;
+		}
 		if (!LocalState->bSavedVisualMode)
 		{
 			return;
@@ -303,23 +343,49 @@ bool FTrafficPIESpawnAndRunCommand::Update()
 			Var->Set(2, ECVF_SetByCode);
 		}
 	}
+	if (!State->bSavedDeferSpawn)
+	{
+		if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Runtime.DeferSpawnUntilRoadCollision")))
+		{
+			State->PrevDeferSpawn = Var->GetInt();
+			State->bSavedDeferSpawn = true;
+			Var->Set(0, ECVF_SetByCode);
+		}
+	}
 
 	Manager->SetForceLogicOnlyForTests(false);
 	Manager->SetActiveRunMetrics(&State->Metrics);
 	Manager->SpawnTestVehicles(3, 800.f);
 
-	int32 VehicleCount = 0;
-	int32 Logged = 0;
-	for (TActorIterator<ATrafficVehicleBase> It(PIEWorld); It; ++It)
+	auto CountVehicles = [&](int32 MaxLog) -> int32
 	{
-		++VehicleCount;
-		if (Logged < 3)
+		int32 Count = 0;
+		int32 Logged = 0;
+		for (TActorIterator<ATrafficVehicleBase> It(PIEWorld); It; ++It)
 		{
-			FVector Loc = It->GetActorLocation();
-			UTrafficAutomationLogger::LogLine(FString::Printf(TEXT("PIE_Vehicle%d_Location=%.0f,%.0f,%.0f"), Logged, Loc.X, Loc.Y, Loc.Z));
-			++Logged;
+			++Count;
+			if (Logged < MaxLog)
+			{
+				const FVector Loc = It->GetActorLocation();
+				UTrafficAutomationLogger::LogLine(FString::Printf(TEXT("PIE_Vehicle%d_Location=%.0f,%.0f,%.0f"), Logged, Loc.X, Loc.Y, Loc.Z));
+				++Logged;
+			}
 		}
+		return Count;
+	};
+
+	const double SpawnStart = FPlatformTime::Seconds();
+	const double SpawnTimeout = 10.0;
+	const float SpawnTickSeconds = 0.1f;
+	int32 VehicleCount = CountVehicles(0);
+	while (VehicleCount == 0 && (FPlatformTime::Seconds() - SpawnStart) < SpawnTimeout)
+	{
+		PIEWorld->Tick(LEVELTICK_All, SpawnTickSeconds);
+		VehicleCount = CountVehicles(0);
 	}
+
+	UTrafficAutomationLogger::LogMetricFloat(TEXT("PIE.SpawnWaitSeconds"), static_cast<float>(FPlatformTime::Seconds() - SpawnStart), 2);
+	VehicleCount = CountVehicles(3);
 
 	if (VehicleCount == 0)
 	{
@@ -538,6 +604,26 @@ bool FTrafficRoadLabIntegrationTest::RunTest(const FString& Parameters)
 			return nullptr;
 		}
 
+		TArray<USplineComponent*> Splines;
+		RoadActor->GetComponents<USplineComponent>(Splines);
+		for (USplineComponent* Spline : Splines)
+		{
+			if (!Spline)
+			{
+				continue;
+			}
+			Spline->ClearSplinePoints(false);
+			Spline->AddSplinePoint(FVector::ZeroVector, ESplineCoordinateSpace::Local, false);
+			Spline->AddSplinePoint(FVector(10000.f, 0.f, 0.f), ESplineCoordinateSpace::Local, false);
+			Spline->SetSplinePointType(0, ESplinePointType::Linear, false);
+			Spline->SetSplinePointType(1, ESplinePointType::Linear, false);
+			Spline->SetClosedLoop(false);
+			Spline->UpdateSpline();
+		}
+#if WITH_EDITOR
+		RoadActor->PostEditChange();
+#endif
+
 		TArray<UPrimitiveComponent*> PrimComps;
 		RoadActor->GetComponents<UPrimitiveComponent>(PrimComps);
 		for (UPrimitiveComponent* Prim : PrimComps)
@@ -670,7 +756,24 @@ bool FTrafficRoadLabIntegrationTest::RunTest(const FString& Parameters)
 		RoadCount, LaneCount, IntersectionCount, MovementCount));
 
 	UTrafficAutomationLogger::LogLine(TEXT("Phase=Cars"));
+	bool bSavedDeferSpawn = false;
+	int32 PrevDeferSpawn = 1;
+	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Runtime.DeferSpawnUntilRoadCollision")))
+	{
+		PrevDeferSpawn = Var->GetInt();
+		bSavedDeferSpawn = true;
+		Var->Set(0, ECVF_SetByCode);
+	}
+
 	Subsys->DoCars();
+
+	if (bSavedDeferSpawn)
+	{
+		if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Runtime.DeferSpawnUntilRoadCollision")))
+		{
+			Var->Set(PrevDeferSpawn, ECVF_SetByCode);
+		}
+	}
 	TickEditorWorld(World, 0.1f);
 
 	int32 VehicleCount = 0;
@@ -807,6 +910,7 @@ bool FTrafficRoadLabIntegrationPIETest::RunTest(const FString& Parameters)
 	UTrafficAutomationLogger::LogLine(TEXT("PIE_Prepare=DoPrepare"));
 	Subsys->DoPrepare();
 	Subsys->Editor_PrepareMapForTraffic();
+	UTrafficAutomationLogger::LogMetricInt(TEXT("PrePIE.MeshRoadActors"), EnableMeshRoadCollision(EditorWorld));
 
 	URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get();
 	if (!Registry || Registry->GetAllFamilies().Num() == 0)
@@ -850,7 +954,7 @@ bool FTrafficRoadLabIntegrationPIETest::RunTest(const FString& Parameters)
 		Subsys,
 		TEXT("Calibration.RoadLab.PIE.PrePIE"),
 		FamilyId,
-		/*MaxIterations=*/5,
+		/*MaxIterations=*/10,
 		EvalParams,
 		Thresholds,
 		AlignMetrics,

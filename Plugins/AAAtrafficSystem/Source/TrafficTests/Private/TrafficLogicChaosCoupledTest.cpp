@@ -47,8 +47,7 @@ namespace
 		int32 PrevReservationEnabled = 1;
 		int32 PrevRequireFullStop = 0;
 		int32 PrevControlMode = 0;
-		float PrevStopLineOffsetCm = 0.f;
-		int32 PrevStopLineOffsetAuto = 0;
+		int32 PrevHoldUntilRoadCollision = 1;
 
 		int32 LogicCount = 0;
 		int32 ChaosCount = 0;
@@ -459,13 +458,9 @@ namespace
 			{
 				Var->Set(State->PrevControlMode, ECVF_SetByCode);
 			}
-			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm")))
+			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.ChaosDrive.HoldUntilRoadCollision")))
 			{
-				Var->Set(State->PrevStopLineOffsetCm, ECVF_SetByCode);
-			}
-			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.StopLineOffsetAuto")))
-			{
-				Var->Set(State->PrevStopLineOffsetAuto, ECVF_SetByCode);
+				Var->Set(State->PrevHoldUntilRoadCollision, ECVF_SetByCode);
 			}
 			State->bSavedCVars = false;
 		}
@@ -568,14 +563,9 @@ bool FTrafficLogicChaosCoupledTest::RunTest(const FString& Parameters)
 		State->PrevControlMode = Var->GetInt();
 		Var->Set(0, ECVF_SetByCode);
 	}
-	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm")))
+	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Visual.ChaosDrive.HoldUntilRoadCollision")))
 	{
-		State->PrevStopLineOffsetCm = Var->GetFloat();
-		Var->Set(0.f, ECVF_SetByCode);
-	}
-	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Intersections.StopLineOffsetAuto")))
-	{
-		State->PrevStopLineOffsetAuto = Var->GetInt();
+		State->PrevHoldUntilRoadCollision = Var->GetInt();
 		Var->Set(0, ECVF_SetByCode);
 	}
 	AddExpectedError(TEXT("The Editor is currently in a play mode."), EAutomationExpectedErrorFlags::Contains, 6);

@@ -2381,7 +2381,22 @@ void ATrafficVehicleAdapter::Tick(float DeltaSeconds)
 		const FVector2D FwdN = Fwd2D.GetSafeNormal();
 
 		const FVector2D DesiredN = DesiredDir2D.GetSafeNormal();
-		const FVector2D AimN = (!DesiredN.IsNearlyZero()) ? DesiredN : ToN;
+
+		// Prefer aiming toward a lookahead point on the path (pure-pursuit style) so vehicles recover lateral offsets
+		// after small collisions/contacts. Fall back to the path tangent when the target is behind the vehicle.
+		FVector2D AimN = DesiredN;
+		if (!ToN.IsNearlyZero())
+		{
+			const float AheadDot = FVector2D::DotProduct(ToN, FwdN);
+			if (AheadDot > 0.f || AimN.IsNearlyZero())
+			{
+				AimN = ToN;
+			}
+		}
+		if (AimN.IsNearlyZero())
+		{
+			AimN = FwdN;
+		}
 
 		const float Cross = (FwdN.X * AimN.Y) - (FwdN.Y * AimN.X);
 		const float Dot = (FwdN.X * AimN.X) + (FwdN.Y * AimN.Y);

@@ -111,7 +111,7 @@ static bool IsPriorityTurnType(ETrafficTurnType TurnType)
 	return (TurnType == ETrafficTurnType::Through || TurnType == ETrafficTurnType::Right);
 }
 
-static float ReadFloatCVar(const TCHAR* Name, float DefaultValue)
+static float ReadFloatCVar_Controller(const TCHAR* Name, float DefaultValue)
 {
 	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(Name))
 	{
@@ -133,17 +133,17 @@ static float ComputeAutoStopLineOffsetCm_Controller(float LaneWidthCm)
 {
 	const float Width = (LaneWidthCm > KINDA_SMALL_NUMBER)
 		? LaneWidthCm
-		: FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoNominalLaneWidthCm"), 350.f));
-	const float Scale = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoWidthScale"), 0.25f));
-	const float MinCm = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMinCm"), 40.f));
-	const float MaxCm = FMath::Max(MinCm, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMaxCm"), 120.f));
-	const float BufferCm = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoBufferCm"), 50.f));
+		: FMath::Max(0.f, ReadFloatCVar_Controller(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoNominalLaneWidthCm"), 350.f));
+	const float Scale = FMath::Max(0.f, ReadFloatCVar_Controller(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoWidthScale"), 0.25f));
+	const float MinCm = FMath::Max(0.f, ReadFloatCVar_Controller(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMinCm"), 40.f));
+	const float MaxCm = FMath::Max(MinCm, ReadFloatCVar_Controller(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMaxCm"), 120.f));
+	const float BufferCm = FMath::Max(0.f, ReadFloatCVar_Controller(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoBufferCm"), 50.f));
 	return FMath::Clamp(Width * Scale, MinCm, MaxCm) + BufferCm;
 }
 
 static float GetEffectiveStopLineOffsetCm_Controller(const FTrafficLane* Lane)
 {
-	const float Base = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm"), 0.f));
+	const float Base = FMath::Max(0.f, ReadFloatCVar_Controller(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm"), 0.f));
 	if (ReadIntCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAuto"), 0) == 0)
 	{
 		return Base;
@@ -292,11 +292,11 @@ bool ATrafficSystemController::BuildNetworkInternal(UWorld* World)
 	const int32 StopLineAuto = ReadIntCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAuto"), 0);
 	if (StopLineAuto != 0)
 	{
-		const float Scale = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoWidthScale"), 0.15f));
-		const float MinCm = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMinCm"), 40.f));
-		const float MaxCm = FMath::Max(MinCm, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMaxCm"), 90.f));
-		const float NominalCm = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoNominalLaneWidthCm"), 350.f));
-		const float BufferCm = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoBufferCm"), 20.f));
+		const float Scale = FMath::Max(0.f, ReadFloatCVar_Controller(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoWidthScale"), 0.15f));
+		const float MinCm = FMath::Max(0.f, ReadFloatCVar_Controller(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMinCm"), 40.f));
+		const float MaxCm = FMath::Max(MinCm, ReadFloatCVar_Controller(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMaxCm"), 90.f));
+		const float NominalCm = FMath::Max(0.f, ReadFloatCVar_Controller(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoNominalLaneWidthCm"), 350.f));
+		const float BufferCm = FMath::Max(0.f, ReadFloatCVar_Controller(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoBufferCm"), 20.f));
 
 		const FTrafficLane* SampleLane = Network.Lanes.Num() > 0 ? &Network.Lanes[0] : nullptr;
 		const float LaneWidth = SampleLane ? SampleLane->Width : 0.f;
@@ -314,7 +314,7 @@ bool ATrafficSystemController::BuildNetworkInternal(UWorld* World)
 	}
 	else
 	{
-		const float BaseOffset = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm"), 0.f));
+		const float BaseOffset = FMath::Max(0.f, ReadFloatCVar_Controller(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm"), 0.f));
 		UE_LOG(LogTraffic, Log, TEXT("[TrafficSystemController] StopLineAuto enabled=0 baseOffset=%.1f (auto settings ignored)"),
 			BaseOffset);
 	}

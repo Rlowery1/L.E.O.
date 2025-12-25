@@ -87,6 +87,12 @@ namespace
 		TEXT("If non-zero, attempt to anchor intersection centers/radii and lane endpoints using intersection mesh actors. Default: 1."),
 		ECVF_Default);
 
+	static TAutoConsoleVariable<int32> CVarAnchorAllowRadialFallback(
+		TEXT("aaa.Traffic.Intersections.AnchorAllowRadialFallback"),
+		0,
+		TEXT("Allow radial fallback when adjusting endpoints to anchors (0/1)."),
+		ECVF_Default);
+
 	static TAutoConsoleVariable<FString> CVarTrafficIntersectionAnchorActorNameContains(
 		TEXT("aaa.Traffic.Intersections.AnchorActorNameContains"),
 		TEXT("MeshIntersection"),
@@ -411,13 +417,28 @@ namespace
 
 	static float ApplyAnchorRadiusClamp(float AnchorRadius, float AverageLaneWidthCm)
 	{
-		const float Scale = CVarTrafficIntersectionAnchorRadiusLaneWidthScale.GetValueOnGameThread();
-		if (Scale <= 0.f || AverageLaneWidthCm <= KINDA_SMALL_NUMBER)
+		if (AverageLaneWidthCm <= KINDA_SMALL_NUMBER)
 		{
 			return AnchorRadius;
 		}
-		const float MaxRadius = AverageLaneWidthCm * Scale;
-		return FMath::Min(AnchorRadius, MaxRadius);
+
+		// Anchor radii influence lane endpoint trimming. Keep them consistent with any intersection radius clamp so
+		// that lanes don't end up stopping far back due to an oversized anchor-derived radius.
+		float MaxRadius = TNumericLimits<float>::Max();
+
+		const float AnchorScale = CVarTrafficIntersectionAnchorRadiusLaneWidthScale.GetValueOnGameThread();
+		if (AnchorScale > 0.f)
+		{
+			MaxRadius = FMath::Min(MaxRadius, AverageLaneWidthCm * AnchorScale);
+		}
+
+		const float IntersectionScale = CVarTrafficIntersectionRadiusLaneWidthScale.GetValueOnGameThread();
+		if (IntersectionScale > 0.f)
+		{
+			MaxRadius = FMath::Min(MaxRadius, AverageLaneWidthCm * IntersectionScale);
+		}
+
+		return (MaxRadius < TNumericLimits<float>::Max()) ? FMath::Min(AnchorRadius, MaxRadius) : AnchorRadius;
 	}
 
 	static float ComputeAverageLaneWidthNearAnchor(
@@ -532,6 +553,7 @@ namespace
 		const float ExtendMax = FMath::Max(0.f, CVarTrafficIntersectionAnchorExtendMaxCm.GetValueOnGameThread());
 		const float EndpointTolerance = FMath::Max(0.f, CVarTrafficIntersectionAnchorEndpointToleranceCm.GetValueOnGameThread());
 		const bool bDebug = CVarTrafficIntersectionAnchorDebug.GetValueOnGameThread() != 0;
+		const bool bAllowRadialFallback = CVarAnchorAllowRadialFallback.GetValueOnGameThread() != 0;
 
 		int32 AdjustedLanes = 0;
 		TSet<int32> AdjustedLaneIds;
@@ -626,13 +648,13 @@ namespace
 
 			if (AlignDot < MinAlignDot)
 			{
-				return TryRadialCandidate();
+				return bAllowRadialFallback ? TryRadialCandidate() : false;
 			}
 
 			float T = 0.f;
 			if (!IntersectRayCircle2D(End, RayDir, Anchor.Center, EffectiveRadius, T))
 			{
-				return TryRadialCandidate();
+				return bAllowRadialFallback ? TryRadialCandidate() : false;
 			}
 
 			const FVector NewEnd = End + RayDir * T;

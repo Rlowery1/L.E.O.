@@ -75,6 +75,21 @@ namespace
 		return ComputeAutoStopLineOffsetCm_Test(LaneWidth);
 	}
 
+	static float ComputeStopLineBoundaryRadiusCm_Test(const FTrafficLane* Lane, float IntersectionRadius)
+	{
+		const float LaneWidth = (Lane && Lane->Width > KINDA_SMALL_NUMBER)
+			? Lane->Width
+			: FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoNominalLaneWidthCm"), 350.f));
+		const float LaneWidthScale = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusLaneWidthScale"), 1.2f));
+		float Radius = FMath::Min(IntersectionRadius, LaneWidth * LaneWidthScale);
+
+		const float MinCm = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusMinCm"), 60.f));
+		const float MaxCm = FMath::Max(MinCm, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusMaxCm"), 220.f));
+		Radius = FMath::Clamp(Radius, MinCm, MaxCm);
+		Radius += ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusBiasCm"), 20.f);
+		return FMath::Max(0.f, Radius);
+	}
+
 	static bool IntersectRayCircle2D_StopLineTest(
 		const FVector& RayOrigin,
 		const FVector& RayDir,
@@ -144,7 +159,11 @@ namespace
 			return false;
 		}
 
-		const float BoundaryRadius = FMath::Max(Radius, KINDA_SMALL_NUMBER);
+		const float BoundaryRadius = ComputeStopLineBoundaryRadiusCm_Test(&Lane, Radius);
+		if (BoundaryRadius <= KINDA_SMALL_NUMBER)
+		{
+			return false;
+		}
 		const float BoundaryRadiusSq = BoundaryRadius * BoundaryRadius;
 
 		TArray<float> CumulativeS;
@@ -213,42 +232,6 @@ namespace
 			const float IntersectionS = CumulativeS[i] + T;
 			OutStopS = FMath::Max(0.f, IntersectionS - StopLineOffsetCm);
 			return true;
-		}
-
-		const int32 LastIndex = Lane.CenterlinePoints.Num() - 1;
-		if (LastIndex <= 0)
-		{
-			return false;
-		}
-
-		const FVector EndPoint = Lane.CenterlinePoints[LastIndex];
-		if (FVector::DistSquared2D(EndPoint, Center) > BoundaryRadiusSq)
-		{
-			const FVector PrevPoint = Lane.CenterlinePoints[LastIndex - 1];
-			FVector2D RayDir2D(EndPoint.X - PrevPoint.X, EndPoint.Y - PrevPoint.Y);
-			FVector2D ToCenter2D(Center.X - EndPoint.X, Center.Y - EndPoint.Y);
-
-			if (RayDir2D.SizeSquared() <= KINDA_SMALL_NUMBER)
-			{
-				RayDir2D = ToCenter2D;
-			}
-
-			if (RayDir2D.SizeSquared() > KINDA_SMALL_NUMBER && FVector2D::DotProduct(RayDir2D, ToCenter2D) < 0.f)
-			{
-				RayDir2D *= -1.f;
-			}
-
-			if (RayDir2D.SizeSquared() > KINDA_SMALL_NUMBER)
-			{
-				const FVector RayDir(RayDir2D.X, RayDir2D.Y, 0.f);
-				float RayT = 0.f;
-				if (IntersectRayCircle2D_StopLineTest(EndPoint, RayDir, Center, BoundaryRadius, RayT))
-				{
-					const float IntersectionS = CumulativeS[LastIndex] + RayT;
-					OutStopS = FMath::Max(0.f, IntersectionS - StopLineOffsetCm);
-					return true;
-				}
-			}
 		}
 
 		return false;

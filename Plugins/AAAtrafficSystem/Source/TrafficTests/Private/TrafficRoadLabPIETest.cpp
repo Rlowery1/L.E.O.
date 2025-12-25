@@ -15,11 +15,15 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "UObject/Package.h"
+#include "Misc/PackageName.h"
+#include "Misc/Paths.h"
+#include "FileHelpers.h"
 #include "Components/SplineComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Tests/AutomationEditorCommon.h"
 #include "TrafficLaneCalibration.h"
 #include "RoadFamilyRegistry.h"
+#include "HAL/IConsoleManager.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTrafficRoadLabPIETest, "Traffic.Calibration.RoadLab.Editor",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -39,7 +43,18 @@ bool FTrafficRoadLabPIETest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	FAutomationEditorCommonUtils::CreateNewMap();
+	const FString RoadLabMapPath = TEXT("/Game/Maps/Test_Maps/RoadLab/Traffic_RoadLab");
+	const FString RoadLabFilename = FPackageName::LongPackageNameToFilename(RoadLabMapPath, FPackageName::GetMapPackageExtension());
+	bool bLoadedRoadLab = false;
+	if (FPaths::FileExists(RoadLabFilename))
+	{
+		UTrafficAutomationLogger::LogLine(FString::Printf(TEXT("RoadLab.LoadMap=%s"), *RoadLabFilename));
+		bLoadedRoadLab = FEditorFileUtils::LoadMap(RoadLabFilename, false, true);
+	}
+	if (!bLoadedRoadLab)
+	{
+		FAutomationEditorCommonUtils::CreateNewMap();
+	}
 
 	UWorld* World = GEditor->GetEditorWorldContext().World();
 	if (!World)
@@ -60,7 +75,7 @@ bool FTrafficRoadLabPIETest::RunTest(const FString& Parameters)
 	// Clean any prior AAA overlay/controller actors (do not delete user roads).
 	Subsys->Editor_ResetRoadLabHard(false);
 
-	// Spawn a couple of CityBLD roads so the forced CityBLD provider can build a network.
+	// Spawn a couple of CityBLD roads so the forced CityBLD provider can build a network when no RoadLab map is available.
 	UClass* MeshRoadClass = nullptr;
 	FString MeshRoadClassPath;
 	{
@@ -98,6 +113,26 @@ bool FTrafficRoadLabPIETest::RunTest(const FString& Parameters)
 			return nullptr;
 		}
 
+		TArray<USplineComponent*> Splines;
+		RoadActor->GetComponents<USplineComponent>(Splines);
+		for (USplineComponent* Spline : Splines)
+		{
+			if (!Spline)
+			{
+				continue;
+			}
+			Spline->ClearSplinePoints(false);
+			Spline->AddSplinePoint(FVector::ZeroVector, ESplineCoordinateSpace::Local, false);
+			Spline->AddSplinePoint(FVector(10000.f, 0.f, 0.f), ESplineCoordinateSpace::Local, false);
+			Spline->SetSplinePointType(0, ESplinePointType::Linear, false);
+			Spline->SetSplinePointType(1, ESplinePointType::Linear, false);
+			Spline->SetClosedLoop(false);
+			Spline->UpdateSpline();
+		}
+#if WITH_EDITOR
+		RoadActor->PostEditChange();
+#endif
+
 		// Ensure collision queries can hit the generated mesh components in automation.
 		TArray<UPrimitiveComponent*> PrimComps;
 		RoadActor->GetComponents<UPrimitiveComponent>(PrimComps);
@@ -115,13 +150,16 @@ bool FTrafficRoadLabPIETest::RunTest(const FString& Parameters)
 		return RoadActor;
 	};
 
-	AActor* RoadA = SpawnCityBLDRoad(FTransform(FRotator::ZeroRotator, FVector::ZeroVector));
-	AActor* RoadB = SpawnCityBLDRoad(FTransform(FRotator(0.f, 90.f, 0.f), FVector::ZeroVector));
-	if (!RoadA || !RoadB)
+	if (!bLoadedRoadLab)
 	{
-		AddError(TEXT("Failed to spawn CityBLD BP_MeshRoad actors."));
-		UTrafficAutomationLogger::EndTestLog();
-		return false;
+		AActor* RoadA = SpawnCityBLDRoad(FTransform(FRotator::ZeroRotator, FVector::ZeroVector));
+		AActor* RoadB = SpawnCityBLDRoad(FTransform(FRotator(0.f, 90.f, 0.f), FVector::ZeroVector));
+		if (!RoadA || !RoadB)
+		{
+			AddError(TEXT("Failed to spawn CityBLD BP_MeshRoad actors."));
+			UTrafficAutomationLogger::EndTestLog();
+			return false;
+		}
 	}
 
 	Subsys->DoPrepare();
@@ -180,7 +218,24 @@ bool FTrafficRoadLabPIETest::RunTest(const FString& Parameters)
 	}
 
 	Subsys->DoBuild();
+	bool bSavedDeferSpawn = false;
+	int32 PrevDeferSpawn = 1;
+	if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Runtime.DeferSpawnUntilRoadCollision")))
+	{
+		PrevDeferSpawn = Var->GetInt();
+		bSavedDeferSpawn = true;
+		Var->Set(0, ECVF_SetByCode);
+	}
+
 	Subsys->DoCars();
+
+	if (bSavedDeferSpawn)
+	{
+		if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("aaa.Traffic.Runtime.DeferSpawnUntilRoadCollision")))
+		{
+			Var->Set(PrevDeferSpawn, ECVF_SetByCode);
+		}
+	}
 
 	int32 RoadCount = 0, LaneCount = 0, IntersectionCount = 0, MovementCount = 0;
 	for (TActorIterator<ATrafficSystemController> It(World); It; ++It)

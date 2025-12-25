@@ -71,6 +71,30 @@ static TAutoConsoleVariable<float> CVarTrafficIntersectionStopLineOffsetAutoBuff
 	TEXT("Additional buffer (cm) applied behind the auto stop-line offset to account for crosswalks/paint. Default: 50"),
 	ECVF_Default);
 
+static TAutoConsoleVariable<float> CVarStopLineBoundaryRadiusLaneWidthScale(
+	TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusLaneWidthScale"),
+	1.2f,
+	TEXT("Clamp boundary stop radius to laneWidth * scale."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarStopLineBoundaryRadiusMinCm(
+	TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusMinCm"),
+	60.f,
+	TEXT("Min clamp for boundary stop radius (cm)."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarStopLineBoundaryRadiusMaxCm(
+	TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusMaxCm"),
+	220.f,
+	TEXT("Max clamp for boundary stop radius (cm)."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarStopLineBoundaryRadiusBiasCm(
+	TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusBiasCm"),
+	20.f,
+	TEXT("Bias applied to boundary stop radius (cm)."),
+	ECVF_Default);
+
 static TAutoConsoleVariable<int32> CVarTrafficIntersectionDebugReservation(
 	TEXT("aaa.Traffic.Intersections.DebugReservation"),
 	0,
@@ -182,6 +206,20 @@ static float GetEffectiveStopLineOffsetCm_Vehicle(const FTrafficLane* Lane)
 	return ComputeAutoStopLineOffsetCm_Vehicle(LaneWidth);
 }
 
+static float ComputeStopLineBoundaryRadiusCm_Vehicle(const FTrafficLane* Lane, float IntersectionRadius)
+{
+	const float LaneWidth = (Lane && Lane->Width > 1.f)
+		? Lane->Width
+		: CVarTrafficIntersectionStopLineOffsetAutoNominalLaneWidthCm.GetValueOnAnyThread();
+	float Radius = FMath::Min(IntersectionRadius,
+		LaneWidth * CVarStopLineBoundaryRadiusLaneWidthScale.GetValueOnAnyThread());
+	Radius = FMath::Clamp(Radius,
+		CVarStopLineBoundaryRadiusMinCm.GetValueOnAnyThread(),
+		CVarStopLineBoundaryRadiusMaxCm.GetValueOnAnyThread());
+	Radius += CVarStopLineBoundaryRadiusBiasCm.GetValueOnAnyThread();
+	return FMath::Max(0.f, Radius);
+}
+
 static bool IntersectRayCircle2D_Vehicle(
 	const FVector& RayOrigin,
 	const FVector& RayDir,
@@ -245,13 +283,12 @@ static bool TryComputeStopSFromIntersectionBoundary(
 		return false;
 	}
 
-	const float Radius = Intersection->Radius;
-	if (Radius <= KINDA_SMALL_NUMBER || Lane.CenterlinePoints.Num() < 2)
+	const float BoundaryRadius = ComputeStopLineBoundaryRadiusCm_Vehicle(&Lane, Intersection->Radius);
+	if (BoundaryRadius <= KINDA_SMALL_NUMBER || Lane.CenterlinePoints.Num() < 2)
 	{
 		return false;
 	}
 
-	const float BoundaryRadius = FMath::Max(Radius, KINDA_SMALL_NUMBER);
 	const float BoundaryRadiusSq = BoundaryRadius * BoundaryRadius;
 
 	TArray<float> CumulativeS;
@@ -327,42 +364,6 @@ static bool TryComputeStopSFromIntersectionBoundary(
 		const float IntersectionS = CumulativeS[i] + T;
 		OutStopS = FMath::Max(0.f, IntersectionS - StopLineOffsetCm);
 		return true;
-	}
-
-	const int32 LastIndex = Lane.CenterlinePoints.Num() - 1;
-	if (LastIndex <= 0)
-	{
-		return false;
-	}
-
-	const FVector EndPoint = Lane.CenterlinePoints[LastIndex];
-	if (FVector::DistSquared2D(EndPoint, Center) > BoundaryRadiusSq)
-	{
-		const FVector PrevPoint = Lane.CenterlinePoints[LastIndex - 1];
-		FVector2D RayDir2D(EndPoint.X - PrevPoint.X, EndPoint.Y - PrevPoint.Y);
-		FVector2D ToCenter2D(Center.X - EndPoint.X, Center.Y - EndPoint.Y);
-
-		if (RayDir2D.SizeSquared() <= KINDA_SMALL_NUMBER)
-		{
-			RayDir2D = ToCenter2D;
-		}
-
-		if (RayDir2D.SizeSquared() > KINDA_SMALL_NUMBER && FVector2D::DotProduct(RayDir2D, ToCenter2D) < 0.f)
-		{
-			RayDir2D *= -1.f;
-		}
-
-		if (RayDir2D.SizeSquared() > KINDA_SMALL_NUMBER)
-		{
-			const FVector RayDir(RayDir2D.X, RayDir2D.Y, 0.f);
-			float RayT = 0.f;
-			if (IntersectRayCircle2D_Vehicle(EndPoint, RayDir, Center, BoundaryRadius, RayT))
-			{
-				const float IntersectionS = CumulativeS[LastIndex] + RayT;
-				OutStopS = FMath::Max(0.f, IntersectionS - StopLineOffsetCm);
-				return true;
-			}
-		}
 	}
 
 	return false;
@@ -697,7 +698,11 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 					if (DebugNow - LastStopLineDebugTimeSeconds > DebugCooldown && PreState.S >= FMath::Max(0.f, StopS - 2000.f))
 					{
 						LastStopLineDebugTimeSeconds = DebugNow;
-						UE_LOG(LogTraffic, Log, TEXT("[TrafficVehicle] StopLine %s lane=%d S=%.1f StopS=%.1f (method=%s) int=%d radius=%.1f effRadius=%.1f offset=%.1f laneLen=%.1f"),
+						const float BoundaryRadiusCm = (IntersectionRadiusCm > 0.f)
+							? ComputeStopLineBoundaryRadiusCm_Vehicle(Lane, IntersectionRadiusCm)
+							: 0.f;
+						const float EffectiveRadiusCm = (BoundaryRadiusCm > 0.f) ? (BoundaryRadiusCm + StopLineOffset) : 0.f;
+						UE_LOG(LogTraffic, Log, TEXT("[TrafficVehicle] StopLine %s lane=%d S=%.1f StopS=%.1f (method=%s) int=%d radius=%.1f boundaryR=%.1f effRadius=%.1f offset=%.1f laneLen=%.1f"),
 							*GetName(),
 							Lane->LaneId,
 							PreState.S,
@@ -705,7 +710,8 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 							bUsedBoundaryStopS ? TEXT("boundary-offset") : TEXT("laneEnd"),
 							StopLineIntersectionId,
 							IntersectionRadiusCm,
-							IntersectionRadiusCm + StopLineOffset,
+							BoundaryRadiusCm,
+							EffectiveRadiusCm,
 							StopLineOffset,
 							LaneLen);
 					}

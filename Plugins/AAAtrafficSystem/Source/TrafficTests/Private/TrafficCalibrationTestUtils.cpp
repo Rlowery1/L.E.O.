@@ -849,11 +849,39 @@ bool TrafficCalibrationTestUtils::RunEditorCalibrationLoop(
 		return false;
 	}
 
+	int32 FamilyIndex = 0;
+	if (const URoadFamilyRegistry* Registry = URoadFamilyRegistry::Get())
+	{
+		if (const FRoadFamilyInfo* FamilyInfo = Registry->FindFamilyById(FamilyId))
+		{
+			const FName FamilyName = FamilyInfo->FamilyDefinition.FamilyName.IsNone()
+				? FName(*FamilyInfo->DisplayName)
+				: FamilyInfo->FamilyDefinition.FamilyName;
+			if (!FamilyName.IsNone())
+			{
+				const int32 FoundIndex = RoadSettings->Families.IndexOfByPredicate(
+					[FamilyName](const FRoadFamilyDefinition& Def)
+					{
+						return Def.FamilyName == FamilyName;
+					});
+				if (FoundIndex != INDEX_NONE)
+				{
+					FamilyIndex = FoundIndex;
+				}
+			}
+		}
+	}
+
+	if (!RoadSettings->Families.IsValidIndex(FamilyIndex))
+	{
+		FamilyIndex = 0;
+	}
+
 	FTrafficLaneFamilyCalibration Current;
-	Current.NumLanesPerSideForward = RoadSettings->Families[0].Forward.NumLanes;
-	Current.NumLanesPerSideBackward = RoadSettings->Families[0].Backward.NumLanes;
-	Current.LaneWidthCm = RoadSettings->Families[0].Forward.LaneWidthCm;
-	Current.CenterlineOffsetCm = RoadSettings->Families[0].Forward.InnerLaneCenterOffsetCm;
+	Current.NumLanesPerSideForward = RoadSettings->Families[FamilyIndex].Forward.NumLanes;
+	Current.NumLanesPerSideBackward = RoadSettings->Families[FamilyIndex].Backward.NumLanes;
+	Current.LaneWidthCm = RoadSettings->Families[FamilyIndex].Forward.LaneWidthCm;
+	Current.CenterlineOffsetCm = RoadSettings->Families[FamilyIndex].Forward.InnerLaneCenterOffsetCm;
 
         MaxIterations = FMath::Clamp(MaxIterations, 1, 10);
 
@@ -895,7 +923,7 @@ bool TrafficCalibrationTestUtils::RunEditorCalibrationLoop(
 		Subsys->Editor_BakeCalibrationForActiveFamily();
 		Subsys->ResetRoadLab();
 
-		(void)ApplyCalibrationToRoadFamilySettings(Current, /*FamilyIndex=*/0);
+		(void)ApplyCalibrationToRoadFamilySettings(Current, FamilyIndex);
 
 		Subsys->DoBuild();
 
