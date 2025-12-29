@@ -112,6 +112,8 @@ namespace
 		LogString(TEXT("aaa.Traffic.Intersections.AnchorActorTag"), TEXT(""));
 		LogFloat(TEXT("aaa.Traffic.Intersections.AnchorRadiusLaneWidthScale"), 2.0f);
 		LogFloat(TEXT("aaa.Traffic.Intersections.RadiusLaneWidthScale"), 1.25f);
+		LogInt(TEXT("aaa.Traffic.Intersections.AnchorAllowRadialFallback"), 0);
+		LogFloat(TEXT("aaa.Traffic.Intersections.AnchorMinAlignmentDot"), 0.1f);
 
 		// Extra context for stop-line auto behavior.
 		LogFloat(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoWidthScale"), 0.25f);

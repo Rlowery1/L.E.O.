@@ -1038,6 +1038,9 @@ namespace
 		int32 RoadAId = INDEX_NONE;
 		int32 RoadBId = INDEX_NONE;
 		FVector Point = FVector::ZeroVector;
+		// Used to filter false-positive crossings when road centerline segments overlap or are nearly parallel.
+		// abs(dot)=1 means parallel; abs(dot)=0 means perpendicular.
+		float ParallelAbsDot = 1.0f;
 	};
 
 	static void CollectRoadCrossings(
@@ -1080,10 +1083,23 @@ namespace
 							continue;
 						}
 
+						const FVector2D DirA2D(A1.X - A0.X, A1.Y - A0.Y);
+						const FVector2D DirB2D(B1.X - B0.X, B1.Y - B0.Y);
+						const float LenASq = DirA2D.SizeSquared();
+						const float LenBSq = DirB2D.SizeSquared();
+						float ParallelAbsDot = 1.0f;
+						if (LenASq > KINDA_SMALL_NUMBER && LenBSq > KINDA_SMALL_NUMBER)
+						{
+							const FVector2D NA = DirA2D / FMath::Sqrt(LenASq);
+							const FVector2D NB = DirB2D / FMath::Sqrt(LenBSq);
+							ParallelAbsDot = FMath::Abs(FVector2D::DotProduct(NA, NB));
+						}
+
 						FRoadCrossing Crossing;
 						Crossing.RoadAId = RoadA.RoadId;
 						Crossing.RoadBId = RoadB.RoadId;
 						Crossing.Point = Point;
+						Crossing.ParallelAbsDot = ParallelAbsDot;
 						OutCrossings.Add(Crossing);
 					}
 				}
@@ -1355,6 +1371,11 @@ void FTrafficNetworkBuilder::BuildIntersectionsAndMovements(
 
 		for (const FRoadCrossing& Crossing : RoadCrossings)
 		{
+			if (Crossing.ParallelAbsDot > MaxParallelDot)
+			{
+				continue;
+			}
+
 			for (const FTrafficLane& Lane : OutNetwork.Lanes)
 			{
 				if (Lane.RoadId != Crossing.RoadAId && Lane.RoadId != Crossing.RoadBId)
