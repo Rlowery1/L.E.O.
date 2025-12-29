@@ -11,7 +11,7 @@
 
 namespace
 {
-	static const TCHAR* GetCVarSetByString(const IConsoleVariable* Var)
+	static const TCHAR* GetCVarSetByString_NetworkBuilder(const IConsoleVariable* Var)
 	{
 		if (!Var)
 		{
@@ -1143,9 +1143,9 @@ void FTrafficNetworkBuilder::BuildNetworkFromRoads(
 	UE_LOG(LogTraffic, Log,
 		TEXT("[FTrafficNetworkBuilder] ClusterRadiusCm=%.1f (setBy=%s) RadiusLaneWidthScale=%.2f (setBy=%s)"),
 		ClusterRadiusCm,
-		GetCVarSetByString(ClusterVar),
+		GetCVarSetByString_NetworkBuilder(ClusterVar),
 		CVarTrafficIntersectionRadiusLaneWidthScale.GetValueOnGameThread(),
-		GetCVarSetByString(RadiusClampVar));
+		GetCVarSetByString_NetworkBuilder(RadiusClampVar));
 	BuildIntersectionsAndMovements(OutNetwork, ClusterRadiusCm);
 	ClampIntersectionRadiiByLaneWidth(OutNetwork);
 }
@@ -1174,7 +1174,7 @@ void FTrafficNetworkBuilder::BuildNetworkFromWorld(
 	UE_LOG(LogTraffic, Log,
 		TEXT("[FTrafficNetworkBuilder] AnchorFromActors=%d (setBy=%s)"),
 		AnchorFromActors,
-		GetCVarSetByString(AnchorVar));
+		GetCVarSetByString_NetworkBuilder(AnchorVar));
 
 	if (AnchorFromActors != 0)
 	{

@@ -33,7 +33,7 @@ namespace
 		bool bFailed = false;
 	};
 
-	static float ReadFloatCVar(const TCHAR* Name, float DefaultValue)
+	static float ReadFloatCVar_StopLine(const TCHAR* Name, float DefaultValue)
 	{
 		if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(Name))
 		{
@@ -42,7 +42,7 @@ namespace
 		return DefaultValue;
 	}
 
-	static int32 ReadIntCVar(const TCHAR* Name, int32 DefaultValue)
+	static int32 ReadIntCVar_StopLine(const TCHAR* Name, int32 DefaultValue)
 	{
 		if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(Name))
 		{
@@ -55,18 +55,18 @@ namespace
 	{
 		const float Width = (LaneWidthCm > KINDA_SMALL_NUMBER)
 			? LaneWidthCm
-			: FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoNominalLaneWidthCm"), 350.f));
-		const float Scale = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoWidthScale"), 0.25f));
-		const float MinCm = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMinCm"), 40.f));
-		const float MaxCm = FMath::Max(MinCm, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMaxCm"), 120.f));
-		const float BufferCm = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoBufferCm"), 50.f));
+			: FMath::Max(0.f, ReadFloatCVar_StopLine(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoNominalLaneWidthCm"), 350.f));
+		const float Scale = FMath::Max(0.f, ReadFloatCVar_StopLine(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoWidthScale"), 0.25f));
+		const float MinCm = FMath::Max(0.f, ReadFloatCVar_StopLine(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMinCm"), 40.f));
+		const float MaxCm = FMath::Max(MinCm, ReadFloatCVar_StopLine(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoMaxCm"), 120.f));
+		const float BufferCm = FMath::Max(0.f, ReadFloatCVar_StopLine(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoBufferCm"), 50.f));
 		return FMath::Clamp(Width * Scale, MinCm, MaxCm) + BufferCm;
 	}
 
 	static float GetEffectiveStopLineOffsetCm_Test(const FTrafficLane* Lane)
 	{
-		const float Base = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm"), 0.f));
-		if (ReadIntCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAuto"), 0) == 0)
+		const float Base = FMath::Max(0.f, ReadFloatCVar_StopLine(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm"), 0.f));
+		if (ReadIntCVar_StopLine(TEXT("aaa.Traffic.Intersections.StopLineOffsetAuto"), 0) == 0)
 		{
 			return Base;
 		}
@@ -79,14 +79,14 @@ namespace
 	{
 		const float LaneWidth = (Lane && Lane->Width > KINDA_SMALL_NUMBER)
 			? Lane->Width
-			: FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoNominalLaneWidthCm"), 350.f));
-		const float LaneWidthScale = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusLaneWidthScale"), 1.2f));
+			: FMath::Max(0.f, ReadFloatCVar_StopLine(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoNominalLaneWidthCm"), 350.f));
+		const float LaneWidthScale = FMath::Max(0.f, ReadFloatCVar_StopLine(TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusLaneWidthScale"), 1.2f));
 		float Radius = FMath::Min(IntersectionRadius, LaneWidth * LaneWidthScale);
 
-		const float MinCm = FMath::Max(0.f, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusMinCm"), 60.f));
-		const float MaxCm = FMath::Max(MinCm, ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusMaxCm"), 220.f));
+		const float MinCm = FMath::Max(0.f, ReadFloatCVar_StopLine(TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusMinCm"), 60.f));
+		const float MaxCm = FMath::Max(MinCm, ReadFloatCVar_StopLine(TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusMaxCm"), 220.f));
 		Radius = FMath::Clamp(Radius, MinCm, MaxCm);
-		Radius += ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusBiasCm"), 20.f);
+		Radius += ReadFloatCVar_StopLine(TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusBiasCm"), 20.f);
 		return FMath::Max(0.f, Radius);
 	}
 
@@ -304,7 +304,7 @@ namespace
 		int32 ChaosVehiclesChecked = 0;
 		bool bChaosMissing = false;
 		bool bChaosProjectionFailed = false;
-		float MaxChaosPathErrorCm = 0.f;
+		float MaxChaosPathErrorCm_Local = 0.f;
 
 		for (const FTrafficLane& Lane : Net.Lanes)
 		{
@@ -379,7 +379,7 @@ namespace
 			}
 
 			++ChaosVehiclesChecked;
-			MaxChaosPathErrorCm = FMath::Max(MaxChaosPathErrorCm, ChaosErrorCm);
+			MaxChaosPathErrorCm_Local = FMath::Max(MaxChaosPathErrorCm_Local, ChaosErrorCm);
 		}
 
 		if (InvalidStopCount > 0 && Test)
@@ -413,9 +413,9 @@ namespace
 			Test->AddError(TEXT("Stop-line auto test could not validate any Chaos vehicles."));
 		}
 
-		if (MaxChaosPathErrorCm > StopLineMaxChaosPathErrorCm && Test)
+		if (MaxChaosPathErrorCm_Local > StopLineMaxChaosPathErrorCm && Test)
 		{
-			Test->AddError(FString::Printf(TEXT("Stop-line auto test Chaos path error too large (max=%.1fcm)."), MaxChaosPathErrorCm));
+			Test->AddError(FString::Printf(TEXT("Stop-line auto test Chaos path error too large (max=%.1fcm)."), MaxChaosPathErrorCm_Local));
 		}
 
 		return true;

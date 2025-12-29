@@ -95,6 +95,12 @@ namespace
 			IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(Name);
 			UE_LOG(LogTraffic, Log, TEXT("[TrafficRuntimeWorldSubsystem] CVar %s=%.3f (setBy=%s)"), Name, Var ? Var->GetFloat() : Fallback, GetCVarSetByString(Var));
 		};
+		auto LogString = [](const TCHAR* Name, const TCHAR* Fallback)
+		{
+			IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(Name);
+			const FString Value = Var ? Var->GetString() : FString(Fallback ? Fallback : TEXT(""));
+			UE_LOG(LogTraffic, Log, TEXT("[TrafficRuntimeWorldSubsystem] CVar %s=\"%s\" (setBy=%s)"), Name, *Value, GetCVarSetByString(Var));
+		};
 
 		UE_LOG(LogTraffic, Log, TEXT("[TrafficRuntimeWorldSubsystem] Intersection CVar snapshot (%s):"), Context ? Context : TEXT("Unknown"));
 
@@ -102,6 +108,9 @@ namespace
 		LogInt(TEXT("aaa.Traffic.Intersections.StopLineOffsetAuto"), 1);
 		LogFloat(TEXT("aaa.Traffic.Intersections.ClusterRadiusCm"), 500.f);
 		LogInt(TEXT("aaa.Traffic.Intersections.AnchorFromActors"), 1);
+		LogString(TEXT("aaa.Traffic.Intersections.AnchorActorNameContains"), TEXT("MeshIntersection"));
+		LogString(TEXT("aaa.Traffic.Intersections.AnchorActorTag"), TEXT(""));
+		LogFloat(TEXT("aaa.Traffic.Intersections.AnchorRadiusLaneWidthScale"), 2.0f);
 		LogFloat(TEXT("aaa.Traffic.Intersections.RadiusLaneWidthScale"), 1.25f);
 
 		// Extra context for stop-line auto behavior.

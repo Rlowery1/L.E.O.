@@ -46,6 +46,31 @@
 #include "ZoneGraphLaneOverlayUtils.h"
 #include "Algo/Reverse.h"
 
+static void TrafficEditor_DrawIntersectionDebug_Console()
+{
+#if WITH_EDITOR
+	if (!GEditor)
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] aaa.Traffic.Editor.DrawIntersectionDebug: GEditor is null."));
+		return;
+	}
+
+	UTrafficSystemEditorSubsystem* Subsys = GEditor->GetEditorSubsystem<UTrafficSystemEditorSubsystem>();
+	if (!Subsys)
+	{
+		UE_LOG(LogTraffic, Warning, TEXT("[TrafficEditor] aaa.Traffic.Editor.DrawIntersectionDebug: No UTrafficSystemEditorSubsystem."));
+		return;
+	}
+
+	Subsys->DoDrawIntersectionDebug();
+#endif
+}
+
+static FAutoConsoleCommand CCmdTrafficEditorDrawIntersectionDebug(
+	TEXT("aaa.Traffic.Editor.DrawIntersectionDebug"),
+	TEXT("Editor-only: runs the AAA Traffic intersection debug draw (same as the panel button)."),
+	FConsoleCommandDelegate::CreateStatic(&TrafficEditor_DrawIntersectionDebug_Console));
+
 static TAutoConsoleVariable<int32> CVarTrafficDrawAllIntersectionDebug(
 	TEXT("aaa.Traffic.Debug.DrawAllIntersectionDebug"),
 	0,

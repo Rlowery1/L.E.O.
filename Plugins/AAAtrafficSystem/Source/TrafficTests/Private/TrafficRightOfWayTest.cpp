@@ -51,7 +51,7 @@ namespace
 		}
 	}
 
-	static float ReadFloatCVar(const TCHAR* Name, float DefaultValue)
+	static float ReadFloatCVar_RightOfWay(const TCHAR* Name, float DefaultValue)
 	{
 		if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(Name))
 		{
@@ -60,7 +60,7 @@ namespace
 		return DefaultValue;
 	}
 
-	static int32 ReadIntCVar(const TCHAR* Name, int32 DefaultValue)
+	static int32 ReadIntCVar_RightOfWay(const TCHAR* Name, int32 DefaultValue)
 	{
 		if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(Name))
 		{
@@ -185,7 +185,7 @@ namespace
 		int32& OutThroughIncomingLaneId,
 		int32& OutLeftPhaseIndex)
 	{
-		const float ConflictDist = ReadFloatCVar(TEXT("aaa.Traffic.Intersections.ReservationConflictDistanceCm"), 300.f);
+		const float ConflictDist = ReadFloatCVar_RightOfWay(TEXT("aaa.Traffic.Intersections.ReservationConflictDistanceCm"), 300.f);
 
 		for (const FTrafficIntersection& Intersection : Net.Intersections)
 		{
@@ -328,7 +328,7 @@ namespace
 			return true;
 		}
 
-		const float StopLineOffset = ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm"), 0.f);
+		const float StopLineOffset = ReadFloatCVar_RightOfWay(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm"), 0.f);
 		const float LeftLaneLen = TrafficLaneGeometry::ComputeLaneLengthCm(*LeftLane);
 		const float ThroughLaneLen = TrafficLaneGeometry::ComputeLaneLengthCm(*ThroughLane);
 		const float LeftStopS = FMath::Max(0.f, LeftLaneLen - StopLineOffset);
@@ -475,7 +475,7 @@ namespace
 		const FTrafficLane* ThroughLane = TrafficRouting::FindLaneById(*Net, State->ThroughIncomingLaneId);
 		if (ThroughLane)
 		{
-			const float StopLineOffset = ReadFloatCVar(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm"), 0.f);
+			const float StopLineOffset = ReadFloatCVar_RightOfWay(TEXT("aaa.Traffic.Intersections.StopLineOffsetCm"), 0.f);
 			const float LaneLen = TrafficLaneGeometry::ComputeLaneLengthCm(*ThroughLane);
 			const float StopS = FMath::Max(0.f, LaneLen - StopLineOffset);
 			const float FarS = FMath::Max(0.f, StopS - (PermittedLeftApproachDistanceCm + 2000.f));
