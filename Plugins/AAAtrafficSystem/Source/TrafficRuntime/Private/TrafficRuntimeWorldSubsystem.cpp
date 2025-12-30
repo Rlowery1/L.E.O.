@@ -7,6 +7,7 @@
 #include "TrafficRoadFamilySettings.h"
 #include "TrafficRoadMetadataComponent.h"
 #include "TrafficSystemController.h"
+#include "TrafficVehicleManager.h"
 #include "TrafficVisualMode.h"
 #include "TrafficRuntimeModule.h"
 #include "TrafficNetworkAsset.h"
@@ -23,6 +24,7 @@
 #include "CollisionQueryParams.h"
 #include "UObject/UnrealType.h"
 #include "HAL/IConsoleManager.h"
+#include "HAL/PlatformMisc.h"
 
 namespace
 {
@@ -34,6 +36,13 @@ namespace
 		TEXT("If non-zero, prints the AAA Traffic runtime build stamp on-screen at PIE start.\n")
 		TEXT("This provides an unmissable confirmation that the latest plugin binaries are loaded.\n")
 		TEXT("Default: 1"),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<float> CVarTrafficStopLineCaptureAutoQuitSeconds(
+		TEXT("aaa.Traffic.Runtime.StopLineCaptureAutoQuitSeconds"),
+		15.f,
+		TEXT("If > 0, automatically exits the process this many seconds after running aaa.Traffic.Runtime.StartStopLineCapture.\n")
+		TEXT("This is intended for headless CLI captures (e.g. -nullrhi + -ExecCmds). Default: 15"),
 		ECVF_Default);
 
 	static bool IsCVarExplicitlySet(const IConsoleVariable* Var)
@@ -114,6 +123,8 @@ namespace
 		LogFloat(TEXT("aaa.Traffic.Intersections.RadiusLaneWidthScale"), 1.25f);
 		LogInt(TEXT("aaa.Traffic.Intersections.AnchorAllowRadialFallback"), 0);
 		LogFloat(TEXT("aaa.Traffic.Intersections.AnchorMinAlignmentDot"), 0.1f);
+		LogInt(TEXT("aaa.Traffic.Intersections.CrossSplitEnabled"), 1);
+		LogInt(TEXT("aaa.Traffic.Intersections.StopLinePreferBoundary"), 0);
 
 		// Extra context for stop-line auto behavior.
 		LogFloat(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoWidthScale"), 0.25f);
@@ -132,6 +143,151 @@ namespace
 		TEXT("aaa.Traffic.Debug.DumpIntersectionCVars"),
 		TEXT("Logs key intersection-related console variables (stop line offset, clustering radius, anchoring, radius clamps)."),
 		FConsoleCommandDelegate::CreateStatic(&DumpIntersectionCVarSnapshot_Console));
+
+	static FAutoConsoleCommandWithWorld CCmdTrafficRuntimeBuildTrafficNetwork(
+		TEXT("aaa.Traffic.Runtime.BuildTrafficNetwork"),
+		TEXT("Calls Runtime_BuildTrafficNetwork() on all TrafficSystemController actors in the current world."),
+		FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World)
+		{
+			int32 ControllerCount = 0;
+			if (World)
+			{
+				for (TActorIterator<ATrafficSystemController> It(World); It; ++It)
+				{
+					if (ATrafficSystemController* Controller = *It)
+					{
+						++ControllerCount;
+						Controller->Runtime_BuildTrafficNetwork();
+					}
+				}
+			}
+			UE_LOG(LogTraffic, Log, TEXT("[TrafficRuntimeWorldSubsystem] aaa.Traffic.Runtime.BuildTrafficNetwork executed (controllers=%d)."), ControllerCount);
+		}));
+
+	static FAutoConsoleCommandWithWorld CCmdTrafficRuntimeSpawnTraffic(
+		TEXT("aaa.Traffic.Runtime.SpawnTraffic"),
+		TEXT("Calls Runtime_SpawnTraffic() on all TrafficSystemController actors in the current world."),
+		FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World)
+		{
+			int32 ControllerCount = 0;
+			if (World)
+			{
+				for (TActorIterator<ATrafficSystemController> It(World); It; ++It)
+				{
+					if (ATrafficSystemController* Controller = *It)
+					{
+						++ControllerCount;
+						Controller->Runtime_SpawnTraffic();
+					}
+				}
+			}
+			UE_LOG(LogTraffic, Log, TEXT("[TrafficRuntimeWorldSubsystem] aaa.Traffic.Runtime.SpawnTraffic executed (controllers=%d)."), ControllerCount);
+		}));
+
+	static FAutoConsoleCommandWithWorld CCmdTrafficRuntimeStartStopLineCapture(
+		TEXT("aaa.Traffic.Runtime.StartStopLineCapture"),
+		TEXT("Enables aaa.Traffic.Intersections.DebugStopLine=1, builds the traffic network, and spawns logic test vehicles (single-command helper for -ExecCmds)."),
+		FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World)
+		{
+			if (GEngine && World)
+			{
+				GEngine->Exec(World, TEXT("aaa.Traffic.Intersections.DebugStopLine 1"));
+			}
+
+			int32 ControllerCount = 0;
+			if (World)
+			{
+				for (TActorIterator<ATrafficSystemController> It(World); It; ++It)
+				{
+					if (ATrafficSystemController* Controller = *It)
+					{
+						++ControllerCount;
+						Controller->Runtime_BuildTrafficNetwork();
+					}
+				}
+
+				// Spawn logic-only test vehicles so `[TrafficVehicle] StopLine ...` logs are emitted from ATrafficVehicleBase::Tick,
+				// regardless of ZoneGraph/Chaos vehicle setup.
+				ATrafficVehicleManager* Manager = nullptr;
+				for (TActorIterator<ATrafficVehicleManager> It(World); It; ++It)
+				{
+					Manager = *It;
+					break;
+				}
+				if (!Manager)
+				{
+					FActorSpawnParameters Params;
+					Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+					Manager = World->SpawnActor<ATrafficVehicleManager>(ATrafficVehicleManager::StaticClass(), FTransform::Identity, Params);
+				}
+
+				if (Manager)
+				{
+					Manager->ClearVehicles();
+					Manager->SetForceLogicOnlyForTests(true);
+					Manager->SpawnTestVehicles(/*VehiclesPerLane*/ 2, /*SpeedCmPerSec*/ 800.f);
+				}
+
+				const float QuitSeconds = CVarTrafficStopLineCaptureAutoQuitSeconds.GetValueOnGameThread();
+				if (QuitSeconds > 0.f)
+				{
+					FTimerHandle QuitTimer;
+					World->GetTimerManager().SetTimer(
+						QuitTimer,
+						FTimerDelegate::CreateLambda([]
+						{
+							FPlatformMisc::RequestExit(false);
+						}),
+						QuitSeconds,
+						false);
+				}
+			}
+
+			UE_LOG(LogTraffic, Log, TEXT("[TrafficRuntimeWorldSubsystem] aaa.Traffic.Runtime.StartStopLineCapture executed (controllers=%d)."), ControllerCount);
+		}));
+
+	static FAutoConsoleCommandWithWorld CCmdTrafficRuntimeStartStopLineCaptureNoCrossSplitPreferBoundary(
+		TEXT("aaa.Traffic.Runtime.StartStopLineCaptureNoCrossSplitPreferBoundary"),
+		TEXT("Sets CrossSplitEnabled=0 and StopLinePreferBoundary=1, then runs aaa.Traffic.Runtime.StartStopLineCapture (debug helper)."),
+		FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World)
+		{
+			if (GEngine && World)
+			{
+				GEngine->Exec(World, TEXT("aaa.Traffic.Intersections.CrossSplitEnabled 0"));
+				GEngine->Exec(World, TEXT("aaa.Traffic.Intersections.StopLinePreferBoundary 1"));
+				GEngine->Exec(World, TEXT("aaa.Traffic.Runtime.StartStopLineCapture"));
+			}
+		}));
+
+	static FAutoConsoleCommandWithWorld CCmdTrafficRuntimeStartStopLineCaptureNoCrossSplitPreferBoundaryBigBoundary(
+		TEXT("aaa.Traffic.Runtime.StartStopLineCaptureNoCrossSplitPreferBoundaryBigBoundary"),
+		TEXT("Also relaxes stop-boundary clamp CVars (LaneWidthScale=10, Min=0, Max=2000) before running the capture helpers."),
+		FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World)
+		{
+			if (GEngine && World)
+			{
+				GEngine->Exec(World, TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusLaneWidthScale 10"));
+				GEngine->Exec(World, TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusMinCm 0"));
+				GEngine->Exec(World, TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusMaxCm 2000"));
+				GEngine->Exec(World, TEXT("aaa.Traffic.Runtime.StartStopLineCaptureNoCrossSplitPreferBoundary"));
+			}
+		}));
+
+	static FAutoConsoleCommandWithWorld CCmdTrafficRuntimeStartStopLineCaptureNoCrossSplitBigBoundaryDefaultPrefer(
+		TEXT("aaa.Traffic.Runtime.StartStopLineCaptureNoCrossSplitBigBoundaryDefaultPrefer"),
+		TEXT("Disables cross-splitting and relaxes stop-boundary clamp CVars (LaneWidthScale=10, Min=0, Max=2000), but keeps StopLinePreferBoundary=0 (default behavior)."),
+		FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World)
+		{
+			if (GEngine && World)
+			{
+				GEngine->Exec(World, TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusLaneWidthScale 10"));
+				GEngine->Exec(World, TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusMinCm 0"));
+				GEngine->Exec(World, TEXT("aaa.Traffic.Intersections.StopLineBoundaryRadiusMaxCm 2000"));
+				GEngine->Exec(World, TEXT("aaa.Traffic.Intersections.CrossSplitEnabled 0"));
+				GEngine->Exec(World, TEXT("aaa.Traffic.Intersections.StopLinePreferBoundary 0"));
+				GEngine->Exec(World, TEXT("aaa.Traffic.Runtime.StartStopLineCapture"));
+			}
+		}));
 
 	static void ApplyIntersectionStopLineDefaultsForWorld(UWorld& World)
 	{

@@ -107,6 +107,12 @@ static TAutoConsoleVariable<int32> CVarTrafficIntersectionDebugStopLine(
 	TEXT("If non-zero, logs computed stop line distances for vehicles near intersections."),
 	ECVF_Default);
 
+static TAutoConsoleVariable<int32> CVarTrafficIntersectionStopLinePreferBoundary(
+	TEXT("aaa.Traffic.Intersections.StopLinePreferBoundary"),
+	0,
+	TEXT("If non-zero, prefer the intersection boundary-offset stop S over lane-end when both are available (debug). Default: 0."),
+	ECVF_Default);
+
 static TAutoConsoleVariable<int32> CVarTrafficIntersectionRequireFullStop(
 	TEXT("aaa.Traffic.Intersections.RequireFullStop"),
 	0,
@@ -685,10 +691,13 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 
 				if (bUsedBoundaryStopS)
 				{
-					// Prefer the stop line that is closer to the intersection (larger S) to avoid stopping too far back.
-					const float PreferredStopS = FMath::Max(StopS, LaneEndStopS);
-					StopS = PreferredStopS;
-					bUsedBoundaryStopS = (StopS > LaneEndStopS + KINDA_SMALL_NUMBER);
+					if (CVarTrafficIntersectionStopLinePreferBoundary.GetValueOnGameThread() == 0)
+					{
+						// Prefer the stop line that is closer to the intersection (larger S) to avoid stopping too far back.
+						const float PreferredStopS = FMath::Max(StopS, LaneEndStopS);
+						StopS = PreferredStopS;
+						bUsedBoundaryStopS = (StopS > LaneEndStopS + KINDA_SMALL_NUMBER);
+					}
 				}
 
 				if (CVarTrafficIntersectionDebugStopLine.GetValueOnGameThread() != 0)
@@ -1020,8 +1029,15 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
 								if (TryComputeStopSFromIntersectionBoundary(Net, *Lane, NextMovement->IntersectionId, StopLineOffset, BoundaryStopS))
 								{
 									const float ClampedBoundaryStopS = FMath::Clamp(BoundaryStopS, 0.f, LaneLen);
-									// Prefer the stop line that is closer to the intersection (larger S) to avoid stopping too far back.
-									StopS = FMath::Max(ClampedBoundaryStopS, LaneEndStopS);
+									if (CVarTrafficIntersectionStopLinePreferBoundary.GetValueOnGameThread() == 0)
+									{
+										// Prefer the stop line that is closer to the intersection (larger S) to avoid stopping too far back.
+										StopS = FMath::Max(ClampedBoundaryStopS, LaneEndStopS);
+									}
+									else
+									{
+										StopS = ClampedBoundaryStopS;
+									}
 								}
 								else
 								{

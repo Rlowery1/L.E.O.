@@ -65,6 +65,12 @@ namespace
 		TEXT("Minimum distance (cm) from lane ends when splitting lanes at road centerline crossings. Default: 300."),
 		ECVF_Default);
 
+	static TAutoConsoleVariable<int32> CVarTrafficIntersectionCrossSplitEnabled(
+		TEXT("aaa.Traffic.Intersections.CrossSplitEnabled"),
+		1,
+		TEXT("If non-zero, split lanes at road centerline crossings. Disable for debugging if cross-splitting is creating premature lane endpoints. Default: 1."),
+		ECVF_Default);
+
 	static TAutoConsoleVariable<float> CVarTrafficIntersectionCrossSplitMaxParallelDot(
 		TEXT("aaa.Traffic.Intersections.CrossSplitMaxParallelDot"),
 		0.98f,
@@ -1359,7 +1365,10 @@ void FTrafficNetworkBuilder::BuildIntersectionsAndMovements(
 
 	// Split lanes at road centerline crossings so mid-spline intersections are represented in the endpoint graph.
 	TArray<FRoadCrossing> RoadCrossings;
-	CollectRoadCrossings(OutNetwork.Roads, RoadCrossings);
+	if (CVarTrafficIntersectionCrossSplitEnabled.GetValueOnGameThread() != 0)
+	{
+		CollectRoadCrossings(OutNetwork.Roads, RoadCrossings);
+	}
 
 	if (RoadCrossings.Num() > 0)
 	{
