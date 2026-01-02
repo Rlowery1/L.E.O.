@@ -38,6 +38,14 @@ namespace
 		TEXT("Default: 1"),
 		ECVF_Default);
 
+	static TAutoConsoleVariable<int32> CVarTrafficCityBLDCalibrateLaneWidthFromMesh(
+		TEXT("aaa.Traffic.CityBLD.CalibrateLaneWidthFromMesh"),
+		1,
+		TEXT("If non-zero, estimates lane width from CityBLD dynamic mesh geometry at runtime and overrides RoadFamily lane widths.\n")
+		TEXT("Disable this when meshes include sidewalks/shoulders that inflate the computed width and cause traffic to drift out of lane.\n")
+		TEXT("Default: 1"),
+		ECVF_Default);
+
 	static TAutoConsoleVariable<float> CVarTrafficStopLineCaptureAutoQuitSeconds(
 		TEXT("aaa.Traffic.Runtime.StopLineCaptureAutoQuitSeconds"),
 		15.f,
@@ -125,6 +133,21 @@ namespace
 		LogFloat(TEXT("aaa.Traffic.Intersections.AnchorMinAlignmentDot"), 0.1f);
 		LogInt(TEXT("aaa.Traffic.Intersections.CrossSplitEnabled"), 1);
 		LogInt(TEXT("aaa.Traffic.Intersections.StopLinePreferBoundary"), 0);
+
+		// Cross-split tuning (lane-end placement).
+		LogFloat(TEXT("aaa.Traffic.Intersections.CrossSplitMinDistanceFromLaneEndsCm"), 300.f);
+		LogFloat(TEXT("aaa.Traffic.Intersections.CrossSplitDistanceLaneWidthScale"), 4.0f);
+		LogFloat(TEXT("aaa.Traffic.Intersections.CrossSplitMaxParallelDot"), 0.98f);
+		LogFloat(TEXT("aaa.Traffic.Intersections.CrossSplitToleranceCm"), 50.f);
+
+		// Movement geometry and ChaosDrive tracking (useful when investigating post-turn drift).
+		LogFloat(TEXT("aaa.Traffic.Movement.ControlDistFraction"), 0.5f);
+		LogFloat(TEXT("aaa.Traffic.Visual.ChaosDrive.LookaheadCm"), 1200.f);
+		LogFloat(TEXT("aaa.Traffic.Visual.ChaosDrive.SteerGain"), 1.0f);
+		LogFloat(TEXT("aaa.Traffic.Visual.ChaosDrive.TurnSlowdownStartDeg"), 15.0f);
+		LogFloat(TEXT("aaa.Traffic.Visual.ChaosDrive.TurnSlowdownFullDeg"), 60.0f);
+		LogInt(TEXT("aaa.Traffic.Collision.IgnoreOtherTraffic"), 1);
+		LogInt(TEXT("aaa.Traffic.CityBLD.CalibrateLaneWidthFromMesh"), 1);
 
 		// Extra context for stop-line auto behavior.
 		LogFloat(TEXT("aaa.Traffic.Intersections.StopLineOffsetAutoWidthScale"), 0.25f);
@@ -1074,7 +1097,7 @@ namespace
 		}
 
 		// Calibrate CityBLD lane widths from dynamic mesh geometry (best-effort, runtime only).
-		if (RoadActorsForCalibration.Num() > 0 && RoadSettings && Provider)
+		if (CVarTrafficCityBLDCalibrateLaneWidthFromMesh.GetValueOnGameThread() != 0 && RoadActorsForCalibration.Num() > 0 && RoadSettings && Provider)
 		{
 			for (AActor* RoadActor : RoadActorsForCalibration)
 			{
