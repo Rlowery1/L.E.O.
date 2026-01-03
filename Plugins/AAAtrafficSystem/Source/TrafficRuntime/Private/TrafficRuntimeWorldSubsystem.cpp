@@ -133,6 +133,8 @@ namespace
 		LogFloat(TEXT("aaa.Traffic.Intersections.AnchorMinAlignmentDot"), 0.1f);
 		LogInt(TEXT("aaa.Traffic.Intersections.CrossSplitEnabled"), 1);
 		LogInt(TEXT("aaa.Traffic.Intersections.StopLinePreferBoundary"), 0);
+		LogFloat(TEXT("aaa.Traffic.Intersections.MovementLaneMatchWeight"), 2.0f);
+		LogInt(TEXT("aaa.Traffic.Debug.LogMovementSelection"), 0);
 
 		// Cross-split tuning (lane-end placement).
 		LogFloat(TEXT("aaa.Traffic.Intersections.CrossSplitMinDistanceFromLaneEndsCm"), 300.f);

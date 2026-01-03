@@ -89,6 +89,20 @@ namespace
 		TEXT("Max lateral distance from a road crossing to consider a lane for split, as a multiple of lane width. Default: 4.0."),
 		ECVF_Default);
 
+	static TAutoConsoleVariable<float> CVarTrafficIntersectionMovementLaneMatchWeight(
+		TEXT("aaa.Traffic.Intersections.MovementLaneMatchWeight"),
+		2.0f,
+		TEXT("Penalty weight for mismatched lane side selection when choosing intersection movements.\n")
+		TEXT("This helps prevent e.g. a turn from connecting into the wrong parallel lane.\n")
+		TEXT("0 disables the lane-match term. Default: 2"),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<int32> CVarTrafficDebugLogMovementSelection(
+		TEXT("aaa.Traffic.Debug.LogMovementSelection"),
+		0,
+		TEXT("If non-zero, logs the chosen outgoing lane per incoming lane for each intersection (debug). Default: 0"),
+		ECVF_Default);
+
 	static TAutoConsoleVariable<int32> CVarTrafficIntersectionAnchorFromActors(
 		TEXT("aaa.Traffic.Intersections.AnchorFromActors"),
 		1,
@@ -1336,6 +1350,13 @@ void FTrafficNetworkBuilder::BuildIntersectionsAndMovements(
 	OutNetwork.Intersections.Reset();
 	OutNetwork.Movements.Reset();
 
+	TMap<int32, const FTrafficLane*> LaneById;
+	LaneById.Reserve(OutNetwork.Lanes.Num());
+	for (const FTrafficLane& Lane : OutNetwork.Lanes)
+	{
+		LaneById.Add(Lane.LaneId, &Lane);
+	}
+
 	auto BuildEndpoints = [](const TArray<FTrafficLane>& Lanes, TArray<FLaneEndpoint>& OutEndpoints)
 	{
 		OutEndpoints.Reset();
@@ -1598,15 +1619,8 @@ void FTrafficNetworkBuilder::BuildIntersectionsAndMovements(
 
 		for (const FLaneEndpoint& Ep : Cluster.Endpoints)
 		{
-			const FTrafficLane* Lane = nullptr;
-			for (const FTrafficLane& L : OutNetwork.Lanes)
-			{
-				if (L.LaneId == Ep.LaneId)
-				{
-					Lane = &L;
-					break;
-				}
-			}
+			const FTrafficLane* const* LanePtr = LaneById.Find(Ep.LaneId);
+			const FTrafficLane* Lane = LanePtr ? *LanePtr : nullptr;
 
 			if (!Lane)
 			{
@@ -1629,6 +1643,58 @@ void FTrafficNetworkBuilder::BuildIntersectionsAndMovements(
 		}
 
 		OutNetwork.Intersections.Add(Intersection);
+
+		auto KeyRoadDir = [](int32 RoadId, ELaneDirection Dir) -> uint64
+		{
+			return (static_cast<uint64>(static_cast<uint32>(RoadId)) << 32) | static_cast<uint32>(Dir);
+		};
+
+		TMap<uint64, int32> MaxSideIndexIncoming;
+		TMap<uint64, int32> MaxSideIndexOutgoing;
+
+		for (const FLaneEndpoint* InEp : IncomingEndpoints)
+		{
+			if (!InEp)
+			{
+				continue;
+			}
+			const FTrafficLane* const* InLanePtr = LaneById.Find(InEp->LaneId);
+			const FTrafficLane* InLane = InLanePtr ? *InLanePtr : nullptr;
+			if (!InLane)
+			{
+				continue;
+			}
+
+			const uint64 Key = KeyRoadDir(InLane->RoadId, InLane->Direction);
+			int32& MaxIdx = MaxSideIndexIncoming.FindOrAdd(Key);
+			MaxIdx = FMath::Max(MaxIdx, InLane->SideIndex);
+		}
+
+		for (const FLaneEndpoint* OutEp : OutgoingEndpoints)
+		{
+			if (!OutEp)
+			{
+				continue;
+			}
+			const FTrafficLane* const* OutLanePtr = LaneById.Find(OutEp->LaneId);
+			const FTrafficLane* OutLane = OutLanePtr ? *OutLanePtr : nullptr;
+			if (!OutLane)
+			{
+				continue;
+			}
+
+			const uint64 Key = KeyRoadDir(OutLane->RoadId, OutLane->Direction);
+			int32& MaxIdx = MaxSideIndexOutgoing.FindOrAdd(Key);
+			MaxIdx = FMath::Max(MaxIdx, OutLane->SideIndex);
+		}
+
+		auto LaneNorm = [&](const FTrafficLane& Lane, const TMap<uint64, int32>& MaxByRoadDir) -> float
+		{
+			const uint64 Key = KeyRoadDir(Lane.RoadId, Lane.Direction);
+			const int32* MaxSide = MaxByRoadDir.Find(Key);
+			const int32 Denom = MaxSide ? *MaxSide : 0;
+			return (Denom > 0) ? (static_cast<float>(Lane.SideIndex) / static_cast<float>(Denom)) : 0.f;
+		};
 
 		auto ComputeTurnType = [](const FVector& InDir, const FVector& OutDir) -> ETrafficTurnType
 		{
@@ -1667,7 +1733,24 @@ void FTrafficNetworkBuilder::BuildIntersectionsAndMovements(
 
 			const float AngleScore = FMath::Abs(AngleDeg - IdealDeg) / 15.0f;
 			const float UTurnPenalty = (TurnType == ETrafficTurnType::UTurn) ? 50.f : 0.f;
-			return DistScore + AngleScore + UTurnPenalty;
+
+			float LaneMatchScore = 0.f;
+			const float LaneMatchWeight = FMath::Max(0.f, CVarTrafficIntersectionMovementLaneMatchWeight.GetValueOnGameThread());
+			if (LaneMatchWeight > 0.f)
+			{
+				const FTrafficLane* const* InLanePtr = LaneById.Find(InEp->LaneId);
+				const FTrafficLane* const* OutLanePtr = LaneById.Find(OutEp->LaneId);
+				const FTrafficLane* InLane = InLanePtr ? *InLanePtr : nullptr;
+				const FTrafficLane* OutLane = OutLanePtr ? *OutLanePtr : nullptr;
+				if (InLane && OutLane)
+				{
+					const float InNorm = LaneNorm(*InLane, MaxSideIndexIncoming);
+					const float OutNorm = LaneNorm(*OutLane, MaxSideIndexOutgoing);
+					LaneMatchScore = FMath::Abs(InNorm - OutNorm) * LaneMatchWeight;
+				}
+			}
+
+			return DistScore + AngleScore + UTurnPenalty + LaneMatchScore;
 		};
 
 		auto AddMovement = [&](const FLaneEndpoint* InEp, const FLaneEndpoint* OutEp, ETrafficTurnType TurnType)
@@ -1746,6 +1829,34 @@ void FTrafficNetworkBuilder::BuildIntersectionsAndMovements(
 			AddMovement(InEp, BestThrough, ETrafficTurnType::Through);
 			AddMovement(InEp, BestLeft, ETrafficTurnType::Left);
 			AddMovement(InEp, BestRight, ETrafficTurnType::Right);
+
+			if (CVarTrafficDebugLogMovementSelection.GetValueOnGameThread() != 0)
+			{
+				const FTrafficLane* const* InLanePtr = InEp ? LaneById.Find(InEp->LaneId) : nullptr;
+				const FTrafficLane* InLane = InLanePtr ? *InLanePtr : nullptr;
+
+				auto LogPick = [&](const TCHAR* Label, const FLaneEndpoint* OutEp, float Score)
+				{
+					const FTrafficLane* const* OutLanePtr = OutEp ? LaneById.Find(OutEp->LaneId) : nullptr;
+					const FTrafficLane* OutLane = OutLanePtr ? *OutLanePtr : nullptr;
+
+					UE_LOG(LogTraffic, Log,
+						TEXT("[FTrafficNetworkBuilder] MovementPick Int=%d %s InLane=%d road=%d side=%d -> OutLane=%d road=%d side=%d score=%.3f"),
+						Intersection.IntersectionId,
+						Label,
+						InEp ? InEp->LaneId : INDEX_NONE,
+						InLane ? InLane->RoadId : INDEX_NONE,
+						InLane ? InLane->SideIndex : -1,
+						OutEp ? OutEp->LaneId : INDEX_NONE,
+						OutLane ? OutLane->RoadId : INDEX_NONE,
+						OutLane ? OutLane->SideIndex : -1,
+						Score);
+				};
+
+				LogPick(TEXT("Through"), BestThrough, BestThroughScore);
+				LogPick(TEXT("Left"), BestLeft, BestLeftScore);
+				LogPick(TEXT("Right"), BestRight, BestRightScore);
+			}
 		}
 	}
 
